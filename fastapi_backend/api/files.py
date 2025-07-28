@@ -8,7 +8,7 @@ from core.security import get_current_user
 from models.user import User
 from models.file_upload import (
     FileUploadResponse, FilePreviewResponse, FileUploadWithPreviews,
-    FileListResponse, FileProcessingStatus, FilePreviewRequest
+    FileListResponse, FileProcessingStatus, FilePreviewRequest, FileUpload
 )
 from services.file_service import FileService
 

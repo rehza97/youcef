@@ -16,6 +16,7 @@ import {
   LogOut,
   Menu,
   X,
+  FileText,
 } from "lucide-react";
 
 const Sidebar = () => {
@@ -31,6 +32,7 @@ const Sidebar = () => {
     { name: "Profil", href: "/profile", icon: User },
     { name: "Notifications", href: "/notifications", icon: Bell },
     { name: "Messagerie", href: "/messaging", icon: MessageSquare },
+    { name: "Fichiers", href: "/files", icon: FileText },
     { name: "État du système", href: "/health", icon: Activity },
     { name: "Info API", href: "/api-info", icon: Info },
     { name: "Paramètres", href: "/settings", icon: Settings },

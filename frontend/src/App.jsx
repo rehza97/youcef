@@ -31,6 +31,7 @@ import MessagingPage from "./pages/MessagingPage";
 import HealthPage from "./pages/HealthPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ApiInfoPage from "./pages/ApiInfoPage";
+import FilesPage from "./pages/FilesPage";
 
 // Hooks
 import { useAuth } from "./contexts/AuthContext";
@@ -176,6 +177,14 @@ const AppContent = () => {
             element={
               <ProtectedRoute>
                 <MessagingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/files"
+            element={
+              <ProtectedRoute>
+                <FilesPage />
               </ProtectedRoute>
             }
           />

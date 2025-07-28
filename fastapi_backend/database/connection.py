@@ -16,9 +16,12 @@ if settings.DATABASE_URL.startswith("sqlite"):
         echo=settings.DATABASE_ECHO
     )
 else:
+    # PostgreSQL configuration
     engine = create_engine(
         settings.DATABASE_URL,
-        echo=settings.DATABASE_ECHO
+        echo=settings.DATABASE_ECHO,
+        pool_pre_ping=True,
+        pool_recycle=300
     )
 
 # Create SessionLocal class

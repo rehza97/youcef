@@ -10,7 +10,12 @@ from models.user import User
 from models.role import Role, UserRole
 from models.permission import Permission
 from core.security import get_password_hash
-from datetime import datetime
+from datetime import datetime, timezone
+
+# Import all models to ensure they are registered
+from models.notification import Notification
+from models.user_block import UserBlock
+from models.file_upload import FileUpload, FilePreview
 
 
 def create_test_users():
@@ -30,56 +35,81 @@ def create_test_users():
     try:
         print("🔧 Creating test users...")
 
-        # Create default roles
-        admin_role = Role(
-            name="admin",
-            description="Administrator with full access"
-        )
+        # Check for existing roles and create if they don't exist
+        existing_roles = db.query(Role).all()
+        role_map = {role.name: role for role in existing_roles}
 
-        user_role = Role(
-            name="user",
-            description="Regular user"
-        )
+        roles_to_create = []
 
-        moderator_role = Role(
-            name="moderator",
-            description="Moderator with limited admin access"
-        )
+        if "admin" not in role_map:
+            admin_role = Role(
+                name="admin", description="Administrator with full access")
+            roles_to_create.append(admin_role)
+        else:
+            admin_role = role_map["admin"]
 
-        db.add_all([admin_role, user_role, moderator_role])
-        db.commit()
+        if "user" not in role_map:
+            user_role = Role(name="user", description="Regular user")
+            roles_to_create.append(user_role)
+        else:
+            user_role = role_map["user"]
+
+        if "moderator" not in role_map:
+            moderator_role = Role(
+                name="moderator", description="Moderator with limited admin access")
+            roles_to_create.append(moderator_role)
+        else:
+            moderator_role = role_map["moderator"]
+
+        if roles_to_create:
+            db.add_all(roles_to_create)
+            db.commit()
+            print(f"✅ Created {len(roles_to_create)} new roles")
+        else:
+            print("✅ All required roles already exist")
+
+        # Refresh roles to get their IDs
         db.refresh(admin_role)
         db.refresh(user_role)
         db.refresh(moderator_role)
 
-        print("✅ Default roles created")
+        # Check for existing permissions and create if they don't exist
+        existing_permissions = db.query(Permission).all()
+        permission_map = {perm.codename: perm for perm in existing_permissions}
 
-        # Create default permissions
-        permissions = [
-            Permission(name="user_management",
-                       codename="user_management", description="Manage users"),
-            Permission(name="role_management",
-                       codename="role_management", description="Manage roles"),
-            Permission(name="message_send", codename="message_send",
-                       description="Send messages"),
-            Permission(name="message_read", codename="message_read",
-                       description="Read messages"),
-            Permission(name="notification_manage", codename="notification_manage",
-                       description="Manage notifications"),
-            Permission(name="conversation_create", codename="conversation_create",
-                       description="Create conversations"),
-            Permission(name="conversation_join", codename="conversation_join",
-                       description="Join conversations"),
-            Permission(name="user_block", codename="user_block",
-                       description="Block users"),
-            Permission(name="system_admin", codename="system_admin",
-                       description="System administration")
+        permissions_to_create = []
+        required_permissions = [
+            {"name": "user_management", "codename": "user_management",
+                "description": "Manage users"},
+            {"name": "role_management", "codename": "role_management",
+                "description": "Manage roles"},
+            {"name": "message_send", "codename": "message_send",
+                "description": "Send messages"},
+            {"name": "message_read", "codename": "message_read",
+                "description": "Read messages"},
+            {"name": "notification_manage", "codename": "notification_manage",
+                "description": "Manage notifications"},
+            {"name": "conversation_create", "codename": "conversation_create",
+                "description": "Create conversations"},
+            {"name": "conversation_join", "codename": "conversation_join",
+                "description": "Join conversations"},
+            {"name": "user_block", "codename": "user_block",
+                "description": "Block users"},
+            {"name": "system_admin", "codename": "system_admin",
+                "description": "System administration"}
         ]
 
-        db.add_all(permissions)
-        db.commit()
+        for perm_data in required_permissions:
+            if perm_data["codename"] not in permission_map:
+                permission = Permission(**perm_data)
+                permissions_to_create.append(permission)
 
-        print("✅ Default permissions created")
+        if permissions_to_create:
+            db.add_all(permissions_to_create)
+            db.commit()
+            print(f"✅ Created {len(permissions_to_create)} new permissions")
+        else:
+            print("✅ All required permissions already exist")
 
         # Create test users
         test_users = [
@@ -148,9 +178,10 @@ def create_test_users():
         created_users = []
 
         for user_data in test_users:
-            # Check if user already exists
+            # Check if user already exists by username or email
             existing_user = db.query(User).filter(
-                User.username == user_data["username"]
+                (User.username == user_data["username"]) |
+                (User.email == user_data["email"])
             ).first()
 
             if existing_user:
@@ -169,7 +200,7 @@ def create_test_users():
                 is_staff=user_data.get("is_staff", False),
                 is_superuser=user_data.get("is_superuser", False),
                 is_active=True,
-                date_joined=datetime.utcnow()
+                date_joined=datetime.now(timezone.utc)
             )
 
             db.add(user)
@@ -180,11 +211,18 @@ def create_test_users():
             for role_name in user_data["roles"]:
                 role = db.query(Role).filter(Role.name == role_name).first()
                 if role:
-                    user_role = UserRole(
-                        user_id=user.id,
-                        role_id=role.id
-                    )
-                    db.add(user_role)
+                    # Check if user-role relationship already exists
+                    existing_user_role = db.query(UserRole).filter(
+                        UserRole.user_id == user.id,
+                        UserRole.role_id == role.id
+                    ).first()
+
+                    if not existing_user_role:
+                        user_role = UserRole(
+                            user_id=user.id,
+                            role_id=role.id
+                        )
+                        db.add(user_role)
 
             db.commit()
             created_users.append(user)

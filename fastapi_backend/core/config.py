@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Database
-    DATABASE_URL: str = "sqlite:///./fastapi_backend.db"
+    DATABASE_URL: str = "postgresql://postgres:123456789@localhost:5432/youcef_db"
     DATABASE_ECHO: bool = False
 
     # Redis (for caching and WebSocket)
