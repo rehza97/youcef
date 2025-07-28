@@ -20,3 +20,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+# $ python manage.py runserver_plus --cert-file cert.pem

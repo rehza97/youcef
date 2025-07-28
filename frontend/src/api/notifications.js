@@ -1,12 +1,8 @@
-import api from "../services/api";
+// This file is now deprecated - use notificationsAPI from services/api.js instead
+import { notificationsAPI } from "../services/api";
 
-// Fonctions API pour les notifications
-export const notificationsAPI = {
-  fetchNotifications: () => api.get("/api/notifications/"),
-  markAsRead: (id) => api.post(`/api/notifications/${id}/read/`),
-  updatePreferences: (prefs) =>
-    api.post("/api/notifications/preferences/", prefs),
-};
+// Re-export for backward compatibility
+export { notificationsAPI };
 
 // Legacy functions for backward compatibility
 export async function fetchNotifications() {

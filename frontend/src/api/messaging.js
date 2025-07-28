@@ -1,24 +1,8 @@
-import api from "../services/api";
+// This file is now deprecated - use messagingAPI from services/api.js instead
+import { messagingAPI } from "../services/api";
 
-// Fonctions API pour la messagerie
-export const messagingAPI = {
-  fetchConversations: () => api.get("/api/messaging/conversations/"),
-  fetchMessages: (conversationId) =>
-    api.get(`/api/messaging/conversations/${conversationId}/messages/`),
-  sendMessage: (conversationId, content) =>
-    api.post(`/api/messaging/conversations/${conversationId}/messages/`, {
-      content,
-    }),
-  createConversation: (data) => api.post("/api/messaging/conversations/", data),
-  addReaction: (messageId, reactionType) =>
-    api.post(`/api/messaging/messages/${messageId}/reactions/`, {
-      reaction_type: reactionType,
-    }),
-  blockUser: (userId, reason) =>
-    api.post("/api/messaging/blocks/", { blocked_user_id: userId, reason }),
-  unblockUser: (userId) => api.delete(`/api/messaging/blocks/${userId}/`),
-  getBlockedUsers: () => api.get("/api/messaging/blocks/"),
-};
+// Re-export for backward compatibility
+export { messagingAPI };
 
 // Legacy functions for backward compatibility
 export async function fetchConversations() {

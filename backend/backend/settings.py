@@ -268,6 +268,9 @@ CORS_ALLOW_CREDENTIALS = True
 
 # Debug CORS in development
 if DEBUG:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOW_ALL_HEADERS = True
+    CORS_ALLOW_ALL_METHODS = True
     CORS_ALLOWED_ORIGIN_REGEXES = [
         r"^http://localhost:\d+$",
         r"^http://127\.0\.0\.1:\d+$",
@@ -363,7 +366,12 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 # CSRF settings
 CSRF_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SAMESITE = 'Lax'
-CSRF_TRUSTED_ORIGINS = CORS_ALLOWED_ORIGINS
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+]
 
 # Custom user model (if needed in future)
 # AUTH_USER_MODEL = 'users.CustomUser'

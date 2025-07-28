@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import { authAPI } from "../services/api";
+import { handleApiError } from "../lib/error-handler";
 
 const AuthContext = createContext();
 
@@ -30,13 +31,39 @@ const tokenStorage = {
     }
   },
 
+  setRefreshToken: (refreshToken, rememberMe = false) => {
+    try {
+      if (rememberMe) {
+        localStorage.setItem("refreshToken", refreshToken);
+      } else {
+        sessionStorage.setItem("refreshToken", refreshToken);
+      }
+    } catch (error) {
+      console.error("Error setting refresh token:", error);
+    }
+  },
+
+  getRefreshToken: () => {
+    try {
+      return (
+        sessionStorage.getItem("refreshToken") ||
+        localStorage.getItem("refreshToken")
+      );
+    } catch (error) {
+      console.error("Error accessing refresh token storage:", error);
+      return null;
+    }
+  },
+
   removeToken: () => {
     try {
       localStorage.removeItem("token");
       localStorage.removeItem("tokenExpiry");
+      localStorage.removeItem("refreshToken");
       localStorage.removeItem("user");
       sessionStorage.removeItem("token");
       sessionStorage.removeItem("tokenExpiry");
+      sessionStorage.removeItem("refreshToken");
       sessionStorage.removeItem("user");
     } catch (error) {
       console.error("Error removing token:", error);
@@ -101,18 +128,29 @@ export const AuthProvider = ({ children }) => {
     if (tokenStorage.isTokenExpired()) {
       console.warn("Token expired, attempting refresh...");
       try {
-        const response = await authAPI.refreshToken();
-        const { token: newToken } = response.data;
-        tokenStorage.setToken(newToken, false); // Don't remember refresh tokens
+        const refreshToken = tokenStorage.getRefreshToken();
+        if (refreshToken) {
+          const response = await authAPI.refreshToken(refreshToken);
+          const { access_token: newToken, refresh_token: newRefreshToken } =
+            response.data;
+          tokenStorage.setToken(newToken, false);
+          tokenStorage.setRefreshToken(newRefreshToken, false);
 
-        // Get user data
-        const userData = tokenStorage.getUser();
-        if (userData) {
-          setUser(userData);
+          // Get user data
+          const userData = tokenStorage.getUser();
+          if (userData) {
+            setUser(userData);
+          }
+        } else {
+          // No refresh token, clear everything
+          tokenStorage.removeToken();
+          setUser(null);
         }
       } catch (error) {
         console.error("Token refresh failed:", error);
-        logout();
+        // Clear tokens on refresh failure
+        tokenStorage.removeToken();
+        setUser(null);
       }
     } else {
       const userData = tokenStorage.getUser();
@@ -135,7 +173,7 @@ export const AuthProvider = ({ children }) => {
     }, 60000); // Check every minute
 
     return () => clearInterval(interval);
-  }, [user]);
+  }, []); // Remove user dependency to prevent infinite loop
 
   const login = async (credentials, rememberMe = false) => {
     try {
@@ -143,29 +181,39 @@ export const AuthProvider = ({ children }) => {
       setLoading(true);
 
       const response = await authAPI.login(credentials);
-      const { token, user: userData } = response.data;
+      const { access_token, refresh_token, user: userData } = response.data;
 
       // Validate token format (basic check)
-      if (!token || typeof token !== "string" || token.length < 10) {
-        throw new Error("Invalid token format received from server");
+      if (
+        !access_token ||
+        typeof access_token !== "string" ||
+        access_token.length < 10
+      ) {
+        throw new Error("Format de token invalide reçu du serveur");
       }
 
-      // Sanitize user data
+      // Sanitize user data - if user data is not in response, we'll need to get it separately
       const sanitizedUser = {
-        id: userData.id,
-        username: userData.username?.trim() || "",
-        email: userData.email?.trim() || "",
-        last_login: userData.last_login,
+        id: userData?.id || null,
+        username: userData?.username?.trim() || credentials.username,
+        email: userData?.email?.trim() || "",
+        last_login: userData?.last_login || null,
       };
 
-      tokenStorage.setToken(token, rememberMe);
+      tokenStorage.setToken(access_token, rememberMe);
+      tokenStorage.setRefreshToken(refresh_token, rememberMe);
       tokenStorage.setUser(sanitizedUser, rememberMe);
       setUser(sanitizedUser);
 
       return { success: true };
     } catch (error) {
-      const errorMessage = error.response?.data?.error || "Login failed";
-      setError(errorMessage);
+      // Use improved error handling
+      const { message } = handleApiError(error, {
+        showToast: false, // Don't show toast here, let component handle it
+        logError: true,
+      });
+
+      setError(message);
 
       // Clear any existing tokens on login failure
       tokenStorage.removeToken();
@@ -173,7 +221,7 @@ export const AuthProvider = ({ children }) => {
 
       return {
         success: false,
-        error: errorMessage,
+        error: message,
         code: error.response?.data?.code || "LOGIN_ERROR",
       };
     } finally {
@@ -188,41 +236,41 @@ export const AuthProvider = ({ children }) => {
 
       // Client-side validation
       if (!userData.username || userData.username.length < 3) {
-        throw new Error("Username must be at least 3 characters long");
+        throw new Error(
+          "Le nom d'utilisateur doit contenir au moins 3 caractères"
+        );
       }
 
       if (!userData.password || userData.password.length < 8) {
-        throw new Error("Password must be at least 8 characters long");
+        throw new Error("Le mot de passe doit contenir au moins 8 caractères");
       }
 
       const response = await authAPI.register(userData);
-      const { token, user: newUser } = response.data;
+      const { success, message, data } = response.data;
 
-      // Validate token format
-      if (!token || typeof token !== "string" || token.length < 10) {
-        throw new Error("Invalid token format received from server");
+      if (!success) {
+        throw new Error(message || "Échec de l'inscription");
       }
 
-      // Sanitize user data
-      const sanitizedUser = {
-        id: newUser.id,
-        username: newUser.username?.trim() || "",
-        email: newUser.email?.trim() || "",
-        date_joined: newUser.date_joined,
+      // Registration successful, but no tokens returned
+      // User needs to login separately after registration
+      return {
+        success: true,
+        message:
+          "Inscription réussie. Veuillez vous connecter avec vos identifiants.",
       };
-
-      tokenStorage.setToken(token, rememberMe);
-      tokenStorage.setUser(sanitizedUser, rememberMe);
-      setUser(sanitizedUser);
-
-      return { success: true };
     } catch (error) {
-      const errorMessage = error.response?.data?.error || "Registration failed";
-      setError(errorMessage);
+      // Use improved error handling
+      const { message } = handleApiError(error, {
+        showToast: false, // Don't show toast here, let component handle it
+        logError: true,
+      });
+
+      setError(message);
 
       return {
         success: false,
-        error: errorMessage,
+        error: message,
         code: error.response?.data?.code || "REGISTER_ERROR",
         details: error.response?.data?.details || [],
       };
@@ -251,10 +299,16 @@ export const AuthProvider = ({ children }) => {
 
   const refreshToken = async () => {
     try {
-      const response = await authAPI.refreshToken();
-      const { token } = response.data;
+      const refreshToken = tokenStorage.getRefreshToken();
+      if (!refreshToken) {
+        throw new Error("Aucun token de rafraîchissement disponible");
+      }
 
-      tokenStorage.setToken(token, false);
+      const response = await authAPI.refreshToken(refreshToken);
+      const { access_token, refresh_token: newRefreshToken } = response.data;
+
+      tokenStorage.setToken(access_token, false);
+      tokenStorage.setRefreshToken(newRefreshToken, false);
       return { success: true };
     } catch (error) {
       console.error("Token refresh failed:", error);
@@ -279,7 +333,7 @@ export const AuthProvider = ({ children }) => {
       return { success: true };
     } catch (error) {
       const errorMessage =
-        error.response?.data?.error || "Profile update failed";
+        error.response?.data?.error || "Échec de la mise à jour du profil";
       setError(errorMessage);
 
       return {
@@ -290,32 +344,32 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const changePassword = async (passwordData) => {
-    try {
-      setError(null);
-      const response = await authAPI.changePassword(passwordData);
-      const { token } = response.data;
+  // const changePassword = async (passwordData) => {
+  //   try {
+  //     setError(null);
+  //     const response = await authAPI.changePassword(passwordData);
+  //     const { success, message } = response.data;
 
-      // Update token since password change invalidates old tokens
-      tokenStorage.setToken(
-        token,
-        tokenStorage.getToken() === localStorage.getItem("token")
-      );
+  //     if (!success) {
+  //       throw new Error(message || "Password change failed");
+  //     }
 
-      return { success: true };
-    } catch (error) {
-      const errorMessage =
-        error.response?.data?.error || "Password change failed";
-      setError(errorMessage);
+  //     // Password change successful, but no new token returned
+  //     // User may need to login again
+  //     return { success: true, message: "Password changed successfully" };
+  //   } catch (error) {
+  //     const errorMessage =
+  //       error.response?.data?.error || "Password change failed";
+  //     setError(errorMessage);
 
-      return {
-        success: false,
-        error: errorMessage,
-        code: error.response?.data?.code || "PASSWORD_CHANGE_ERROR",
-        details: error.response?.data?.details || [],
-      };
-    }
-  };
+  //     return {
+  //       success: false,
+  //       error: errorMessage,
+  //       code: error.response?.data?.code || "PASSWORD_CHANGE_ERROR",
+  //       details: error.response?.data?.details || [],
+  //     };
+  //   }
+  // };
 
   const clearError = () => {
     setError(null);
@@ -330,7 +384,7 @@ export const AuthProvider = ({ children }) => {
     logout,
     refreshToken,
     updateProfile,
-    changePassword,
+    // changePassword,
     clearError,
     isAuthenticated: !!user && !tokenStorage.isTokenExpired(),
   };
