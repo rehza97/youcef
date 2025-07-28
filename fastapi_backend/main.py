@@ -16,6 +16,7 @@ from api.notifications import notifications_router
 from api.messaging import messaging_router
 from api.health import health_router
 from api.files import files_router
+from api.encaissement import router as encaissement_router
 
 # Import database and dependencies
 from database.connection import init_db, close_db
@@ -124,6 +125,13 @@ app.include_router(
     dependencies=[Depends(get_current_user)]
 )
 
+app.include_router(
+    encaissement_router,
+    prefix="/api/encaissement",
+    tags=["Encaissement AR DOT"],
+    dependencies=[Depends(get_current_user)]
+)
+
 
 @app.get("/")
 async def root():
@@ -160,14 +168,16 @@ async def api_info():
             "Notifications System",
             "WebSocket Support",
             "Rate Limiting",
-            "CORS Support"
+            "CORS Support",
+            "Encaissement AR DOT Module"
         ],
         "endpoints": {
             "authentication": "/api/auth",
             "users": "/users",
             "notifications": "/api/notifications",
             "messaging": "/api/messaging",
-            "health": "/api/health"
+            "health": "/api/health",
+            "encaissement": "/api/encaissement"
         }
     }
 

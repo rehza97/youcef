@@ -17,6 +17,7 @@ import {
   Menu,
   X,
   FileText,
+  BarChart3,
 } from "lucide-react";
 
 const Sidebar = () => {
@@ -26,6 +27,7 @@ const Sidebar = () => {
 
   const navigation = [
     { name: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Encaissement AR DOT", href: "/encaissement", icon: BarChart3 },
     { name: "Utilisateurs", href: "/users", icon: Users },
     { name: "Rôles", href: "/roles", icon: Shield },
     { name: "Permissions", href: "/permissions", icon: Key },

@@ -32,6 +32,7 @@ import HealthPage from "./pages/HealthPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ApiInfoPage from "./pages/ApiInfoPage";
 import FilesPage from "./pages/FilesPage";
+import EncaissementPage from "./pages/EncaissementPage";
 
 // Hooks
 import { useAuth } from "./contexts/AuthContext";
@@ -209,6 +210,14 @@ const AppContent = () => {
             element={
               <ProtectedRoute>
                 <ApiInfoPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/encaissement"
+            element={
+              <ProtectedRoute>
+                <EncaissementPage />
               </ProtectedRoute>
             }
           />
