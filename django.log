@@ -1,0 +1,10 @@
+INFO 2025-07-28 16:42:09,894 autoreload 27300 30152 Watching for file changes with StatReloader
+INFO 2025-07-28 16:42:25,984 autoreload 27300 30152 C:\Users\fetho\OneDrive\Desktop\freelance project\youcef\backend\run_server.py changed, reloading.
+INFO 2025-07-28 16:42:27,224 autoreload 26544 29132 Watching for file changes with StatReloader
+INFO 2025-07-28 16:42:29,342 basehttp 26544 6032 "GET /api/health/ HTTP/1.1" 301 0
+INFO 2025-07-28 16:42:29,381 basehttp 26544 2700 code 400, message Bad request version ('%?\x00"\x13\x01\x13\x03\x13\x02À+À/Ì©Ì¨À,À0À')
+ERROR 2025-07-28 16:42:29,381 basehttp 26544 2700 You're accessing the development server over HTTPS, but it only supports HTTP.
+INFO 2025-07-28 16:42:29,384 basehttp 26544 29140 code 400, message Bad request version ('\x9c\x82é"t°¯¸Ý5¿')
+ERROR 2025-07-28 16:42:29,384 basehttp 26544 29140 You're accessing the development server over HTTPS, but it only supports HTTP.
+INFO 2025-07-28 16:43:12,933 basehttp 26544 24260 "OPTIONS /api/login/ HTTP/1.1" 200 0
+INFO 2025-07-28 16:43:24,486 basehttp 26544 24260 "OPTIONS /api/login/ HTTP/1.1" 200 0

@@ -1,0 +1,3 @@
+backend/django.log
+__pycache__/
+backend/api/__pycache__

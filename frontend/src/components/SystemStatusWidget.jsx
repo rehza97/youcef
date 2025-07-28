@@ -21,7 +21,7 @@ export default function SystemStatusWidget() {
         }
         setStatus(res.data);
       } catch (err) {
-        setError("Impossible d'atteindre l'API du backend.");
+        setError(`Impossible d'atteindre l'API du backend. ${err.message}`);
       } finally {
         setLoading(false);
       }
