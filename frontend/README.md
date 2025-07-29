@@ -10,6 +10,8 @@ A modern React application built with Vite, featuring comprehensive error handli
 - **Role-Based Access Control (RBAC)**: User roles and permissions
 - **Real-time Messaging**: WebSocket-powered chat system
 - **Notifications**: Real-time notifications with preferences
+- **File Management**: Upload, process, and manage files with previews
+- **Encaissement Module**: Financial data processing and analysis
 - **Responsive Design**: Mobile-first approach with dark mode support
 - **Error Handling**: Comprehensive error management and user feedback
 
@@ -69,13 +71,15 @@ npm run preview
 
 ### API Service (`services/api.js`)
 
-Centralized API management with:
+Centralized API management with comprehensive CRUD operations:
 
-- Axios instance with interceptors
-- Automatic token management
-- CSRF protection
-- Request/response sanitization
-- Error handling and retry logic
+- **Authentication**: Login, register, token refresh
+- **Users**: Full CRUD with role management
+- **Roles & Permissions**: Complete RBAC system
+- **Notifications**: CRUD operations with preferences
+- **Messaging**: Conversations, messages, and user blocking
+- **Files**: Upload, preview, and management
+- **Encaissement**: Financial data processing
 
 ```javascript
 import {
@@ -83,23 +87,27 @@ import {
   usersAPI,
   messagingAPI,
   notificationsAPI,
+  filesAPI,
+  encaissementAPI,
 } from "../services/api";
 
 // Usage examples
 const login = await authAPI.login(credentials);
 const users = await usersAPI.getUsers();
 const conversations = await messagingAPI.fetchConversations();
+const files = await filesAPI.getUserFiles();
+const overview = await encaissementAPI.getOverview();
 ```
 
 ### Error Handling (`lib/error-handler.js`)
 
-Comprehensive error management:
+Comprehensive error management with backend-specific handling:
 
-- Error classification by type and severity
-- User-friendly error messages
-- Toast notifications
-- Retry logic with exponential backoff
-- Error boundaries for React components
+- **Error Classification**: HTTP status and backend error codes
+- **User-friendly Messages**: Contextual error messages
+- **Toast Integration**: Automatic error notifications
+- **Retry Logic**: Exponential backoff for failed requests
+- **Backend Compatibility**: Handles FastAPI error formats
 
 ```javascript
 import { handleApiError, ERROR_SEVERITY } from "../lib/error-handler";
@@ -117,14 +125,13 @@ try {
 
 ### Loading Components (`components/ui/loading.jsx`)
 
-Rich loading states:
+Rich loading states for better UX:
 
-- Spinner with different sizes and colors
-- Skeleton loaders
-- Loading overlays
-- Progress bars
-- Status indicators
-- Infinite scroll loaders
+- **Spinner**: Different sizes and colors
+- **Skeleton Loaders**: Content placeholders
+- **Loading Overlays**: Full-page loading states
+- **Progress Bars**: Upload and processing indicators
+- **Status Indicators**: Success, error, warning states
 
 ```javascript
 import { Spinner, LoadingOverlay, ContentLoader } from '../components/ui/loading';
@@ -140,16 +147,16 @@ import { Spinner, LoadingOverlay, ContentLoader } from '../components/ui/loading
 
 React Error Boundary for catching JavaScript errors:
 
-- Graceful error fallback UI
-- Retry mechanism
-- Development error details
-- Navigation options
+- **Graceful Fallback**: User-friendly error UI
+- **Retry Mechanism**: Automatic retry with limits
+- **Development Details**: Error details in development
+- **Navigation Options**: Home and reload buttons
 
 ## 🔐 Authentication
 
 ### Features
 
-- Token-based authentication
+- Token-based authentication with JWT
 - Automatic token refresh
 - Session/local storage management
 - Route protection
@@ -270,28 +277,48 @@ VITE_WS_BASE_URL=ws://127.0.0.1:8000/
 
 ### Authentication Endpoints
 
-- `POST /api/login/` - User login
-- `POST /api/register/` - User registration
-- `POST /api/logout/` - User logout
-- `POST /api/refresh-token/` - Token refresh
+- `POST /api/auth/login/` - User login
+- `POST /api/auth/register/` - User registration
+- `POST /api/auth/logout/` - User logout
+- `POST /api/auth/refresh-token/` - Token refresh
 
 ### User Management
 
-- `GET /users/users/` - Get all users
-- `GET /users/roles/` - Get all roles
-- `GET /users/permissions/` - Get all permissions
-- `POST /users/assign-role/` - Assign role to user
+- `GET /api/users/` - Get all users
+- `POST /api/users/` - Create user (Admin only)
+- `PUT /api/users/{id}` - Update user
+- `DELETE /api/users/{id}` - Delete user (Admin only)
+- `GET /api/users/roles/` - Get all roles
+- `POST /api/users/roles/` - Create role (Admin only)
+- `GET /api/users/permissions/` - Get all permissions
 
 ### Messaging
 
 - `GET /api/messaging/conversations/` - Get conversations
+- `POST /api/messaging/conversations/` - Create conversation
 - `GET /api/messaging/conversations/{id}/messages/` - Get messages
 - `POST /api/messaging/conversations/{id}/messages/` - Send message
 
 ### Notifications
 
-- `GET /api/notifications/notifications/` - Get notifications
-- `POST /api/notifications/notifications/{id}/mark_as_read/` - Mark as read
+- `GET /api/notifications/` - Get notifications
+- `POST /api/notifications/` - Create notification
+- `PUT /api/notifications/{id}/read/` - Mark as read
+
+### Files
+
+- `POST /api/files/upload/` - Upload file
+- `GET /api/files/` - Get user files
+- `GET /api/files/{id}/` - Get file details
+- `PUT /api/files/{id}/` - Update file metadata
+
+### Encaissement
+
+- `POST /api/encaissement/upload-data/` - Upload financial data
+- `GET /api/encaissement/overview/` - Get overview statistics
+- `GET /api/encaissement/by-organisation/` - Data by organization
+- `GET /api/encaissement/by-date/` - Data by date
+- `GET /api/encaissement/by-encaisse-rate/` - Data by encaissement rate
 
 ## 🤝 Contributing
 
@@ -325,6 +352,9 @@ VITE_WS_BASE_URL=ws://127.0.0.1:8000/
 3. **Error Handling**: Implemented comprehensive error management system
 4. **Loading States**: Added rich loading components and states
 5. **Error Boundaries**: Added React Error Boundaries for graceful error handling
+6. **Backend Compatibility**: Updated to work with FastAPI backend fixes
+7. **CRUD Operations**: Added complete CRUD for all modules
+8. **Encaissement Module**: Added financial data processing interface
 
 ### 🆕 New Features
 
@@ -333,6 +363,9 @@ VITE_WS_BASE_URL=ws://127.0.0.1:8000/
 3. **Error Boundary**: React Error Boundary with retry mechanism
 4. **Improved Auth Context**: Better error handling and token management
 5. **Enhanced Forms**: Better validation and user feedback
+6. **Encaissement Page**: Complete financial data interface
+7. **Admin Endpoints**: Added admin-only file management
+8. **Backend Error Handling**: Specific error messages for backend responses
 
 ### 🔧 Technical Improvements
 
@@ -341,6 +374,9 @@ VITE_WS_BASE_URL=ws://127.0.0.1:8000/
 3. **Toast Integration**: Seamless error notification system
 4. **Loading States**: Multiple loading component types
 5. **Security**: Enhanced input sanitization and validation
+6. **Backend Integration**: Full compatibility with FastAPI backend
+7. **CRUD Operations**: Complete Create, Read, Update, Delete for all modules
+8. **File Management**: Enhanced file upload and processing
 
 ## 🎯 Next Steps
 

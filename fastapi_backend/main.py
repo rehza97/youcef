@@ -1,13 +1,16 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.security import HTTPBearer
 from contextlib import asynccontextmanager
 import uvicorn
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict
 import logging
 from datetime import datetime
+import json
+from sqlalchemy.orm import Session
+import sys
 
 # Import routers
 from api.auth import auth_router
@@ -18,23 +21,37 @@ from api.health import health_router
 from api.files import files_router
 from api.encaissement import router as encaissement_router
 
-# Import database and dependencies
-from database.connection import init_db, close_db
+# Import database and models
+from database.connection import engine, Base, get_db
+from models.user import User
+from models.conversation import Conversation, ConversationParticipant
+from models.message import Message
+from core.security import verify_token, get_current_user
 from core.config import settings
-from core.security import get_current_user
 from core.rate_limiter import RateLimiter
 
-# Configure logging
+# Import WebSocket manager
+from websocket_manager import manager
+
+# Configure detailed logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(levelname)s %(asctime)s %(module)s %(process)d %(thread)d %(message)s',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('fastapi.log'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout),
+        # Add UTF-8 encoding
+        logging.FileHandler('debug.log', encoding='utf-8')
     ]
 )
 
-logger = logging.getLogger(__name__)
+# Create loggers
+logger = logging.getLogger("main")
+ws_logger = logging.getLogger("websocket")
+file_logger = logging.getLogger("files")
+
+# Set log levels
+ws_logger.setLevel(logging.DEBUG)
+file_logger.setLevel(logging.DEBUG)
 
 # Security
 security = HTTPBearer()
@@ -42,18 +59,18 @@ security = HTTPBearer()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager"""
     # Startup
     logger.info("Starting FastAPI application...")
-    await init_db()
-    logger.info("Database initialized")
+
+    # Create database tables
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created successfully")
 
     yield
 
     # Shutdown
     logger.info("Shutting down FastAPI application...")
-    await close_db()
-    logger.info("Database connection closed")
+    logger.info("Database connections closed")
 
 # Create FastAPI app
 app = FastAPI(
@@ -65,19 +82,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
+# CORS middleware - Configure for WebSocket support
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS,
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Trusted host middleware
+# Trusted host middleware - Allow localhost and 127.0.0.1
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=settings.ALLOWED_HOSTS
+    allowed_hosts=["*"]  # Allow all hosts for development
 )
 
 # Rate limiter
@@ -165,27 +182,351 @@ async def api_info():
             "Authentication & Authorization",
             "Role-Based Access Control (RBAC)",
             "Real-time Messaging",
-            "Notifications System",
-            "WebSocket Support",
-            "Rate Limiting",
-            "CORS Support",
-            "Encaissement AR DOT Module"
+            "Real-time Notifications",
+            "File Upload & Preview",
+            "Encaissement Processing"
         ],
-        "endpoints": {
-            "authentication": "/api/auth",
-            "users": "/users",
-            "notifications": "/api/notifications",
-            "messaging": "/api/messaging",
-            "health": "/api/health",
-            "encaissement": "/api/encaissement"
-        }
+        "websocket_endpoints": [
+            "/ws/notifications/{user_id}",
+            "/ws/chat/{conversation_id}"
+        ]
     }
+
+
+# WebSocket Endpoints for Real-time Features
+
+async def get_user_from_token(token: str, db: Session) -> Optional[User]:
+    """Extract user from JWT token"""
+    ws_logger.debug(f"Starting token validation for token: {token[:20]}...")
+
+    try:
+        # Remove 'Bearer ' prefix if present
+        if token.startswith('Bearer '):
+            token = token[7:]
+            ws_logger.debug("Removed 'Bearer ' prefix from token")
+
+        ws_logger.debug(f"Validating token: {token[:20]}...")
+
+        # Import User model here to avoid circular imports
+        from models.user import User
+
+        token_data = verify_token(token)
+        ws_logger.debug(
+            f"Token validation successful, user_id: {token_data.user_id}")
+
+        if token_data and token_data.user_id:
+            user = db.query(User).filter(User.id == token_data.user_id).first()
+            if user:
+                ws_logger.debug(f"User found: {user.username} (ID: {user.id})")
+                return user
+            else:
+                ws_logger.error(
+                    f"User not found in database for ID: {token_data.user_id}")
+        else:
+            ws_logger.error("Token data is missing user_id")
+    except Exception as e:
+        ws_logger.error(f"Token validation error: {e}")
+        ws_logger.error(f"Error type: {type(e)}")
+        ws_logger.error(f"Error details: {str(e)}")
+
+    ws_logger.error("Token validation failed")
+    return None
+
+
+# Test WebSocket endpoint (no authentication)
+@app.websocket("/ws/test")
+async def websocket_test(websocket: WebSocket):
+    """Simple test WebSocket endpoint"""
+    print("Test WebSocket connection attempt")
+    await websocket.accept()
+    print("Test WebSocket connection accepted")
+
+    try:
+        await websocket.send_text(json.dumps({"type": "test", "message": "Connection successful"}))
+        while True:
+            data = await websocket.receive_text()
+            print(f"Test WebSocket received: {data}")
+            await websocket.send_text(json.dumps({"type": "echo", "data": data}))
+    except WebSocketDisconnect:
+        print("Test WebSocket disconnected")
+    except Exception as e:
+        print(f"Test WebSocket error: {e}")
+
+
+@app.websocket("/ws/notifications/")
+async def websocket_notifications(websocket: WebSocket):
+    """WebSocket endpoint for real-time notifications"""
+
+    # Get user_id from query parameters
+    user_id_str = websocket.query_params.get("user_id")
+    if not user_id_str:
+        print("No user_id provided in query parameters")
+        await websocket.close(code=4002, reason="No user_id provided")
+        return
+
+    try:
+        user_id = int(user_id_str)
+    except ValueError:
+        print(f"Invalid user_id format: {user_id_str}")
+        await websocket.close(code=4002, reason="Invalid user_id format")
+        return
+
+    print(f"WebSocket connection attempt for user_id: {user_id}")
+    ws_logger.info(f"WebSocket connection attempt for user_id: {user_id}")
+
+    # Accept connection first
+    await websocket.accept()
+    print("WebSocket connection accepted")
+    ws_logger.debug("WebSocket connection accepted")
+
+    try:
+        # Get token from query parameters AFTER accepting connection
+        token = websocket.query_params.get("token")
+        print(f"Token from query params: {'Present' if token else 'Missing'}")
+        ws_logger.debug(
+            f"Token from query params: {'Present' if token else 'Missing'}")
+
+        if not token:
+            print("No token provided in query parameters")
+            ws_logger.error("No token provided in query parameters")
+            await websocket.close(code=4001, reason="No token provided")
+            return
+
+        # Create database session manually
+        from database.connection import SessionLocal
+        db = SessionLocal()
+
+        try:
+            # Validate user AFTER accepting connection
+            print(f"Validating user for user_id: {user_id}")
+            ws_logger.debug(f"Validating user for user_id: {user_id}")
+            user = await get_user_from_token(token, db)
+
+            if not user or user.id != user_id:
+                print(
+                    f"Authentication failed - User: {user}, Expected user_id: {user_id}")
+                ws_logger.error(
+                    f"Authentication failed - User: {user}, Expected user_id: {user_id}")
+                await websocket.close(code=4003, reason="Access denied")
+                return
+
+            print(f"Authentication successful for user: {user.username}")
+            ws_logger.info(
+                f"Authentication successful for user: {user.username}")
+
+            # Register connection with manager (don't call accept again)
+            print("Registering with notification manager...")
+            ws_logger.debug("Registering with notification manager...")
+            if user_id not in manager.active_connections:
+                manager.active_connections[user_id] = {}
+            manager.active_connections[user_id]["notifications"] = websocket
+            print(f"User {user_id} registered for notifications WebSocket")
+            ws_logger.info(
+                f"User {user_id} registered for notifications WebSocket")
+
+            try:
+                # Send welcome message
+                welcome_message = {
+                    "type": "connection",
+                    "message": "Connected to notifications",
+                    "user_id": user_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+                print(f"Sending welcome message: {welcome_message}")
+                ws_logger.debug(f"Sending welcome message: {welcome_message}")
+                await websocket.send_text(json.dumps(welcome_message))
+                print("Welcome message sent")
+                ws_logger.debug("Welcome message sent")
+
+                # Keep connection alive
+                print("Starting message loop...")
+                ws_logger.debug("Starting message loop...")
+                while True:
+                    data = await websocket.receive_text()
+                    print(f"Received message: {data}")
+                    ws_logger.debug(f"Received message: {data}")
+
+                    try:
+                        message = json.loads(data)
+                        print(f"Parsed message: {message}")
+                        ws_logger.debug(f"Parsed message: {message}")
+
+                        if message.get("type") == "ping":
+                            print("Received ping, sending pong")
+                            ws_logger.debug("Received ping, sending pong")
+                            await websocket.send_text(json.dumps({"type": "pong"}))
+                            print("Pong sent")
+                            ws_logger.debug("Pong sent")
+
+                    except json.JSONDecodeError:
+                        print("Received non-JSON message, ignoring")
+                        ws_logger.warning(
+                            "Received non-JSON message, ignoring")
+                        pass
+
+            except WebSocketDisconnect:
+                print(f"User {user_id} disconnected from notifications")
+                ws_logger.info(
+                    f"User {user_id} disconnected from notifications")
+                manager.disconnect(user_id, "notifications")
+            except Exception as e:
+                print(f"WebSocket error for user {user_id}: {e}")
+                ws_logger.error(f"WebSocket error for user {user_id}: {e}")
+                ws_logger.error(f"Error type: {type(e)}")
+                manager.disconnect(user_id, "notifications")
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"WebSocket connection error: {e}")
+        ws_logger.error(f"WebSocket connection error: {e}")
+        ws_logger.error(f"Error type: {type(e)}")
+        ws_logger.error(f"Error details: {str(e)}")
+        try:
+            await websocket.close(code=4000, reason="Internal server error")
+        except:
+            print("Failed to close WebSocket connection")
+            ws_logger.error("Failed to close WebSocket connection")
+            pass
+
+
+@app.websocket("/ws/chat/")
+async def websocket_chat(websocket: WebSocket):
+    """WebSocket endpoint for real-time chat"""
+
+    # Get conversation_id from query parameters
+    conversation_id_str = websocket.query_params.get("conversation_id")
+    if not conversation_id_str:
+        print("No conversation_id provided in query parameters")
+        await websocket.close(code=4002, reason="No conversation_id provided")
+        return
+
+    try:
+        conversation_id = int(conversation_id_str)
+    except ValueError:
+        print(f"Invalid conversation_id format: {conversation_id_str}")
+        await websocket.close(code=4002, reason="Invalid conversation_id format")
+        return
+
+    print(
+        f"Chat WebSocket connection attempt for conversation_id: {conversation_id}")
+
+    # Accept connection first
+    await websocket.accept()
+    print("Chat WebSocket connection accepted")
+
+    try:
+        # Get token from query parameters
+        token = websocket.query_params.get("token")
+        if not token:
+            print("No token provided for chat WebSocket")
+            await websocket.close(code=4001, reason="No token provided")
+            return
+
+        # Create database session manually
+        from database.connection import SessionLocal
+        db = SessionLocal()
+
+        try:
+            # Validate user
+            user = await get_user_from_token(token, db)
+            if not user:
+                print("Chat WebSocket authentication failed")
+                await websocket.close(code=4003, reason="Access denied")
+                return
+
+            print(
+                f"Chat WebSocket authentication successful for user: {user.username}")
+
+            # Connect to conversation
+            await manager.connect_to_conversation(websocket, conversation_id)
+            print(
+                f"User {user.id} connected to chat conversation {conversation_id}")
+
+            try:
+                # Send welcome message
+                welcome_message = {
+                    "type": "connection",
+                    "message": "Connected to chat",
+                    "conversation_id": conversation_id,
+                    "user_id": user.id,
+                    "timestamp": datetime.now().isoformat()
+                }
+                await websocket.send_text(json.dumps(welcome_message))
+                print("Chat welcome message sent")
+
+                # Keep connection alive
+                while True:
+                    data = await websocket.receive_text()
+                    print(f"Chat message received: {data}")
+
+                    try:
+                        message = json.loads(data)
+                        if message.get("type") == "message":
+                            # Broadcast message to all participants in conversation
+                            await manager.broadcast_to_conversation(
+                                json.dumps({
+                                    "type": "message",
+                                    "content": message.get("content"),
+                                    "user_id": user.id,
+                                    "username": user.username,
+                                    "conversation_id": conversation_id,
+                                    "timestamp": datetime.now().isoformat()
+                                }),
+                                conversation_id
+                            )
+                        elif message.get("type") == "ping":
+                            await websocket.send_text(json.dumps({"type": "pong"}))
+                    except json.JSONDecodeError:
+                        print("Chat: Received non-JSON message, ignoring")
+
+            except WebSocketDisconnect:
+                print(
+                    f"User {user.id} disconnected from chat conversation {conversation_id}")
+                manager.disconnect_from_conversation(
+                    conversation_id, websocket)
+            except Exception as e:
+                print(f"Chat WebSocket error: {e}")
+                manager.disconnect_from_conversation(
+                    conversation_id, websocket)
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"Chat WebSocket connection error: {e}")
+        try:
+            await websocket.close(code=4000, reason="Internal server error")
+        except:
+            print("Failed to close chat WebSocket connection")
+            pass
+
+
+# Helper functions for sending real-time messages
+async def send_notification_to_user(user_id: int, notification_data: dict):
+    """Send notification to specific user via WebSocket"""
+    message = {
+        "type": "notification",
+        "data": notification_data
+    }
+    await manager.send_personal_message(json.dumps(message), user_id, "notifications")
+
+
+async def send_message_to_conversation(conversation_id: int, message_data: dict):
+    """Send message to conversation participants via WebSocket"""
+    message = {
+        "type": "new_message",
+        "message": message_data
+    }
+    await manager.broadcast_to_conversation(json.dumps(message), conversation_id)
+
 
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
         log_level="info"
     )

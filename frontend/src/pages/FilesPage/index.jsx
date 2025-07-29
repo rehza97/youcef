@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { filesAPI } from "../../services/api";
+import { useNotificationsWebSocket } from "../../hooks/useNotificationsWebSocket";
+import { debugComponent } from "../../lib/debug.js";
 import {
   Card,
   CardContent,
@@ -73,6 +75,8 @@ import {
   AlertCircle,
   Plus,
   RefreshCw,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
@@ -106,10 +110,28 @@ ChartJS.register(
 );
 
 const FilesPage = () => {
+  const debug = debugComponent("FilesPage");
   const queryClient = useQueryClient();
   const [selectedFile, setSelectedFile] = useState(null);
   const [showFileDetails, setShowFileDetails] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+
+  // Real-time notifications from WebSocket
+  const { notifications: liveNotifications, isConnected: wsConnected } =
+    useNotificationsWebSocket();
+
+  // Count file-related notifications
+  const fileNotificationCount = liveNotifications.filter(
+    (notification) =>
+      notification.data?.action?.includes("upload") ||
+      notification.data?.action?.includes("processing")
+  ).length;
+
+  debug.log("Component rendered", {
+    wsConnected,
+    notificationCount: liveNotifications.length,
+    fileNotificationCount,
+  });
 
   // Data processing states
   const [processedData, setProcessedData] = useState({});
@@ -122,6 +144,37 @@ const FilesPage = () => {
     encaisseRate: "all",
   });
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Handle real-time notifications
+  useEffect(() => {
+    if (liveNotifications.length > 0) {
+      const fileNotifications = liveNotifications.filter(
+        (notification) =>
+          notification.notification_type === "success" ||
+          notification.notification_type === "info" ||
+          notification.notification_type === "error"
+      );
+
+      fileNotifications.forEach((notification) => {
+        if (notification.data?.action === "upload") {
+          toast.success(`Fichier téléchargé: ${notification.data.filename}`);
+        } else if (notification.data?.action === "processing_started") {
+          toast.info(`Traitement commencé: ${notification.data.filename}`);
+        } else if (notification.data?.action === "processing_progress") {
+          toast.info(
+            `Progression: ${notification.data.filename} - ${notification.data.progress}%`
+          );
+        } else if (notification.data?.action === "processing_completed") {
+          toast.success(`Traitement terminé: ${notification.data.filename}`);
+          // Refresh files list
+          queryClient.invalidateQueries({ queryKey: ["files"] });
+          queryClient.invalidateQueries({ queryKey: ["fileStats"] });
+        } else if (notification.data?.action === "processing_failed") {
+          toast.error(`Erreur de traitement: ${notification.data.filename}`);
+        }
+      });
+    }
+  }, [liveNotifications, queryClient]);
 
   // Sample chart data for demonstration
   const sampleChartData = {
@@ -191,26 +244,39 @@ const FilesPage = () => {
   });
 
   const uploadFileMutation = useMutation({
-    mutationFn: (file) => filesAPI.uploadFile(file),
+    mutationFn: (file) => {
+      debug.log("Upload mutation started", {
+        fileName: file.name,
+        fileSize: file.size,
+      });
+      return filesAPI.uploadFile(file);
+    },
     onSuccess: (response) => {
+      debug.success("File upload successful", response.data);
       queryClient.invalidateQueries({ queryKey: ["files"] });
       queryClient.invalidateQueries({ queryKey: ["fileStats"] });
       processFileData(response.data.file_id, response.data.file);
       toast.success("Fichier téléchargé avec succès");
     },
     onError: (error) => {
+      debug.error("File upload failed", error);
       toast.error("Erreur lors du téléchargement du fichier");
     },
   });
 
   const deleteFileMutation = useMutation({
-    mutationFn: (fileId) => filesAPI.deleteFile(fileId),
+    mutationFn: (fileId) => {
+      debug.log("Delete mutation started", { fileId });
+      return filesAPI.deleteFile(fileId);
+    },
     onSuccess: () => {
+      debug.success("File deleted successfully");
       queryClient.invalidateQueries({ queryKey: ["files"] });
       queryClient.invalidateQueries({ queryKey: ["fileStats"] });
       toast.success("Fichier supprimé avec succès");
     },
-    onError: () => {
+    onError: (error) => {
+      debug.error("File deletion failed", error);
       toast.error("Erreur lors de la suppression du fichier");
     },
   });
@@ -221,7 +287,16 @@ const FilesPage = () => {
 
   const handleFileUpload = async (event) => {
     const file = event.target.files[0];
-    if (!file) return;
+    debug.fileUpload(file, {
+      type: file?.type,
+      size: file?.size,
+      name: file?.name,
+    });
+
+    if (!file) {
+      debug.warn("No file selected");
+      return;
+    }
 
     const allowedTypes = [
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -231,11 +306,21 @@ const FilesPage = () => {
     ];
 
     if (!allowedTypes.includes(file.type)) {
+      debug.error("Invalid file type", {
+        fileType: file.type,
+        allowedTypes,
+      });
       toast.error(
         "Seuls les fichiers Excel (.xlsx, .xls) et CSV (.csv) sont autorisés"
       );
       return;
     }
+
+    debug.log("Starting file upload", {
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type,
+    });
 
     uploadFileMutation.mutate(file);
   };
@@ -514,18 +599,45 @@ const FilesPage = () => {
               <p className="text-gray-600">
                 Télécharger, traiter et analyser vos fichiers Excel et CSV
               </p>
+              {/* WebSocket Connection Status */}
+              <div className="flex items-center mt-2">
+                <div
+                  className={`flex items-center text-sm ${
+                    wsConnected ? "text-green-600" : "text-red-600"
+                  }`}
+                >
+                  {wsConnected ? (
+                    <Wifi className="h-4 w-4 mr-1" />
+                  ) : (
+                    <WifiOff className="h-4 w-4 mr-1" />
+                  )}
+                  {wsConnected
+                    ? "Notifications en temps réel activées"
+                    : "Notifications en temps réel désactivées"}
+                </div>
+                {wsConnected && fileNotificationCount > 0 && (
+                  <Badge variant="secondary" className="ml-2">
+                    {fileNotificationCount} notification
+                    {fileNotificationCount > 1 ? "s" : ""}
+                  </Badge>
+                )}
+              </div>
             </div>
-            <Button
-              onClick={() => refetchFiles()}
-              variant="outline"
-              size="sm"
-              disabled={filesLoading}
-            >
-              <RefreshCw
-                className={`h-4 w-4 mr-2 ${filesLoading ? "animate-spin" : ""}`}
-              />
-              Actualiser
-            </Button>
+            <div className="flex items-center space-x-2">
+              <Button
+                onClick={() => refetchFiles()}
+                variant="outline"
+                size="sm"
+                disabled={filesLoading}
+              >
+                <RefreshCw
+                  className={`h-4 w-4 mr-2 ${
+                    filesLoading ? "animate-spin" : ""
+                  }`}
+                />
+                Actualiser
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -605,6 +717,12 @@ const FilesPage = () => {
                 <CardTitle className="flex items-center gap-2">
                   <Upload className="h-5 w-5" />
                   Télécharger un fichier
+                  {wsConnected && (
+                    <Badge variant="outline" className="ml-2">
+                      <Wifi className="h-3 w-3 mr-1" />
+                      Temps réel
+                    </Badge>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -628,7 +746,21 @@ const FilesPage = () => {
                       Formats supportés: Excel (.xlsx, .xls) et CSV (.csv)
                     </p>
                     {uploadFileMutation.isPending && (
-                      <Progress value={50} className="mt-4" />
+                      <div className="mt-4 space-y-2">
+                        <Progress value={50} className="w-full" />
+                        <p className="text-sm text-blue-600">
+                          ⏳ Traitement en cours... Vous recevrez une
+                          notification en temps réel
+                        </p>
+                      </div>
+                    )}
+                    {!wsConnected && (
+                      <div className="mt-4 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                        <p className="text-sm text-yellow-700">
+                          ⚠️ Notifications en temps réel désactivées. Les mises
+                          à jour peuvent être retardées.
+                        </p>
+                      </div>
                     )}
                   </label>
                 </div>
@@ -701,30 +833,52 @@ const FilesPage = () => {
                             {formatFileSize(file.file_size)}
                           </TableCell>
                           <TableCell>
-                            <Badge
-                              className={getStatusColor(file.processing_status)}
-                            >
-                              {file.processing_status === "completed"
-                                ? "Terminé"
-                                : file.processing_status === "processing"
-                                ? "En cours"
-                                : file.processing_status === "failed"
-                                ? "Échec"
-                                : "En attente"}
-                            </Badge>
+                            <div className="flex items-center space-x-2">
+                              <Badge
+                                className={getStatusColor(
+                                  file.processing_status
+                                )}
+                              >
+                                {file.processing_status === "completed"
+                                  ? "Terminé"
+                                  : file.processing_status === "processing"
+                                  ? "En cours"
+                                  : file.processing_status === "failed"
+                                  ? "Échec"
+                                  : "En attente"}
+                              </Badge>
+                              {file.processing_status === "processing" && (
+                                <div className="flex items-center space-x-1">
+                                  <div className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                                  <span className="text-xs text-blue-600">
+                                    Temps réel
+                                  </span>
+                                </div>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             {processingStatus[file.id] && (
-                              <Badge className="flex items-center gap-1">
-                                {getProcessingStatusIcon(
-                                  processingStatus[file.id]
+                              <div className="flex items-center space-x-2">
+                                <Badge className="flex items-center gap-1">
+                                  {getProcessingStatusIcon(
+                                    processingStatus[file.id]
+                                  )}
+                                  {processingStatus[file.id] === "completed"
+                                    ? "Traité"
+                                    : processingStatus[file.id] === "processing"
+                                    ? "En cours"
+                                    : "Échec"}
+                                </Badge>
+                                {processingStatus[file.id] === "processing" && (
+                                  <div className="flex items-center space-x-1">
+                                    <div className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full"></div>
+                                    <span className="text-xs text-green-600">
+                                      Analyse
+                                    </span>
+                                  </div>
                                 )}
-                                {processingStatus[file.id] === "completed"
-                                  ? "Traité"
-                                  : processingStatus[file.id] === "processing"
-                                  ? "En cours"
-                                  : "Échec"}
-                              </Badge>
+                              </div>
                             )}
                           </TableCell>
                           <TableCell>

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { debug } from "../lib/debug.js";
 
 const API_BASE_URL = "http://127.0.0.1:8000"; // FastAPI backend URL
 
@@ -12,6 +13,36 @@ const api = axios.create({
   withCredentials: false, // FastAPI doesn't use CSRF cookies
 });
 
+// Add debug interceptors
+api.interceptors.request.use(
+  (config) => {
+    debug.apiCall(config.method?.toUpperCase(), config.url, {
+      headers: config.headers,
+      data: config.data,
+    });
+    return config;
+  },
+  (error) => {
+    debug.error("API Request Error", error);
+    return Promise.reject(error);
+  }
+);
+
+api.interceptors.response.use(
+  (response) => {
+    debug.apiResponse(response.status, response.config.url, response.data);
+    return response;
+  },
+  (error) => {
+    debug.apiResponse(
+      error.response?.status || 0,
+      error.config?.url || "unknown",
+      error.response?.data || error.message
+    );
+    return Promise.reject(error);
+  }
+);
+
 // Request interceptor - Add JWT Bearer token
 api.interceptors.request.use(
   (config) => {
@@ -22,9 +53,15 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
 
-    // Sanitize request data
-    if (config.data && typeof config.data === "object") {
-      config.data = sanitizeData(config.data);
+    // Don't override Content-Type for multipart requests
+    if (config.headers["Content-Type"] === "multipart/form-data") {
+      // Let the browser set the correct boundary
+      delete config.headers["Content-Type"];
+    } else {
+      // Sanitize request data only for non-multipart requests
+      if (config.data && typeof config.data === "object") {
+        config.data = sanitizeData(config.data);
+      }
     }
 
     return config;
@@ -182,15 +219,27 @@ export const usersAPI = {
   searchUsers: (query) =>
     api.get(`/api/users/search?q=${encodeURIComponent(query)}`),
 
+  // User CRUD operations
+  createUser: (userData) => api.post("/api/users/", userData),
+  updateUser: (userId, userData) => api.put(`/api/users/${userId}`, userData),
+  deleteUser: (userId) => api.delete(`/api/users/${userId}`),
+
   getRoles: () => api.get("/api/users/roles/"),
   getRole: (roleId) => api.get(`/api/users/roles/${roleId}`),
   createRole: (roleData) => api.post("/api/users/roles/", roleData),
+  updateRole: (roleId, roleData) =>
+    api.put(`/api/users/roles/${roleId}`, roleData),
+  deleteRole: (roleId) => api.delete(`/api/users/roles/${roleId}`),
 
   getPermissions: () => api.get("/api/users/permissions/"),
   getPermission: (permissionId) =>
     api.get(`/api/users/permissions/${permissionId}`),
   createPermission: (permissionData) =>
-    api.post("/api/users/permissions", permissionData),
+    api.post("/api/users/permissions/", permissionData),
+  updatePermission: (permissionId, permissionData) =>
+    api.put(`/api/users/permissions/${permissionId}`, permissionData),
+  deletePermission: (permissionId) =>
+    api.delete(`/api/users/permissions/${permissionId}`),
 
   assignRole: (userData) => {
     if (!userData.user_id || !userData.role_id) {
@@ -205,6 +254,9 @@ export const usersAPI = {
     }
     return api.post("/api/users/assign-role", userData);
   },
+
+  removeUserRole: (userId, roleId) =>
+    api.delete(`/api/users/${userId}/roles/${roleId}`),
 
   checkRole: (roleName, userId) => {
     if (!roleName) return Promise.reject(new Error("Role name is required"));
@@ -256,6 +308,38 @@ export const notificationsAPI = {
     return api.get(`/api/notifications/?${queryParams.toString()}`);
   },
 
+  getNotification: (notificationId) => {
+    if (!notificationId)
+      return Promise.reject(new Error("Notification ID is required"));
+    return api.get(`/api/notifications/${notificationId}`);
+  },
+
+  createNotification: (notificationData) => {
+    if (!notificationData.title || !notificationData.message) {
+      return Promise.reject({
+        response: {
+          data: {
+            detail: "Title and message are required",
+            code: "MISSING_FIELDS",
+          },
+        },
+      });
+    }
+    return api.post("/api/notifications/", notificationData);
+  },
+
+  updateNotification: (notificationId, notificationData) => {
+    if (!notificationId)
+      return Promise.reject(new Error("Notification ID is required"));
+    return api.put(`/api/notifications/${notificationId}`, notificationData);
+  },
+
+  deleteNotification: (notificationId) => {
+    if (!notificationId)
+      return Promise.reject(new Error("Notification ID is required"));
+    return api.delete(`/api/notifications/${notificationId}`);
+  },
+
   markAsRead: (id) => {
     if (!id) return Promise.reject(new Error("Notification ID is required"));
     return api.put(`/api/notifications/${id}/read`);
@@ -269,9 +353,6 @@ export const notificationsAPI = {
   getStats: () => api.get("/api/notifications/stats"),
 
   getPreferences: () => api.get("/api/notifications/preferences"),
-
-  createNotification: (notificationData) =>
-    api.post("/api/notifications/", notificationData),
 };
 
 // Messaging API for FastAPI backend
@@ -282,6 +363,33 @@ export const messagingAPI = {
     if (!conversationId)
       return Promise.reject(new Error("Conversation ID is required"));
     return api.get(`/api/messaging/conversations/${conversationId}`);
+  },
+
+  // Create Conversation
+  createConversation: async (conversationData) => {
+    try {
+      const response = await api.post("/api/messaging/conversations", {
+        name: conversationData.name,
+        conversation_type: conversationData.conversation_type || "group",
+        participant_ids: conversationData.participant_ids || [],
+        conversation_metadata: conversationData.conversation_metadata || {},
+      });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  updateConversation: (conversationId, data) => {
+    if (!conversationId)
+      return Promise.reject(new Error("Conversation ID is required"));
+    return api.put(`/api/messaging/conversations/${conversationId}`, data);
+  },
+
+  deleteConversation: (conversationId) => {
+    if (!conversationId)
+      return Promise.reject(new Error("Conversation ID is required"));
+    return api.delete(`/api/messaging/conversations/${conversationId}`);
   },
 
   fetchMessages: (conversationId, params = {}) => {
@@ -297,8 +405,13 @@ export const messagingAPI = {
     );
   },
 
-  sendMessage: (conversationId, content, messageType = "text") => {
-    if (!conversationId || !content?.trim()) {
+  getMessage: (messageId) => {
+    if (!messageId) return Promise.reject(new Error("Message ID is required"));
+    return api.get(`/api/messaging/messages/${messageId}`);
+  },
+
+  sendMessage: (conversationId, messageData) => {
+    if (!conversationId || !messageData?.content?.trim()) {
       return Promise.reject({
         response: {
           data: {
@@ -309,24 +422,33 @@ export const messagingAPI = {
       });
     }
 
-    return api.post(`/api/messaging/conversations/${conversationId}/messages`, {
+    return api.post(
+      `/api/messaging/conversations/${conversationId}/messages`,
+      messageData
+    );
+  },
+
+  updateMessage: (messageId, content, messageType = "text") => {
+    if (!messageId || !content?.trim()) {
+      return Promise.reject({
+        response: {
+          data: {
+            detail: "Message ID and content are required",
+            code: "INVALID_MESSAGE",
+          },
+        },
+      });
+    }
+
+    return api.put(`/api/messaging/messages/${messageId}`, {
       content: content.trim(),
       message_type: messageType,
     });
   },
 
-  createConversation: (data) => {
-    if (!data.name || !data.conversation_type) {
-      return Promise.reject({
-        response: {
-          data: {
-            detail: "Conversation name and type are required",
-            code: "MISSING_FIELDS",
-          },
-        },
-      });
-    }
-    return api.post("/api/messaging/conversations", data);
+  deleteMessage: (messageId) => {
+    if (!messageId) return Promise.reject(new Error("Message ID is required"));
+    return api.delete(`/api/messaging/messages/${messageId}`);
   },
 
   addReaction: (messageId, reactionType) => {
@@ -340,23 +462,40 @@ export const messagingAPI = {
     });
   },
 
-  blockUser: (userId, reason = "") => {
-    if (!userId) return Promise.reject(new Error("User ID is required"));
-    return api.post("/api/messaging/blocks", {
-      blocked_user_id: userId,
-      reason: reason.trim(),
-    });
+  // Block/Unblock Users
+  blockUser: async (blockedId, reason = "") => {
+    try {
+      const response = await api.post("/api/messaging/blocks", {
+        blocked_id: blockedId,
+        reason: reason,
+      });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
-  unblockUser: (userId) => {
-    if (!userId) return Promise.reject(new Error("User ID is required"));
-    return api.post("/api/messaging/blocks/unblock", {
-      blocked_user_id: userId,
-    });
+  unblockUser: async (blockedId) => {
+    try {
+      const response = await api.post("/api/messaging/blocks/unblock", {
+        blocked_id: blockedId,
+      });
+      return response.data;
+    } catch (error) {
+      throw error;
+    }
   },
 
   getBlockedUsers: () => api.get("/api/messaging/blocks"),
   getBlocks: () => api.get("/api/messaging/blocks"),
+
+  sendFile: (formData) => {
+    if (!formData) return Promise.reject(new Error("Form data is required"));
+    return api.post("/api/messaging/send-file", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60000, // Longer timeout for file uploads
+    });
+  },
 
   sendMultiMessage: (formData) => {
     if (!formData) return Promise.reject(new Error("Form data is required"));
@@ -394,6 +533,16 @@ export const filesAPI = {
     return api.get(`/api/files/${fileId}`);
   },
 
+  updateFile: (fileId, fileData) => {
+    if (!fileId) return Promise.reject(new Error("File ID is required"));
+    return api.put(`/api/files/${fileId}`, fileData);
+  },
+
+  deleteFile: (fileId) => {
+    if (!fileId) return Promise.reject(new Error("File ID is required"));
+    return api.delete(`/api/files/${fileId}`);
+  },
+
   getFilePreviews: (fileId) => {
     if (!fileId) return Promise.reject(new Error("File ID is required"));
     return api.get(`/api/files/${fileId}/previews`);
@@ -416,12 +565,21 @@ export const filesAPI = {
     });
   },
 
-  deleteFile: (fileId) => {
-    if (!fileId) return Promise.reject(new Error("File ID is required"));
-    return api.delete(`/api/files/${fileId}`);
+  getFileStats: () => api.get("/api/files/stats/summary"),
+
+  // Admin endpoints
+  getAllFiles: (params = {}) => {
+    const queryParams = new URLSearchParams();
+    if (params.skip) queryParams.append("skip", params.skip);
+    if (params.limit) queryParams.append("limit", params.limit);
+
+    return api.get(`/api/files/admin/all?${queryParams.toString()}`);
   },
 
-  getFileStats: () => api.get("/api/files/stats/summary"),
+  adminDeleteFile: (fileId) => {
+    if (!fileId) return Promise.reject(new Error("File ID is required"));
+    return api.delete(`/api/files/admin/${fileId}`);
+  },
 };
 
 // Health and general API for FastAPI backend
@@ -429,6 +587,36 @@ export const generalAPI = {
   healthCheck: () => api.get("/health"),
   detailedHealthCheck: () => api.get("/api/health/detailed"),
   protected: () => api.get("/api/auth/protected"),
+};
+
+// Encaissement API for FastAPI backend
+export const encaissementAPI = {
+  uploadData: (file) => {
+    if (!file) return Promise.reject(new Error("File is required"));
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    return api.post("/api/encaissement/upload-data", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60000, // Longer timeout for file uploads
+    });
+  },
+
+  getOverview: () => api.get("/api/encaissement/overview"),
+
+  getByOrganisation: () => api.get("/api/encaissement/by-organisation"),
+
+  getByDate: () => api.get("/api/encaissement/by-date"),
+
+  getByEncaisseRate: () => api.get("/api/encaissement/by-encaisse-rate"),
+
+  getChartData: (chartType) => {
+    if (!chartType) return Promise.reject(new Error("Chart type is required"));
+    return api.get(
+      `/api/encaissement/chart-data?chart_type=${encodeURIComponent(chartType)}`
+    );
+  },
 };
 
 export default api;

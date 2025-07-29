@@ -2,10 +2,10 @@
 """
 Enable notifications for all users
 """
+from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 from models.notification import NotificationPreference
-from models.user import User
-from database.connection import engine, get_db
+from database.connection import engine
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -17,33 +17,33 @@ def enable_notifications_for_all_users():
     db = Session()
 
     try:
-        # Get all users
-        users = db.query(User).all()
+        # Get all user IDs
+        result = db.execute(text("SELECT id FROM users"))
+        user_ids = [row[0] for row in result]
 
-        for user in users:
+        for user_id in user_ids:
             # Check if user has notification preferences
             preference = db.query(NotificationPreference).filter(
-                NotificationPreference.user_id == user.id
+                NotificationPreference.user_id == user_id
             ).first()
 
             if not preference:
                 # Create notification preferences
                 preference = NotificationPreference(
-                    user_id=user.id,
+                    user_id=user_id,
                     in_app_notifications=True,
                     email_notifications=False,
                     push_notifications=False
                 )
                 db.add(preference)
-                print(
-                    f"✅ Created notification preferences for user {user.username}")
+                print(f"✅ Created notification preferences for user {user_id}")
             else:
                 # Enable in-app notifications
                 preference.in_app_notifications = True
-                print(f"✅ Enabled notifications for user {user.username}")
+                print(f"✅ Enabled notifications for user {user_id}")
 
         db.commit()
-        print(f"✅ Notification preferences updated for {len(users)} users")
+        print(f"✅ Notification preferences updated for {len(user_ids)} users")
 
     except Exception as e:
         print(f"❌ Error: {e}")

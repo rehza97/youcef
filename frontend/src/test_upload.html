@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>File Upload Test</title>
+  </head>
+  <body>
+    <h1>File Upload Test</h1>
+    <label for="fileInput">Select a file to upload:</label>
+    <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" />
+    <button onclick="uploadFile()">Upload File</button>
+    <div id="result"></div>
+
+    <script>
+      async function uploadFile() {
+        const fileInput = document.getElementById("fileInput");
+        const file = fileInput.files[0];
+        const resultDiv = document.getElementById("result");
+
+        if (!file) {
+          resultDiv.innerHTML =
+            '<p style="color: red;">Please select a file</p>';
+          return;
+        }
+
+        // First get token
+        try {
+          const authResponse = await fetch(
+            "http://127.0.0.1:8000/api/auth/login",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                username: "admin",
+                password: "admin123",
+              }),
+            }
+          );
+
+          if (!authResponse.ok) {
+            throw new Error("Authentication failed");
+          }
+
+          const authData = await authResponse.json();
+          const token = authData.access_token;
+
+          // Upload file
+          const formData = new FormData();
+          formData.append("file", file);
+
+          const uploadResponse = await fetch(
+            "http://127.0.0.1:8000/api/files/upload",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+              body: formData,
+            }
+          );
+
+          const uploadData = await uploadResponse.json();
+
+          if (uploadResponse.ok) {
+            resultDiv.innerHTML = `<p style="color: green;">✅ Upload successful!</p><pre>${JSON.stringify(
+              uploadData,
+              null,
+              2
+            )}</pre>`;
+          } else {
+            resultDiv.innerHTML = `<p style="color: red;">❌ Upload failed: ${
+              uploadResponse.status
+            }</p><pre>${JSON.stringify(uploadData, null, 2)}</pre>`;
+          }
+        } catch (error) {
+          resultDiv.innerHTML = `<p style="color: red;">❌ Error: ${error.message}</p>`;
+        }
+      }
+    </script>
+  </body>
+</html>

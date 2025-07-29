@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -16,6 +16,14 @@ from models.message import (
 )
 from models.user_block import UserBlock, UserBlockCreate
 from models.user import User
+from models.file_upload import FileUpload
+from services.notification_service import NotificationService
+import os
+import uuid
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 messaging_router = APIRouter()
 
@@ -28,6 +36,29 @@ class ConversationsListResponse(BaseModel):
 
 class MessagesListResponse(BaseModel):
     messages: List[MessageResponse]
+
+
+# Request Models
+class ConversationCreate(BaseModel):
+    name: Optional[str] = None
+    conversation_type: str = "group"
+    conversation_metadata: Optional[Dict[str, Any]] = None
+    participant_ids: List[int] = []
+
+
+class MessageCreate(BaseModel):
+    content: str
+    message_type: str = "text"
+    message_metadata: Optional[Dict[str, Any]] = None
+
+
+class BlockUserRequest(BaseModel):
+    blocked_id: int
+    reason: Optional[str] = ""
+
+
+class UnblockUserRequest(BaseModel):
+    blocked_id: int
 
 
 @messaging_router.get("/conversations", response_model=ConversationsListResponse)
@@ -51,47 +82,93 @@ async def get_conversations(
     return {"conversations": conversations}
 
 
-@messaging_router.post("/conversations", response_model=ConversationResponse)
+@messaging_router.post("/conversations")
 async def create_conversation(
     conversation_data: ConversationCreate,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Create a new conversation"""
-    # Create conversation
-    conversation = Conversation(
-        name=conversation_data.name,
-        conversation_type=conversation_data.conversation_type,
-        created_by=current_user.id
-    )
-    db.add(conversation)
-    db.flush()  # Get the conversation ID
+    try:
+        logger.info(f"Creating conversation for user {current_user.id}")
+        logger.debug(f"Conversation data: {conversation_data}")
 
-    # Add current user as participant
-    participant = ConversationParticipant(
-        conversation_id=conversation.id,
-        user_id=current_user.id,
-        role="admin"
-    )
-    db.add(participant)
+        # Validate participant IDs exist
+        if conversation_data.participant_ids:
+            existing_users = db.query(User).filter(
+                User.id.in_(conversation_data.participant_ids)
+            ).all()
+            existing_user_ids = [user.id for user in existing_users]
+            invalid_ids = [
+                uid for uid in conversation_data.participant_ids if uid not in existing_user_ids]
 
-    # Add other participants if specified
-    if conversation_data.participant_ids:
+            if invalid_ids:
+                logger.error(f"Invalid participant IDs: {invalid_ids}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid participant IDs: {invalid_ids}"
+                )
+
+        # Create conversation
+        conversation = Conversation(
+            name=conversation_data.name,
+            conversation_type=conversation_data.conversation_type,
+            conversation_metadata=conversation_data.conversation_metadata
+        )
+
+        logger.debug(f"Created conversation object: {conversation}")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        logger.info(f"Conversation saved with ID: {conversation.id}")
+
+        # Add current user as participant
+        current_user_participant = ConversationParticipant(
+            conversation_id=conversation.id,
+            user_id=current_user.id,
+            is_admin=True
+        )
+        db.add(current_user_participant)
+
+        # Add other participants
+        # Include current user for notifications
+        participant_ids = [current_user.id]
         for user_id in conversation_data.participant_ids:
-            if user_id != current_user.id:
+            if user_id != current_user.id:  # Don't add current user twice
                 participant = ConversationParticipant(
                     conversation_id=conversation.id,
                     user_id=user_id,
-                    role="member"
+                    is_admin=False
                 )
                 db.add(participant)
+                participant_ids.append(user_id)
 
-    try:
         db.commit()
-        db.refresh(conversation)
-        return conversation
+
+        # Send real-time notification to participants
+        await NotificationService.notify_conversation_created(
+            db=db,
+            creator_id=current_user.id,
+            participant_ids=participant_ids,
+            conversation_name=conversation.name or f"Conversation {conversation.id}"
+        )
+
+        # Prepare response
+        response_data = {
+            "id": conversation.id,
+            "name": conversation.name,
+            "conversation_type": conversation.conversation_type,
+            "is_active": conversation.is_active,
+            "created_at": conversation.created_at.isoformat(),
+            "updated_at": conversation.updated_at.isoformat() if conversation.updated_at else None,
+            "participant_count": len(participant_ids)
+        }
+
+        return {"message": "Conversation created successfully", "data": response_data}
+
     except Exception as e:
         db.rollback()
+        logger.error(f"Error creating conversation: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error creating conversation"
@@ -143,14 +220,14 @@ async def update_conversation(
     participant = db.query(ConversationParticipant).filter(
         ConversationParticipant.conversation_id == conversation_id,
         ConversationParticipant.user_id == current_user.id,
-        ConversationParticipant.role == "admin",
+        ConversationParticipant.is_admin == True,
         ConversationParticipant.left_at.is_(None)
     ).first()
 
     if not participant:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only conversation admins can update conversations"
+            detail="Not an admin of this conversation"
         )
 
     conversation = db.query(Conversation).filter(
@@ -164,8 +241,9 @@ async def update_conversation(
         )
 
     # Update conversation fields
-    conversation.name = conversation_update.name
-    conversation.conversation_type = conversation_update.conversation_type
+    for field, value in conversation_update.dict(exclude_unset=True).items():
+        if field != "participant_ids":  # Don't update participant_ids here
+            setattr(conversation, field, value)
 
     try:
         db.commit()
@@ -190,14 +268,14 @@ async def delete_conversation(
     participant = db.query(ConversationParticipant).filter(
         ConversationParticipant.conversation_id == conversation_id,
         ConversationParticipant.user_id == current_user.id,
-        ConversationParticipant.role == "admin",
+        ConversationParticipant.is_admin == True,
         ConversationParticipant.left_at.is_(None)
     ).first()
 
     if not participant:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only conversation admins can delete conversations"
+            detail="Not an admin of this conversation"
         )
 
     conversation = db.query(Conversation).filter(
@@ -211,24 +289,10 @@ async def delete_conversation(
         )
 
     try:
-        # Mark all participants as left
-        db.query(ConversationParticipant).filter(
-            ConversationParticipant.conversation_id == conversation_id
-        ).update({"left_at": datetime.utcnow()})
-
-        # Delete all messages
-        db.query(Message).filter(
-            Message.conversation_id == conversation_id
-        ).delete()
-
-        # Delete the conversation
-        db.delete(conversation)
+        # Soft delete by setting is_active to False
+        conversation.is_active = False
         db.commit()
-
-        return {
-            "success": True,
-            "message": "Conversation deleted successfully"
-        }
+        return {"message": "Conversation deleted successfully"}
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -277,14 +341,108 @@ async def get_messages(
     return {"messages": messages}
 
 
-@messaging_router.post("/conversations/{conversation_id}/messages", response_model=MessageResponse)
+@messaging_router.post("/conversations/{conversation_id}/messages")
 async def send_message(
     conversation_id: int,
-    message_data: MessageCreate,
+    message_data: dict,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Send a message to a conversation"""
+    try:
+        # Verify conversation exists and user is participant
+        conversation = db.query(Conversation).filter(
+            Conversation.id == conversation_id
+        ).first()
+
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
+
+        # Check if user is participant
+        participant = db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == conversation_id,
+            ConversationParticipant.user_id == current_user.id
+        ).first()
+
+        if not participant:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a participant of this conversation"
+            )
+
+        # Create message
+        message = Message(
+            conversation_id=conversation_id,
+            sender_id=current_user.id,
+            content=message_data.get("content", ""),
+            message_type=message_data.get("message_type", "text"),
+            message_metadata=message_data.get("message_metadata")
+        )
+
+        db.add(message)
+        db.commit()
+        db.refresh(message)
+
+        # Get conversation participants for notifications
+        participants = db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == conversation_id
+        ).all()
+        participant_ids = [p.user_id for p in participants]
+
+        # Send real-time notification to other participants
+        await NotificationService.notify_message_sent(
+            db=db,
+            sender_id=current_user.id,
+            conversation_id=conversation_id,
+            message_content=message.content,
+            participants=participant_ids
+        )
+
+        # Prepare response
+        response_data = {
+            "id": message.id,
+            "conversation_id": message.conversation_id,
+            "sender_id": message.sender_id,
+            "sender_username": current_user.username,
+            "content": message.content,
+            "message_type": message.message_type,
+            "created_at": message.created_at.isoformat(),
+            "updated_at": message.updated_at.isoformat() if message.updated_at else None,
+            "is_edited": message.is_edited,
+            "is_deleted": message.is_deleted
+        }
+
+        return {"message": "Message sent successfully", "data": response_data}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@messaging_router.post("/send-file", response_model=MessageResponse)
+async def send_file_message(
+    file: UploadFile = File(...),
+    conversation_id: int = Form(...),
+    message_type: str = Form("file"),
+    content: str = Form(""),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send a file message to a conversation"""
+    if not conversation_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Conversation ID is required"
+        )
+
     # Check if user is participant
     participant = db.query(ConversationParticipant).filter(
         ConversationParticipant.conversation_id == conversation_id,
@@ -298,24 +456,50 @@ async def send_message(
             detail="Not a participant in this conversation"
         )
 
-    message = Message(
-        conversation_id=conversation_id,
-        sender_id=current_user.id,
-        content=message_data.content,
-        message_type=message_data.message_type,
-        message_metadata=message_data.message_metadata
-    )
+    # Create uploads directory if it doesn't exist
+    upload_dir = "uploads/messages"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Generate unique filename
+    file_extension = os.path.splitext(file.filename)[1]
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    file_path = os.path.join(upload_dir, unique_filename)
 
     try:
+        # Save file
+        with open(file_path, "wb") as buffer:
+            content_data = await file.read()
+            buffer.write(content_data)
+
+        # Create message with file metadata
+        message_metadata = {
+            "original_filename": file.filename,
+            "file_path": file_path,
+            "file_size": len(content_data),
+            "file_type": file.content_type
+        }
+
+        message = Message(
+            conversation_id=conversation_id,
+            sender_id=current_user.id,
+            content=content or f"Fichier: {file.filename}",
+            message_type=message_type,
+            message_metadata=message_metadata
+        )
+
         db.add(message)
         db.commit()
         db.refresh(message)
         return message
+
     except Exception as e:
+        # Clean up file if message creation fails
+        if os.path.exists(file_path):
+            os.remove(file_path)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error sending message"
+            detail="Error sending file message"
         )
 
 
@@ -495,59 +679,66 @@ async def add_message_reaction(
 
 @messaging_router.post("/blocks")
 async def block_user(
-    block_data: dict,
+    block_data: BlockUserRequest,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Block a user"""
-    blocked_id = block_data.get("blocked_user_id")
-    reason = block_data.get("reason", "")
-
-    if not blocked_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="blocked_user_id is required"
-        )
-
-    # Check if user exists
-    blocked_user = db.query(User).filter(User.id == blocked_id).first()
-    if not blocked_user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-
-    # Check if already blocked
-    existing_block = db.query(UserBlock).filter(
-        UserBlock.blocker_id == current_user.id,
-        UserBlock.blocked_id == blocked_id
-    ).first()
-
-    if existing_block:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already blocked"
-        )
-
-    # Create block
-    user_block = UserBlock(
-        blocker_id=current_user.id,
-        blocked_id=blocked_id,
-        reason=reason
-    )
-
     try:
+        blocked_id = block_data.blocked_id
+        reason = block_data.reason
+
+        if not blocked_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="blocked_id is required"
+            )
+
+        # Check if user is trying to block themselves
+        if blocked_id == current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot block yourself"
+            )
+
+        # Check if block already exists
+        existing_block = db.query(UserBlock).filter(
+            UserBlock.blocker_id == current_user.id,
+            UserBlock.blocked_id == blocked_id
+        ).first()
+
+        if existing_block:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User is already blocked"
+            )
+
+        # Create block
+        user_block = UserBlock(
+            blocker_id=current_user.id,
+            blocked_id=blocked_id,
+            reason=reason
+        )
+
         db.add(user_block)
         db.commit()
         db.refresh(user_block)
 
-        return {
-            "success": True,
-            "message": "User blocked successfully",
-            "data": user_block
-        }
+        # Send real-time notification to blocked user
+        await NotificationService.notify_user_blocked(
+            db=db,
+            blocker_id=current_user.id,
+            blocked_id=blocked_id,
+            reason=reason
+        )
+
+        return {"message": "User blocked successfully"}
+
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
+        logger.error(f"Error blocking user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error blocking user"
@@ -556,33 +747,50 @@ async def block_user(
 
 @messaging_router.post("/blocks/unblock")
 async def unblock_user(
-    blocked_id: int,
+    unblock_data: UnblockUserRequest,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Unblock a user"""
-    # Find and delete block
-    user_block = db.query(UserBlock).filter(
-        UserBlock.blocker_id == current_user.id,
-        UserBlock.blocked_id == blocked_id
-    ).first()
-
-    if not user_block:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Block not found"
-        )
-
     try:
+        blocked_id = unblock_data.blocked_id
+
+        # Validate that the blocked user exists
+        blocked_user = db.query(User).filter(User.id == blocked_id).first()
+        if not blocked_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Find and delete block
+        user_block = db.query(UserBlock).filter(
+            UserBlock.blocker_id == current_user.id,
+            UserBlock.blocked_id == blocked_id
+        ).first()
+
+        if not user_block:
+            # User is not blocked, but don't treat this as an error
+            # Just return success message
+            return {"message": "User is not blocked or already unblocked"}
+
         db.delete(user_block)
         db.commit()
 
-        return {
-            "success": True,
-            "message": "User unblocked successfully"
-        }
+        # Send real-time notification to unblocked user
+        await NotificationService.notify_user_unblocked(
+            db=db,
+            unblocker_id=current_user.id,
+            unblocked_id=blocked_id
+        )
+
+        return {"message": "User unblocked successfully"}
+
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
+        logger.error(f"Error unblocking user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error unblocking user"

@@ -387,6 +387,7 @@ export const AuthProvider = ({ children }) => {
     // changePassword,
     clearError,
     isAuthenticated: !!user && !tokenStorage.isTokenExpired(),
+    token: tokenStorage.getToken(), // Add token to context
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -66,6 +66,17 @@ class FileUploadCreate(FileUploadBase):
     uploaded_by: int = Field(..., description="User ID who uploaded the file")
 
 
+class FileUploadUpdate(BaseModel):
+    """Update model for file upload"""
+    original_filename: Optional[str] = Field(
+        None, description="Original filename")
+    file_metadata: Optional[str] = Field(
+        None, description="Additional metadata")
+    is_processed: Optional[bool] = Field(None, description="Processing status")
+    processing_status: Optional[str] = Field(
+        None, description="Processing status")
+
+
 class FileUploadResponse(FileUploadBase):
     id: int
     uploaded_by: int

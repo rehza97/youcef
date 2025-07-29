@@ -1,33 +1,64 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 
-export function useChatWebSocket(conversationId) {
-  const { user } = useAuth();
+export const useChatWebSocket = (conversationId) => {
+  const { user, token } = useAuth();
   const [messages, setMessages] = useState([]);
+  const [liveMessages, setLiveMessages] = useState([]);
+  const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef(null);
 
   useEffect(() => {
-    if (!user || !conversationId) return;
-    const ws = new WebSocket(`ws://localhost:8000/ws/chat/${conversationId}/`);
+    if (!conversationId || !user || !token) return;
+
+    // Updated URL format with query parameters
+    const wsUrl = `ws://localhost:8000/ws/chat/?conversation_id=${conversationId}&token=${token}`;
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        setMessages((prev) => [...prev, data]);
-      } catch (e) {}
+    ws.onopen = () => {
+      console.log("Chat WebSocket connected");
+      setIsConnected(true);
     };
-    ws.onclose = () => {};
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "message") {
+        setLiveMessages((prev) => [...prev, data]);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("Chat WebSocket disconnected");
+      setIsConnected(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error("Chat WebSocket error:", error);
+      setIsConnected(false);
+    };
+
     return () => {
       ws.close();
     };
-  }, [user, conversationId]);
+  }, [conversationId, user, token]);
 
-  const sendMessage = useCallback((content) => {
-    if (wsRef.current && wsRef.current.readyState === 1) {
-      wsRef.current.send(JSON.stringify({ content }));
+  const sendMessage = (content) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: "message",
+          content: content,
+          conversation_id: conversationId,
+        })
+      );
     }
-  }, []);
+  };
 
-  return { messages, sendMessage };
-}
+  return {
+    messages: [...messages, ...liveMessages],
+    liveMessages,
+    isConnected,
+    sendMessage,
+  };
+};

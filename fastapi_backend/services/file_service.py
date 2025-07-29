@@ -256,3 +256,30 @@ class FileService:
         db.refresh(file_upload)
 
         return file_upload
+
+    def get_all_files(self, db: Session, skip: int = 0, limit: int = 10) -> Tuple[List[FileUpload], int]:
+        """Get all files with pagination (Admin only)"""
+        files = db.query(FileUpload).order_by(
+            FileUpload.created_at.desc()).offset(skip).limit(limit).all()
+
+        total = db.query(FileUpload).count()
+
+        return files, total
+
+    def admin_delete_file(self, db: Session, file_id: int) -> bool:
+        """Delete any file (Admin only)"""
+        file_upload = db.query(FileUpload).filter(
+            FileUpload.id == file_id).first()
+
+        if not file_upload:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Delete physical file
+        if os.path.exists(file_upload.file_path):
+            os.remove(file_upload.file_path)
+
+        # Delete from database
+        db.delete(file_upload)
+        db.commit()
+
+        return True

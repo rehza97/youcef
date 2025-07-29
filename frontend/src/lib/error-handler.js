@@ -19,6 +19,8 @@ const ERROR_MESSAGES = {
   INVALID_PASSWORD: "Password must be at least 8 characters long.",
   PASSWORDS_DONT_MATCH: "Passwords do not match.",
   MISSING_FIELDS: "Please fill in all required fields.",
+  MISSING_IDS: "User ID and Role ID are required.",
+  INVALID_PARAMS: "Invalid parameters provided.",
 
   // Server errors
   SERVER_ERROR: "Server error. Please try again later.",
@@ -29,15 +31,28 @@ const ERROR_MESSAGES = {
   MISSING_PARTICIPANTS: "Please select at least one participant.",
   CONVERSATION_NOT_FOUND: "Conversation not found.",
   USER_NOT_FOUND: "User not found.",
+  NOTIFICATION_NOT_FOUND: "Notification not found.",
+  FILE_NOT_FOUND: "File not found.",
+  ROLE_NOT_FOUND: "Role not found.",
+  PERMISSION_NOT_FOUND: "Permission not found.",
 
   // File upload errors
   FILE_TOO_LARGE: "File size exceeds the maximum limit.",
   INVALID_FILE_TYPE: "File type not supported.",
   UPLOAD_FAILED: "File upload failed. Please try again.",
+  MISSING_COLUMNS: "File is missing required columns.",
 
   // Permission errors
   MISSING_PERMISSION: "You don't have permission to perform this action.",
   ROLE_REQUIRED: "Role assignment is required.",
+  ADMIN_ONLY: "This action requires administrator privileges.",
+
+  // Duplicate errors
+  USERNAME_EXISTS: "Username already exists.",
+  EMAIL_EXISTS: "Email already exists.",
+  ROLE_EXISTS: "Role already exists.",
+  PERMISSION_EXISTS: "Permission already exists.",
+  USER_ALREADY_BLOCKED: "User is already blocked.",
 
   // Default error
   UNKNOWN_ERROR: "An unexpected error occurred. Please try again.",
@@ -68,6 +83,7 @@ export const ERROR_CATEGORY = {
 function classifyError(error) {
   const status = error.response?.status;
   const code = error.code || error.response?.data?.code;
+  const detail = error.response?.data?.detail;
 
   // Network errors
   if (!error.response) {
@@ -81,13 +97,52 @@ function classifyError(error) {
     };
   }
 
+  // Check for specific error codes from backend
+  if (detail) {
+    if (detail.includes("Username already")) {
+      return {
+        category: ERROR_CATEGORY.VALIDATION,
+        severity: ERROR_SEVERITY.MEDIUM,
+        message: ERROR_MESSAGES.USERNAME_EXISTS,
+      };
+    }
+    if (detail.includes("Role already")) {
+      return {
+        category: ERROR_CATEGORY.VALIDATION,
+        severity: ERROR_SEVERITY.MEDIUM,
+        message: ERROR_MESSAGES.ROLE_EXISTS,
+      };
+    }
+    if (detail.includes("Permission already")) {
+      return {
+        category: ERROR_CATEGORY.VALIDATION,
+        severity: ERROR_SEVERITY.MEDIUM,
+        message: ERROR_MESSAGES.PERMISSION_EXISTS,
+      };
+    }
+    if (detail.includes("User already blocked")) {
+      return {
+        category: ERROR_CATEGORY.VALIDATION,
+        severity: ERROR_SEVERITY.MEDIUM,
+        message: ERROR_MESSAGES.USER_ALREADY_BLOCKED,
+      };
+    }
+    if (detail.includes("missing columns")) {
+      return {
+        category: ERROR_CATEGORY.FILE,
+        severity: ERROR_SEVERITY.MEDIUM,
+        message: ERROR_MESSAGES.MISSING_COLUMNS,
+      };
+    }
+  }
+
   // HTTP status based classification
   switch (status) {
     case 400:
       return {
         category: ERROR_CATEGORY.VALIDATION,
         severity: ERROR_SEVERITY.MEDIUM,
-        message: error.response?.data?.error || ERROR_MESSAGES.MISSING_FIELDS,
+        message: detail || ERROR_MESSAGES.MISSING_FIELDS,
       };
 
     case 401:
@@ -108,31 +163,35 @@ function classifyError(error) {
       return {
         category: ERROR_CATEGORY.VALIDATION,
         severity: ERROR_SEVERITY.MEDIUM,
-        message: ERROR_MESSAGES.USER_NOT_FOUND,
+        message: detail || ERROR_MESSAGES.USER_NOT_FOUND,
       };
 
-    case 408:
+    case 422:
       return {
-        category: ERROR_CATEGORY.NETWORK,
+        category: ERROR_CATEGORY.VALIDATION,
         severity: ERROR_SEVERITY.MEDIUM,
-        message: ERROR_MESSAGES.TIMEOUT_ERROR,
+        message: detail || ERROR_MESSAGES.MISSING_FIELDS,
       };
 
     case 500:
-    case 502:
-    case 503:
-    case 504:
       return {
         category: ERROR_CATEGORY.SERVER,
-        severity: ERROR_SEVERITY.CRITICAL,
+        severity: ERROR_SEVERITY.HIGH,
         message: ERROR_MESSAGES.SERVER_ERROR,
+      };
+
+    case 503:
+      return {
+        category: ERROR_CATEGORY.SERVER,
+        severity: ERROR_SEVERITY.HIGH,
+        message: ERROR_MESSAGES.SERVICE_UNAVAILABLE,
       };
 
     default:
       return {
         category: ERROR_CATEGORY.UNKNOWN,
         severity: ERROR_SEVERITY.MEDIUM,
-        message: ERROR_MESSAGES.UNKNOWN_ERROR,
+        message: detail || ERROR_MESSAGES.UNKNOWN_ERROR,
       };
   }
 }
