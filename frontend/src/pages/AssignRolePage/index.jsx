@@ -1,17 +1,18 @@
-import PageHeader from "../components/PageHeader";
+import PageHeader from "../../components/PageHeader";
+import { AssignRoleToUser } from "../../components/AssignRoleToUser";
 import { Button } from "@/components/ui/button";
 
-export default function AnalyticsPage() {
+export default function AssignRolePage() {
   return (
     <div className="w-full p-4 sm:p-8 flex flex-col items-center">
       <div className="w-full max-w-3xl">
-        <PageHeader title="Analytique">
+        <PageHeader title="Attribuer des rôles">
           <Button className="ml-auto bg-[#38ada9] hover:bg-[#3c6382] text-white">
-            Voir les rapports
+            + Attribuer un rôle
           </Button>
         </PageHeader>
         <div className="bg-white p-6 rounded-xl shadow-md">
-          <p className="text-gray-600">Tableau de bord analytique à venir...</p>
+          <AssignRoleToUser />
         </div>
       </div>
     </div>

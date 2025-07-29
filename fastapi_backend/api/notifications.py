@@ -1,20 +1,36 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pydantic import BaseModel
 
 from database.connection import get_db
 from core.security import get_current_user
 from models.notification import (
     Notification, NotificationCreate, NotificationResponse,
-    NotificationPreference, NotificationPreferenceUpdate
+    NotificationPreference, NotificationPreferenceUpdate, NotificationPreferenceResponse,
+    NotificationUpdate
 )
 from models.user import User
 
 notifications_router = APIRouter()
 
+# Response models for the wrapped responses
 
-@notifications_router.get("/", response_model=List[NotificationResponse])
+
+class NotificationsListResponse(BaseModel):
+    notifications: List[NotificationResponse]
+
+
+class NotificationStatsResponse(BaseModel):
+    stats: Dict[str, Any]
+
+
+class NotificationPreferencesResponse(BaseModel):
+    preferences: NotificationPreferenceResponse
+
+
+@notifications_router.get("/", response_model=NotificationsListResponse)
 async def get_notifications(
     skip: int = 0,
     limit: int = 50,
@@ -31,7 +47,7 @@ async def get_notifications(
 
     notifications = query.order_by(
         Notification.created_at.desc()).offset(skip).limit(limit).all()
-    return notifications
+    return {"notifications": notifications}
 
 
 @notifications_router.put("/{notification_id}/read")
@@ -98,7 +114,7 @@ async def mark_all_notifications_as_read(
         )
 
 
-@notifications_router.get("/notifications/stats")
+@notifications_router.get("/stats", response_model=NotificationStatsResponse)
 async def get_notification_stats(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -114,13 +130,15 @@ async def get_notification_stats(
     ).count()
 
     return {
-        "total_notifications": total_notifications,
-        "unread_notifications": unread_notifications,
-        "read_notifications": total_notifications - unread_notifications
+        "stats": {
+            "total_notifications": total_notifications,
+            "unread_notifications": unread_notifications,
+            "read_notifications": total_notifications - unread_notifications
+        }
     }
 
 
-@notifications_router.get("/preferences")
+@notifications_router.get("/preferences", response_model=NotificationPreferencesResponse)
 async def get_notification_preferences(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -137,7 +155,7 @@ async def get_notification_preferences(
         db.commit()
         db.refresh(preferences)
 
-    return preferences
+    return {"preferences": preferences}
 
 
 @notifications_router.put("/preferences")
@@ -178,23 +196,17 @@ async def update_notification_preferences(
 
 @notifications_router.post("/", response_model=NotificationResponse)
 async def create_notification(
-    notification_data: dict,
+    notification_data: NotificationCreate,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Create a new notification"""
-    # Extract data from dict
-    title = notification_data.get("title")
-    message = notification_data.get("message")
-    notification_type = notification_data.get("notification_type", "info")
-    data = notification_data.get("data")
-
     notification = Notification(
         user_id=current_user.id,
-        title=title,
-        message=message,
-        notification_type=notification_type,
-        data=data
+        title=notification_data.title,
+        message=notification_data.message,
+        notification_type=notification_data.notification_type,
+        data=notification_data.data
     )
     try:
         db.add(notification)
@@ -206,4 +218,94 @@ async def create_notification(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error creating notification"
+        )
+
+
+@notifications_router.get("/{notification_id}", response_model=NotificationResponse)
+async def get_notification(
+    notification_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific notification"""
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found"
+        )
+
+    return notification
+
+
+@notifications_router.put("/{notification_id}", response_model=NotificationResponse)
+async def update_notification(
+    notification_id: int,
+    notification_update: NotificationUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a notification"""
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found"
+        )
+
+    # Update notification fields
+    update_data = notification_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(notification, field, value)
+
+    try:
+        db.commit()
+        db.refresh(notification)
+        return notification
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating notification"
+        )
+
+
+@notifications_router.delete("/{notification_id}")
+async def delete_notification(
+    notification_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a notification"""
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id,
+        Notification.user_id == current_user.id
+    ).first()
+
+    if not notification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Notification not found"
+        )
+
+    try:
+        db.delete(notification)
+        db.commit()
+        return {
+            "success": True,
+            "message": "Notification deleted successfully"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting notification"
         )

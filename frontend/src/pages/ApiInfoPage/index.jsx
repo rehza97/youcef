@@ -5,28 +5,29 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../components/ui/card";
+} from "../../components/ui/card";
 
-const PermissionsPage = () => {
+const ApiInfoPage = () => {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Permissions</h1>
+        <h1 className="text-3xl font-bold text-gray-900">Informations API</h1>
         <p className="text-gray-600 mt-2">
-          Gérer les permissions système et les contrôles d'accès
+          Voir la documentation API et les informations des points de
+          terminaison
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Gestion des Permissions</CardTitle>
+          <CardTitle>Documentation API</CardTitle>
           <CardDescription>
-            Configurer les permissions système et les droits d'accès
+            Informations sur les points de terminaison API disponibles
           </CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-gray-600">
-            La fonctionnalité de gestion des permissions sera implémentée ici.
+            La documentation API et les informations seront affichées ici.
           </p>
         </CardContent>
       </Card>
@@ -34,4 +35,4 @@ const PermissionsPage = () => {
   );
 };
 
-export default PermissionsPage;
+export default ApiInfoPage;

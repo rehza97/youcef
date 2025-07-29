@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pydantic import BaseModel
 
 from database.connection import get_db
 from core.security import get_current_user
@@ -18,8 +19,18 @@ from models.user import User
 
 messaging_router = APIRouter()
 
+# Response models for the wrapped responses
 
-@messaging_router.get("/conversations", response_model=List[ConversationResponse])
+
+class ConversationsListResponse(BaseModel):
+    conversations: List[ConversationResponse]
+
+
+class MessagesListResponse(BaseModel):
+    messages: List[MessageResponse]
+
+
+@messaging_router.get("/conversations", response_model=ConversationsListResponse)
 async def get_conversations(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -37,27 +48,196 @@ async def get_conversations(
             ConversationParticipant.left_at.is_(None)
         ).count()
 
-    return conversations
+    return {"conversations": conversations}
 
 
-@messaging_router.get("/conversations/{conversation_id}")
+@messaging_router.post("/conversations", response_model=ConversationResponse)
+async def create_conversation(
+    conversation_data: ConversationCreate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new conversation"""
+    # Create conversation
+    conversation = Conversation(
+        name=conversation_data.name,
+        conversation_type=conversation_data.conversation_type,
+        created_by=current_user.id
+    )
+    db.add(conversation)
+    db.flush()  # Get the conversation ID
+
+    # Add current user as participant
+    participant = ConversationParticipant(
+        conversation_id=conversation.id,
+        user_id=current_user.id,
+        role="admin"
+    )
+    db.add(participant)
+
+    # Add other participants if specified
+    if conversation_data.participant_ids:
+        for user_id in conversation_data.participant_ids:
+            if user_id != current_user.id:
+                participant = ConversationParticipant(
+                    conversation_id=conversation.id,
+                    user_id=user_id,
+                    role="member"
+                )
+                db.add(participant)
+
+    try:
+        db.commit()
+        db.refresh(conversation)
+        return conversation
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error creating conversation"
+        )
+
+
+@messaging_router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
     conversation_id: int,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get specific conversation"""
+    """Get a specific conversation"""
+    # Check if user is participant
+    participant = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == current_user.id,
+        ConversationParticipant.left_at.is_(None)
+    ).first()
+
+    if not participant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a participant in this conversation"
+        )
+
     conversation = db.query(Conversation).filter(
-        Conversation.id == conversation_id).first()
+        Conversation.id == conversation_id
+    ).first()
+
     if not conversation:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found"
         )
+
     return conversation
 
 
-@messaging_router.get("/conversations/{conversation_id}/messages", response_model=List[MessageResponse])
+@messaging_router.put("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def update_conversation(
+    conversation_id: int,
+    conversation_update: ConversationCreate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a conversation"""
+    # Check if user is admin of the conversation
+    participant = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == current_user.id,
+        ConversationParticipant.role == "admin",
+        ConversationParticipant.left_at.is_(None)
+    ).first()
+
+    if not participant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only conversation admins can update conversations"
+        )
+
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id
+    ).first()
+
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+
+    # Update conversation fields
+    conversation.name = conversation_update.name
+    conversation.conversation_type = conversation_update.conversation_type
+
+    try:
+        db.commit()
+        db.refresh(conversation)
+        return conversation
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating conversation"
+        )
+
+
+@messaging_router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a conversation"""
+    # Check if user is admin of the conversation
+    participant = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == conversation_id,
+        ConversationParticipant.user_id == current_user.id,
+        ConversationParticipant.role == "admin",
+        ConversationParticipant.left_at.is_(None)
+    ).first()
+
+    if not participant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only conversation admins can delete conversations"
+        )
+
+    conversation = db.query(Conversation).filter(
+        Conversation.id == conversation_id
+    ).first()
+
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+
+    try:
+        # Mark all participants as left
+        db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == conversation_id
+        ).update({"left_at": datetime.utcnow()})
+
+        # Delete all messages
+        db.query(Message).filter(
+            Message.conversation_id == conversation_id
+        ).delete()
+
+        # Delete the conversation
+        db.delete(conversation)
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Conversation deleted successfully"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting conversation"
+        )
+
+
+@messaging_router.get("/conversations/{conversation_id}/messages", response_model=MessagesListResponse)
 async def get_messages(
     conversation_id: int,
     skip: int = 0,
@@ -94,13 +274,13 @@ async def get_messages(
             MessageReaction.message_id == msg.id
         ).count()
 
-    return messages
+    return {"messages": messages}
 
 
-@messaging_router.post("/conversations/{conversation_id}/messages")
+@messaging_router.post("/conversations/{conversation_id}/messages", response_model=MessageResponse)
 async def send_message(
     conversation_id: int,
-    message_data: dict,
+    message_data: MessageCreate,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -118,29 +298,19 @@ async def send_message(
             detail="Not a participant in this conversation"
         )
 
-    # Create message
     message = Message(
         conversation_id=conversation_id,
         sender_id=current_user.id,
-        content=message_data.get("content", ""),
-        message_type=message_data.get("message_type", "text"),
-        message_metadata=message_data.get("message_metadata", {})
+        content=message_data.content,
+        message_type=message_data.message_type,
+        message_metadata=message_data.message_metadata
     )
 
     try:
         db.add(message)
         db.commit()
         db.refresh(message)
-
-        # Add sender username
-        sender = db.query(User).filter(User.id == message.sender_id).first()
-        message.sender_username = sender.username if sender else None
-
-        return {
-            "success": True,
-            "message": "Message sent successfully",
-            "data": message
-        }
+        return message
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -149,55 +319,110 @@ async def send_message(
         )
 
 
-@messaging_router.post("/conversations")
-async def create_conversation(
-    conversation_data: ConversationCreate,
+@messaging_router.get("/messages/{message_id}", response_model=MessageResponse)
+async def get_message(
+    message_id: int,
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create a new conversation"""
-    # Create conversation
-    conversation = Conversation(
-        name=conversation_data.name,
-        conversation_type=conversation_data.conversation_type,
-        conversation_metadata=conversation_data.conversation_metadata
-    )
+    """Get a specific message"""
+    message = db.query(Message).filter(
+        Message.id == message_id,
+        Message.is_deleted == False
+    ).first()
+
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found"
+        )
+
+    # Check if user is participant in the conversation
+    participant = db.query(ConversationParticipant).filter(
+        ConversationParticipant.conversation_id == message.conversation_id,
+        ConversationParticipant.user_id == current_user.id,
+        ConversationParticipant.left_at.is_(None)
+    ).first()
+
+    if not participant:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a participant in this conversation"
+        )
+
+    return message
+
+
+@messaging_router.put("/messages/{message_id}", response_model=MessageResponse)
+async def update_message(
+    message_id: int,
+    message_update: MessageCreate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a message"""
+    message = db.query(Message).filter(
+        Message.id == message_id,
+        Message.sender_id == current_user.id,
+        Message.is_deleted == False
+    ).first()
+
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found or you don't have permission to edit it"
+        )
+
+    # Update message fields
+    message.content = message_update.content
+    message.message_type = message_update.message_type
+    message.message_metadata = message_update.message_metadata
+    message.updated_at = datetime.utcnow()
 
     try:
-        db.add(conversation)
         db.commit()
-        db.refresh(conversation)
+        db.refresh(message)
+        return message
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating message"
+        )
 
-        # Add participants
-        participant_ids = conversation_data.participant_ids + \
-            [current_user.id]
-        for user_id in set(participant_ids):  # Remove duplicates
-            participant = ConversationParticipant(
-                conversation_id=conversation.id,
-                user_id=user_id,
-                is_admin=(user_id == current_user.id)  # Creator is admin
-            )
-            db.add(participant)
 
+@messaging_router.delete("/messages/{message_id}")
+async def delete_message(
+    message_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a message (soft delete)"""
+    message = db.query(Message).filter(
+        Message.id == message_id,
+        Message.sender_id == current_user.id,
+        Message.is_deleted == False
+    ).first()
+
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found or you don't have permission to delete it"
+        )
+
+    try:
+        message.is_deleted = True
+        message.deleted_at = datetime.utcnow()
         db.commit()
-
         return {
             "success": True,
-            "message": "Conversation created successfully",
-            "data": {
-                "id": conversation.id,
-                "name": conversation.name,
-                "conversation_type": conversation.conversation_type,
-                "is_active": conversation.is_active,
-                "created_at": conversation.created_at,
-                "updated_at": conversation.updated_at
-            }
+            "message": "Message deleted successfully"
         }
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error creating conversation"
+            detail="Error deleting message"
         )
 
 

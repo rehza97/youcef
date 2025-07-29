@@ -5,28 +5,28 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "../components/ui/card";
+} from "../../components/ui/card";
 
-const SettingsPage = () => {
+const PermissionsPage = () => {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Paramètres</h1>
+        <h1 className="text-3xl font-bold text-gray-900">Permissions</h1>
         <p className="text-gray-600 mt-2">
-          Configurer les paramètres et préférences de l'application
+          Gérer les permissions et les droits d'accès
         </p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Paramètres de l'Application</CardTitle>
+          <CardTitle>Gestion des Permissions</CardTitle>
           <CardDescription>
-            Gérer la configuration système et les préférences utilisateur
+            Configurez les permissions et les droits d'accès des utilisateurs
           </CardDescription>
         </CardHeader>
         <CardContent>
           <p className="text-gray-600">
-            La fonctionnalité des paramètres sera implémentée ici.
+            La gestion des permissions sera implémentée ici.
           </p>
         </CardContent>
       </Card>
@@ -34,4 +34,4 @@ const SettingsPage = () => {
   );
 };
 
-export default SettingsPage;
+export default PermissionsPage;
