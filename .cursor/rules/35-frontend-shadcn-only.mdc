@@ -1,0 +1,16 @@
+---
+globs: frontend/src/**/*.{js,jsx,ts,tsx}
+description: Enforce shadcn/ui with Radix only for UI components; forbid other UI kits
+---
+
+## UI Library Policy (Shadcn-only)
+
+- Allowed UI primitives: `@radix-ui/*` and components built under `components/ui/` (shadcn).
+- Disallowed UI libraries: MUI, AntD, Chakra UI, Bootstrap, Mantine, RSuite, Evergreen, Grommet, Blueprint, Carbon, NextUI, PrimeReact, Semantic UI, Tremor.
+- Charts: prefer first-party components under `components/ui/` or custom SVG. Do not introduce third-party charting libraries without explicit approval.
+
+## Implementation Notes
+
+- Create new UI elements as shadcn components under `components/ui/`.
+- Centralize theme tokens and colors to match Algérie Telecom (Bleu/Vert).
+- Keep files ≤ 200 lines; extract subcomponents where needed.

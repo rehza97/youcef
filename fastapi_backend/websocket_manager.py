@@ -17,7 +17,7 @@ class ConnectionManager:
         self.conversation_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int, connection_type: str = "general"):
-        await websocket.accept()
+        # Note: WebSocket should already be accepted by the caller
         if user_id not in self.active_connections:
             self.active_connections[user_id] = {}
         self.active_connections[user_id][connection_type] = websocket
@@ -80,6 +80,18 @@ class ConnectionManager:
                             f"Error broadcasting to conversation {conversation_id}: {e}")
                         self.conversation_connections[conversation_id].remove(
                             connection)
+
+    def disconnect_all(self):
+        """Disconnect all active connections"""
+        logger.info("Disconnecting all WebSocket connections...")
+
+        # Clear all active connections
+        self.active_connections.clear()
+
+        # Clear all conversation connections
+        self.conversation_connections.clear()
+
+        logger.info("All WebSocket connections disconnected")
 
 
 # Create global instance

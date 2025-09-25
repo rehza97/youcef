@@ -1,0 +1,43 @@
+---
+globs: fastapi_backend/**/*.py
+description: FastAPI backend conventions for APIs, services, models, and security
+---
+
+## FastAPI Conventions
+
+- Keep routers thin; move business logic into `services/` modules.
+- Use Pydantic models for request/response schemas; never return raw ORM objects.
+- Dependency-inject DB sessions and current user; avoid global state.
+- Validate and sanitize all inputs; surface errors with proper HTTP status codes.
+
+## Structure
+
+- Routers: `api/*.py` with `router = APIRouter(prefix=..., tags=[...])` and `include_router` from `main.py`.
+- Services: `services/*.py` with pure functions or classes; no web framework dependencies.
+- Models: `models/*.py` SQLAlchemy models; no business logic methods beyond simple helpers.
+- Security: use `core/security.py` utilities for hashing, token creation, and permission checks.
+
+## Error Handling
+
+- Raise `HTTPException` with `status_code` and concise `detail` strings.
+- Log unexpected exceptions and return a generic 500 message; never leak internals.
+
+## Database and Transactions
+
+- Use scoped session from `database/connection.py`.
+- Wrap write operations in transactions; commit once per request unit.
+- Prefer repository-style helpers in `services/` for common queries.
+
+## Pagination and Filtering
+
+- Standard query params: `page: int = 1`, `page_size: int = 25` (max 100), `search: str | None = None`.
+- Apply server-side filtering and return `{items, total, page, page_size}`.
+
+## Security and Roles
+
+- Use role/permission checks before executing service logic.
+- Enforce DOT scoping for DOT Users at the query layer.
+
+## File Size Limits
+
+- Per-file hard limit: 300 lines; split routers/services when approaching 250.

@@ -13,10 +13,15 @@ from core.security import (
 from core.rate_limiter import login_rate_limiter, register_rate_limiter
 from models.user import User, UserCreate, UserLogin, UserResponse
 from core.security import Token
+from pydantic import BaseModel
 from core.config import settings
 
 auth_router = APIRouter()
 security = HTTPBearer()
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 
 @auth_router.post("/register", response_model=dict)
@@ -172,13 +177,13 @@ async def logout(
 
 @auth_router.post("/refresh-token", response_model=Token)
 async def refresh_token(
-    refresh_token: str,
+    request: RefreshTokenRequest,
     db: Session = Depends(get_db)
 ):
     """Refresh access token using refresh token"""
     try:
         # Verify refresh token
-        payload = verify_token(refresh_token)
+        payload = verify_token(request.refresh_token)
 
         # Get user
         user = db.query(User).filter(User.id == payload.user_id).first()

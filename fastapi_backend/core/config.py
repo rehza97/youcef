@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_REGISTER: str = "3/minute"
 
     # File upload
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    MAX_FILE_SIZE: int = 10 * 1024 * 1024 * 1024  # 10GB - Very large limit
     UPLOAD_DIR: str = "uploads"
 
     # Logging

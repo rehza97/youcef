@@ -18,3 +18,7 @@ fastapi_backend/uploads/csv/cd5d6664-e91e-4130-80f3-c9ff5c8396ab.csv
 *.xlsx
 *.sql
 *.log
+
+test_*.py
+*.log
+fastapi_backend/fastapi_backend.db

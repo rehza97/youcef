@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { filesAPI } from "../../services/api";
+import { useNavigate } from "react-router-dom";
+import { filesAPI, encaissementAPI } from "../../services/api";
 import { useNotificationsWebSocket } from "../../hooks/useNotificationsWebSocket";
 import { debugComponent } from "../../lib/debug.js";
 import {
@@ -83,35 +84,18 @@ import axios from "axios";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 // Chart components
-import { Bar, Line, Pie, Doughnut } from "react-chartjs-2";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  Tooltip as ChartTooltip,
-  Legend,
-} from "chart.js";
+  SimpleBarChart,
+  SimplePieChart,
+  SimpleLineChart,
+} from "@/components/ui/charts/SimpleChart";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  LineElement,
-  PointElement,
-  ArcElement,
-  Title,
-  ChartTooltip,
-  Legend
-);
+// Chart registration removed - using custom SVG charts
 
 const FilesPage = () => {
   const debug = debugComponent("FilesPage");
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState(null);
   const [showFileDetails, setShowFileDetails] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -332,15 +316,7 @@ const FilesPage = () => {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await axios.post(
-        `/api/encaissement/upload-data`,
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      );
+      const response = await encaissementAPI.uploadData(file);
 
       setProcessedData((prev) => ({
         ...prev,
@@ -394,6 +370,10 @@ const FilesPage = () => {
   const handleFileClick = async (file) => {
     setSelectedFile(file);
     setShowFileDetails(true);
+  };
+
+  const handlePreviewFile = (fileId) => {
+    navigate(`/files/${fileId}/preview`);
   };
 
   const handleDeleteFile = async (fileId) => {
@@ -520,60 +500,44 @@ const FilesPage = () => {
 
     const chartDataToRender = customData || chartData[chartType];
 
+    // Transform chart.js data to our simple chart format
+    const transformToSimpleData = (chartData) => {
+      if (!chartData?.labels || !chartData?.datasets?.[0]?.data) return [];
+      return chartData.labels.map((label, index) => ({
+        label: label,
+        value: chartData.datasets[0].data[index] || 0,
+      }));
+    };
+
+    const simpleData = transformToSimpleData(chartDataToRender);
+
     switch (chartType) {
       case "histogram_combined":
         return (
-          <Bar
-            data={chartDataToRender}
-            options={{
-              responsive: true,
-              plugins: {
-                legend: {
-                  position: "top",
-                },
-                title: {
-                  display: true,
-                  text: "Encaissement vs Montant TTC par mois",
-                },
-              },
-            }}
-          />
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-center">
+              Encaissement vs Montant TTC par mois
+            </h3>
+            <SimpleBarChart data={simpleData} width={500} height={300} />
+          </div>
         );
       case "pie_3d":
         return (
-          <Doughnut
-            data={chartDataToRender}
-            options={{
-              responsive: true,
-              plugins: {
-                legend: {
-                  position: "top",
-                },
-                title: {
-                  display: true,
-                  text: "Répartition des encaissements par mois",
-                },
-              },
-            }}
-          />
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-center">
+              Répartition des encaissements par mois
+            </h3>
+            <SimplePieChart data={simpleData} width={400} height={300} />
+          </div>
         );
       case "histogram_dot_rate":
         return (
-          <Bar
-            data={chartDataToRender}
-            options={{
-              responsive: true,
-              plugins: {
-                legend: {
-                  position: "top",
-                },
-                title: {
-                  display: true,
-                  text: "Taux d'encaissement par DOT",
-                },
-              },
-            }}
-          />
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-center">
+              Taux d'encaissement par DOT
+            </h3>
+            <SimpleBarChart data={simpleData} width={500} height={300} />
+          </div>
         );
       default:
         return (
@@ -895,6 +859,21 @@ const FilesPage = () => {
                                 </TooltipTrigger>
                                 <TooltipContent>
                                   <p>Voir les détails</p>
+                                </TooltipContent>
+                              </Tooltip>
+
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handlePreviewFile(file.id)}
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Aperçu du contenu</p>
                                 </TooltipContent>
                               </Tooltip>
 

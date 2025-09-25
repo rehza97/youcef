@@ -1,0 +1,490 @@
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from sqlalchemy.orm import Session
+from typing import List, Optional
+import os
+
+from database.connection import get_db
+from core.security import get_current_user
+from models.user import User
+from models.role import Role, UserRole
+from models.file_upload import (
+    FileUploadResponse, FilePreviewResponse, FileUploadWithPreviews,
+    FileListResponse, FileProcessingStatus, FilePreviewRequest, FileUpload,
+    FileUploadUpdate
+)
+from services.file_service import FileService
+from services.notification_service import NotificationService
+from services.file_processing_service import FileProcessingService
+import logging
+
+# Configure detailed logging for files
+file_logger = logging.getLogger('files')
+file_logger.setLevel(logging.DEBUG)
+
+files_router = APIRouter()
+file_service = FileService()
+processing_service = FileProcessingService()
+
+
+# ==================== FILE CRUD OPERATIONS ====================
+
+@files_router.post("/upload", response_model=FileUploadResponse)
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload a file"""
+    # Enforce Admin-only access for uploads
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if not admin_role:
+        raise HTTPException(
+            status_code=403, detail="Only admins can upload files")
+    user_role = db.query(UserRole).filter(
+        UserRole.user_id == current_user.id,
+        UserRole.role_id == admin_role.id
+    ).first()
+    if not user_role:
+        raise HTTPException(
+            status_code=403, detail="Only admins can upload files")
+    file_logger.info(f"File upload request received")
+    file_logger.debug(
+        f"Current user: {current_user.username} (ID: {current_user.id})")
+    file_logger.debug(
+        f"File details: {file.filename}, Size: {file.size}, Type: {file.content_type}")
+
+    try:
+        file_logger.info(f"File upload attempt by user {current_user.id}")
+        file_logger.info(
+            f"File: {file.filename}, Size: {file.size}, Type: {file.content_type}")
+
+        # Validate file type
+        file_logger.debug("Starting file validation...")
+        allowed_types = ['text/csv', 'application/vnd.ms-excel',
+                         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+        if file.content_type not in allowed_types:
+            file_logger.error(f"Invalid file type: {file.content_type}")
+            raise HTTPException(
+                status_code=400, detail="Type de fichier non supporté")
+
+        file_logger.debug("File validation passed")
+
+        # Save file
+        file_logger.debug("Starting file save...")
+        file_service = FileService()
+        file_path, filename = file_service.save_file(file, current_user.id)
+        file_logger.debug(f"File saved to: {file_path}")
+
+        # Create file upload record
+        file_logger.debug("Creating file upload record...")
+        file_upload = FileUpload(
+            filename=filename,
+            original_filename=file.filename,
+            file_path=file_path,
+            file_size=file.size,
+            file_type=file_service.get_file_type(
+                file.filename, file.content_type),
+            mime_type=file.content_type,
+            uploaded_by=current_user.id,
+            is_processed=False,
+            processing_status="pending"
+        )
+
+        file_logger.debug(f"FileUpload object created: {file_upload}")
+        db.add(file_upload)
+        db.commit()
+        db.refresh(file_upload)
+        file_logger.debug(f"File upload record created: {file_upload.id}")
+
+        # Notify upload
+        file_logger.debug("Sending file upload notification via service...")
+        await processing_service.notify_upload_started(
+            user_id=current_user.id,
+            filename=file.filename,
+            file_id=file_upload.id,
+        )
+
+        # Notify processing start
+        file_logger.debug(
+            "Starting file processing notification via service...")
+        await processing_service.notify_processing_started(
+            user_id=current_user.id,
+            filename=file.filename,
+            file_id=file_upload.id,
+        )
+
+        # Start background processing via service
+        from database.connection import SessionLocal
+        processing_service.run_background_processing(
+            db_factory=SessionLocal,
+            filename=file_upload.filename,
+            user_id=current_user.id,
+        )
+
+        # Prepare response
+        response_data = {
+            "filename": file_upload.filename,
+            "original_filename": file_upload.original_filename,
+            "file_size": file_upload.file_size,
+            "file_type": file_upload.file_type,
+            "mime_type": file_upload.mime_type,
+            "id": file_upload.id,
+            "uploaded_by": file_upload.uploaded_by,
+            "is_processed": file_upload.is_processed,
+            "processing_status": file_upload.processing_status,
+            "error_message": file_upload.error_message,
+            "file_metadata": file_upload.file_metadata,
+            "created_at": file_upload.created_at.isoformat() if file_upload.created_at else None,
+            "updated_at": file_upload.updated_at.isoformat() if file_upload.updated_at else None
+        }
+
+        file_logger.info(f"File upload successful: {response_data}")
+        return response_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        file_logger.error(f"File upload error: {e}")
+        file_logger.error(f"Error type: {type(e)}")
+        file_logger.error(f"Error details: {str(e)}")
+        file_logger.error(f"Current user: {current_user}")
+        file_logger.error(
+            f"File details: {file.filename if file else 'No file'}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur lors du téléchargement du fichier"
+        )
+
+
+@files_router.get("/", response_model=FileListResponse)
+async def get_user_files(
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get user's uploaded files with pagination"""
+    skip = (page - 1) * per_page
+    files, total = file_service.get_user_files(
+        db, current_user.id, skip, per_page)
+
+    return FileListResponse(
+        files=files,
+        total=total,
+        page=page,
+        per_page=per_page
+    )
+
+
+@files_router.get("/{file_id}", response_model=FileUploadWithPreviews)
+async def get_file_details(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get file details with previews"""
+    file_upload = file_service.get_file_upload(db, file_id, current_user.id)
+    previews = file_service.get_file_previews(db, file_id, current_user.id)
+
+    return FileUploadWithPreviews(
+        **file_upload.__dict__,
+        file_previews=previews
+    )
+
+
+@files_router.put("/{file_id}", response_model=FileUploadResponse)
+async def update_file(
+    file_id: int,
+    file_update: FileUploadUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update file metadata (Admin only or owner)"""
+    # Get file
+    file_upload = file_service.get_file_upload(db, file_id, current_user.id)
+
+    # Check if user is admin or owner
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    is_admin = False
+    if admin_role:
+        user_role = db.query(UserRole).filter(
+            UserRole.user_id == current_user.id,
+            UserRole.role_id == admin_role.id
+        ).first()
+        is_admin = user_role is not None
+
+    if not is_admin and file_upload.uploaded_by != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only admins or file owners can update files"
+        )
+
+    # Update file fields
+    update_data = file_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(file_upload, field, value)
+
+    try:
+        db.commit()
+        db.refresh(file_upload)
+        return file_upload
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating file: {str(e)}"
+        )
+
+
+@files_router.delete("/{file_id}")
+async def delete_file(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete uploaded file (Admin only or owner)"""
+    try:
+        # Get file to check ownership
+        file_upload = file_service.get_file_upload(
+            db, file_id, current_user.id)
+
+        # Check if user is admin or owner
+        admin_role = db.query(Role).filter(Role.name == "admin").first()
+        is_admin = False
+        if admin_role:
+            user_role = db.query(UserRole).filter(
+                UserRole.user_id == current_user.id,
+                UserRole.role_id == admin_role.id
+            ).first()
+            is_admin = user_role is not None
+
+        if not is_admin and file_upload.uploaded_by != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins or file owners can delete files"
+            )
+
+        file_service.delete_file(db, file_id, current_user.id)
+        return {"message": "File deleted successfully"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error deleting file: {str(e)}")
+
+
+# ==================== FILE PREVIEW OPERATIONS ====================
+
+@files_router.get("/{file_id}/previews", response_model=List[FilePreviewResponse])
+async def get_file_previews(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get file previews"""
+    file_service.get_file_upload(db, file_id, current_user.id)  # Check access
+    previews = file_service.get_file_previews(db, file_id, current_user.id)
+
+    return previews
+
+
+@files_router.post("/{file_id}/preview", response_model=List[FilePreviewResponse])
+async def generate_file_preview(
+    file_id: int,
+    preview_request: FilePreviewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate new preview for file"""
+    file_upload = file_service.get_file_upload(db, file_id, current_user.id)
+
+    try:
+        # Process file again with new parameters
+        if file_upload.file_type == "excel":
+            previews = file_service.process_excel_file(
+                file_upload.file_path,
+                preview_request.max_rows
+            )
+        else:  # csv
+            previews = [file_service.process_csv_file(
+                file_upload.file_path,
+                preview_request.max_rows
+            )]
+
+        # Delete existing previews
+        existing_previews = file_service.get_file_previews(
+            db, file_id, current_user.id)
+        for preview in existing_previews:
+            db.delete(preview)
+        db.commit()
+
+        # Create new preview records
+        new_previews = file_service.create_file_preview_records(
+            db, file_upload.id, previews)
+
+        return new_previews
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error generating preview: {str(e)}")
+
+
+# ==================== FILE STATUS OPERATIONS ====================
+
+@files_router.get("/{file_id}/status", response_model=FileProcessingStatus)
+async def get_file_processing_status(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get file processing status"""
+    file_upload = file_service.get_file_upload(db, file_id, current_user.id)
+
+    return FileProcessingStatus(
+        file_id=file_upload.id,
+        status=file_upload.processing_status,
+        message=None,
+        error=file_upload.error_message
+    )
+
+
+# ==================== FILE DOWNLOAD OPERATIONS ====================
+
+@files_router.get("/{file_id}/download")
+async def download_file(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Download uploaded file"""
+    file_upload = file_service.get_file_upload(db, file_id, current_user.id)
+
+    if not os.path.exists(file_upload.file_path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=file_upload.file_path,
+        filename=file_upload.original_filename,
+        media_type=file_upload.mime_type
+    )
+
+
+# ==================== FILE STATISTICS ====================
+
+@files_router.get("/stats/summary")
+async def get_file_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get file upload statistics for current user"""
+    from sqlalchemy import func
+
+    # Get total files
+    total_files = db.query(func.count(FileUpload.id)).filter(
+        FileUpload.uploaded_by == current_user.id
+    ).scalar()
+
+    # Get files by type
+    excel_files = db.query(func.count(FileUpload.id)).filter(
+        FileUpload.uploaded_by == current_user.id,
+        FileUpload.file_type == "excel"
+    ).scalar()
+
+    csv_files = db.query(func.count(FileUpload.id)).filter(
+        FileUpload.uploaded_by == current_user.id,
+        FileUpload.file_type == "csv"
+    ).scalar()
+
+    # Get total file size
+    total_size = db.query(func.sum(FileUpload.file_size)).filter(
+        FileUpload.uploaded_by == current_user.id
+    ).scalar() or 0
+
+    # Get processing status counts
+    pending_files = db.query(func.count(FileUpload.id)).filter(
+        FileUpload.uploaded_by == current_user.id,
+        FileUpload.processing_status == "pending"
+    ).scalar()
+
+    completed_files = db.query(func.count(FileUpload.id)).filter(
+        FileUpload.uploaded_by == current_user.id,
+        FileUpload.processing_status == "completed"
+    ).scalar()
+
+    failed_files = db.query(func.count(FileUpload.id)).filter(
+        FileUpload.uploaded_by == current_user.id,
+        FileUpload.processing_status == "failed"
+    ).scalar()
+
+    return {
+        "total_files": total_files,
+        "excel_files": excel_files,
+        "csv_files": csv_files,
+        "total_size_bytes": total_size,
+        "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "pending_files": pending_files,
+        "completed_files": completed_files,
+        "failed_files": failed_files
+    }
+
+
+# ==================== ADMIN FILE OPERATIONS ====================
+
+@files_router.get("/admin/all", response_model=FileListResponse)
+async def get_all_files(
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all files (Admin only)"""
+    # Check if user is admin
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if admin_role:
+        user_role = db.query(UserRole).filter(
+            UserRole.user_id == current_user.id,
+            UserRole.role_id == admin_role.id
+        ).first()
+        if not user_role:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can view all files"
+            )
+
+    skip = (page - 1) * per_page
+    files, total = file_service.get_all_files(db, skip, per_page)
+
+    return FileListResponse(
+        files=files,
+        total=total,
+        page=page,
+        per_page=per_page
+    )
+
+
+@files_router.delete("/admin/{file_id}")
+async def admin_delete_file(
+    file_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete any file (Admin only)"""
+    # Check if user is admin
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if admin_role:
+        user_role = db.query(UserRole).filter(
+            UserRole.user_id == current_user.id,
+            UserRole.role_id == admin_role.id
+        ).first()
+        if not user_role:
+            raise HTTPException(
+                status_code=403,
+                detail="Only admins can delete any file"
+            )
+
+    try:
+        file_service.admin_delete_file(db, file_id)
+        return {"message": "File deleted successfully by admin"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error deleting file: {str(e)}")

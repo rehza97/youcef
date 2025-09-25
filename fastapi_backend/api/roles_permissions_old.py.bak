@@ -1,0 +1,316 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List
+
+from database.connection import get_db
+from core.security import get_current_user
+from models.role import Role, RoleResponse, UserRole, UserRoleCreate, RoleCreate, RoleUpdate
+from models.permission import Permission, PermissionResponse, PermissionCreate, PermissionUpdate
+from models.user import User
+
+roles_permissions_router = APIRouter()
+
+# Helper function to check admin permissions
+
+
+def check_admin_permissions(current_user: User, db: Session):
+    admin_role = db.query(Role).filter(Role.name == "admin").first()
+    if not admin_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role not found"
+        )
+
+    user_role = db.query(UserRole).filter(
+        UserRole.user_id == current_user.id,
+        UserRole.role_id == admin_role.id
+    ).first()
+
+    if not user_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
+# ==================== ROLE MANAGEMENT ====================
+
+
+@roles_permissions_router.get("/roles/", response_model=List[RoleResponse])
+async def get_roles(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all roles"""
+    roles = db.query(Role).all()
+    return [RoleResponse.from_orm(role) for role in roles]
+
+
+@roles_permissions_router.get("/roles/{role_id}", response_model=RoleResponse)
+async def get_role(
+    role_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get role by ID"""
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found"
+        )
+
+    return RoleResponse.from_orm(role)
+
+
+@roles_permissions_router.post("/roles/", response_model=RoleResponse)
+async def create_role(
+    role_data: RoleCreate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new role (Admin only)"""
+    check_admin_permissions(current_user, db)
+
+    # Check if role already exists
+    existing_role = db.query(Role).filter(Role.name == role_data.name).first()
+    if existing_role:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Role with this name already exists"
+        )
+
+    try:
+        # Create new role
+        db_role = Role(
+            name=role_data.name,
+            description=role_data.description
+        )
+
+        db.add(db_role)
+        db.commit()
+        db.refresh(db_role)
+
+        return RoleResponse.from_orm(db_role)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating role: {str(e)}"
+        )
+
+
+@roles_permissions_router.put("/roles/{role_id}", response_model=RoleResponse)
+async def update_role(
+    role_id: int,
+    role_update: RoleUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update role (Admin only)"""
+    check_admin_permissions(current_user, db)
+
+    # Check if role exists
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found"
+        )
+
+    try:
+        # Update role fields
+        update_data = role_update.dict(exclude_unset=True)
+
+        for field, value in update_data.items():
+            if hasattr(role, field):
+                setattr(role, field, value)
+
+        db.commit()
+        db.refresh(role)
+
+        return RoleResponse.from_orm(role)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating role: {str(e)}"
+        )
+
+
+@roles_permissions_router.delete("/roles/{role_id}")
+async def delete_role(
+    role_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete role (Admin only)"""
+    check_admin_permissions(current_user, db)
+
+    # Check if role exists
+    role = db.query(Role).filter(Role.id == role_id).first()
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Role not found"
+        )
+
+    # Check if role is in use
+    users_with_role = db.query(UserRole).filter(
+        UserRole.role_id == role_id).count()
+    if users_with_role > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete role. {users_with_role} users still have this role."
+        )
+
+    try:
+        db.delete(role)
+        db.commit()
+
+        return {"message": f"Role {role.name} deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting role: {str(e)}"
+        )
+
+# ==================== PERMISSION MANAGEMENT ====================
+
+
+@roles_permissions_router.get("/permissions/", response_model=List[PermissionResponse])
+async def get_permissions(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all permissions"""
+    permissions = db.query(Permission).all()
+    return [PermissionResponse.from_orm(permission) for permission in permissions]
+
+
+@roles_permissions_router.get("/permissions/{permission_id}", response_model=PermissionResponse)
+async def get_permission(
+    permission_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get permission by ID"""
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
+    if not permission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission not found"
+        )
+
+    return PermissionResponse.from_orm(permission)
+
+
+@roles_permissions_router.post("/permissions/", response_model=PermissionResponse)
+async def create_permission(
+    permission_data: PermissionCreate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new permission (Admin only)"""
+    check_admin_permissions(current_user, db)
+
+    # Check if permission already exists
+    existing_permission = db.query(Permission).filter(
+        Permission.codename == permission_data.codename
+    ).first()
+    if existing_permission:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Permission with this codename already exists"
+        )
+
+    try:
+        # Create new permission
+        db_permission = Permission(
+            name=permission_data.name,
+            codename=permission_data.codename,
+            description=permission_data.description
+        )
+
+        db.add(db_permission)
+        db.commit()
+        db.refresh(db_permission)
+
+        return PermissionResponse.from_orm(db_permission)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating permission: {str(e)}"
+        )
+
+
+@roles_permissions_router.put("/permissions/{permission_id}", response_model=PermissionResponse)
+async def update_permission(
+    permission_id: int,
+    permission_update: PermissionUpdate,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update permission (Admin only)"""
+    check_admin_permissions(current_user, db)
+
+    # Check if permission exists
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
+    if not permission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission not found"
+        )
+
+    try:
+        # Update permission fields
+        update_data = permission_update.dict(exclude_unset=True)
+
+        for field, value in update_data.items():
+            if hasattr(permission, field):
+                setattr(permission, field, value)
+
+        db.commit()
+        db.refresh(permission)
+
+        return PermissionResponse.from_orm(permission)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating permission: {str(e)}"
+        )
+
+
+@roles_permissions_router.delete("/permissions/{permission_id}")
+async def delete_permission(
+    permission_id: int,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete permission (Admin only)"""
+    check_admin_permissions(current_user, db)
+
+    # Check if permission exists
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
+    if not permission:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Permission not found"
+        )
+
+    try:
+        db.delete(permission)
+        db.commit()
+
+        return {"message": f"Permission {permission.name} deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting permission: {str(e)}"
+        )

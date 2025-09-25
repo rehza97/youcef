@@ -1,0 +1,30 @@
+---
+description: ETL rules for KPI data cleaning, anomaly detection, and exports
+globs: fastapi_backend/**/*.py
+---
+
+## KPI ETL Design
+
+- Each KPI has an isolated ETL module under `services/etl/<kpi_name>.py`.
+- Expose a single entry `run_etl(input_paths: list[Path]) -> ETLResult` with counts and output artifact paths.
+- Keep deterministic, ordered steps; document each step in code.
+
+## Common Steps
+
+- Ingest: support CSV/XLSX; normalize headers to snake_case.
+- Cleaning: apply KPI-specific rules from the spec; prefer vectorized operations (pandas/polars).
+- Anomalies: generate separate anomaly datasets with explicit reasons; store under `uploads/temp/anomalies/<kpi>/<timestamp>.{csv,xlsx}`.
+- Outputs: write cleaned datasets and summary metrics; ensure idempotent filenames.
+
+## Performance and Memory
+
+- Prefer streaming/chunked reads for large files.
+- Avoid loading entire workbooks in memory when unnecessary.
+
+## Testing
+
+- Provide unit tests per ETL module under `tests/etl/` with small fixtures.
+
+## File Size Limits
+
+- ETL module hard limit: 300 lines; extract helpers to `services/etl/utils.py`.

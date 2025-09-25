@@ -285,7 +285,7 @@ const HealthPage = () => {
               </div>
               <div>
                 <span className="font-medium">Messagerie:</span>
-                <span className="text-gray-600 ml-2">/api/messaging</span>
+                <span className="text-gray-600 ml-2">/api/conversations</span>
               </div>
               <div>
                 <span className="font-medium">Fichiers:</span>

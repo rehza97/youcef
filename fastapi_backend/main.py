@@ -14,12 +14,41 @@ import sys
 
 # Import routers
 from api.auth import auth_router
-from api.users import users_router
+from api.users_management import users_management_router
+from api.user_role_assignments import user_role_assignments_router
 from api.notifications import notifications_router
-from api.messaging import messaging_router
+from api.conversations import conversations_router
+from api.user_blocks import user_blocks_router
 from api.health import health_router
-from api.files import files_router
-from api.encaissement import router as encaissement_router
+
+# Role and Permission Management (split from roles_permissions.py)
+from api.role_management import role_management_router
+from api.permission_management import permission_management_router
+
+# File Management (split from files.py)
+from api.file_upload import file_upload_router
+from api.file_management import file_management_router
+from api.file_preview import file_preview_router
+from api.file_processing import file_processing_router
+
+# Message Management (split from messages.py)
+from api.message_crud import message_crud_router
+from api.message_attachments import message_attachments_router
+from api.message_reactions import message_reactions_router
+
+# Encaissement Management (split from encaissement.py)
+from api.encaissement_upload import encaissement_upload_router
+from api.encaissement_analytics import encaissement_analytics_router
+
+# ETL Processing
+from api.etl_processing import etl_processing_router
+
+# Park Management
+from api.park_management import router as park_management_router
+
+# Background Processing
+from services.background_processor import background_processor
+from services.processing_websocket import processing_ws_manager
 
 # Import database and models
 from database.connection import engine, Base, get_db
@@ -63,6 +92,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting FastAPI application...")
 
     # Create database tables
+    from database.connection import engine
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created successfully")
 
@@ -70,7 +100,41 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down FastAPI application...")
-    logger.info("Database connections closed")
+
+    # Shutdown background processor and kill all child processes
+    try:
+        from services.background_processor import background_processor
+        background_processor.shutdown()
+        logger.info("Background processor shutdown complete")
+    except Exception as e:
+        logger.error(f"Error shutting down background processor: {e}")
+
+    # Close WebSocket connections
+    try:
+        manager.disconnect_all()
+        logger.info("WebSocket connections closed")
+    except Exception as e:
+        logger.error(f"Error closing WebSocket connections: {e}")
+
+    # Close processing WebSocket connections
+    try:
+        from services.processing_websocket import processing_ws_manager
+        # Clear all connections
+        processing_ws_manager.active_connections.clear()
+        processing_ws_manager.processing_connections.clear()
+        logger.info("Processing WebSocket connections closed")
+    except Exception as e:
+        logger.error(f"Error closing processing WebSocket connections: {e}")
+
+    # Close database connections
+    try:
+        from database.connection import engine
+        engine.dispose()
+        logger.info("Database connections closed")
+    except Exception as e:
+        logger.error(f"Error closing database connections: {e}")
+
+    logger.info("FastAPI application shutdown complete")
 
 # Create FastAPI app
 app = FastAPI(
@@ -109,9 +173,24 @@ app.include_router(
 )
 
 app.include_router(
-    users_router,
+    users_management_router,
     prefix="/api/users",
     tags=["User Management"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# Role and Permission Management
+app.include_router(
+    role_management_router,
+    prefix="/api/roles",
+    tags=["Role Management"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    permission_management_router,
+    prefix="/api/permissions",
+    tags=["Permission Management"],
     dependencies=[Depends(get_current_user)]
 )
 
@@ -123,9 +202,38 @@ app.include_router(
 )
 
 app.include_router(
-    messaging_router,
-    prefix="/api/messaging",
-    tags=["Messaging"],
+    conversations_router,
+    prefix="/api/conversations",
+    tags=["Conversations"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# Message Management (split routers)
+app.include_router(
+    message_crud_router,
+    prefix="/api/messages",
+    tags=["Message CRUD"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    message_attachments_router,
+    prefix="/api/messages",
+    tags=["Message Attachments"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    message_reactions_router,
+    prefix="/api/messages",
+    tags=["Message Reactions"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    user_blocks_router,
+    prefix="/api/blocks",
+    tags=["User Blocks"],
     dependencies=[Depends(get_current_user)]
 )
 
@@ -135,18 +243,62 @@ app.include_router(
     tags=["Health"]
 )
 
+# File Management (split routers)
 app.include_router(
-    files_router,
+    file_upload_router,
     prefix="/api/files",
-    tags=["File Upload & Preview"],
+    tags=["File Upload"],
     dependencies=[Depends(get_current_user)]
 )
 
 app.include_router(
-    encaissement_router,
-    prefix="/api/encaissement",
-    tags=["Encaissement AR DOT"],
+    file_management_router,
+    prefix="/api/files",
+    tags=["File Management"],
     dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    file_preview_router,
+    prefix="/api/files",
+    tags=["File Preview"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    file_processing_router,
+    prefix="/api/files",
+    tags=["File Processing"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# Encaissement Management (split routers)
+app.include_router(
+    encaissement_upload_router,
+    prefix="/api/encaissement",
+    tags=["Encaissement Upload"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    encaissement_analytics_router,
+    prefix="/api/encaissement",
+    tags=["Encaissement Analytics"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# ETL Processing
+app.include_router(
+    etl_processing_router,
+    prefix="/api/etl",
+    tags=["ETL Processing"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# Park Management
+app.include_router(
+    park_management_router,
+    tags=["Park Management"]
 )
 
 
@@ -224,6 +376,9 @@ async def get_user_from_token(token: str, db: Session) -> Optional[User]:
                     f"User not found in database for ID: {token_data.user_id}")
         else:
             ws_logger.error("Token data is missing user_id")
+    except HTTPException as e:
+        ws_logger.error(f"HTTP Exception during token validation: {e.detail}")
+        ws_logger.error(f"Status code: {e.status_code}")
     except Exception as e:
         ws_logger.error(f"Token validation error: {e}")
         ws_logger.error(f"Error type: {type(e)}")
@@ -388,6 +543,110 @@ async def websocket_notifications(websocket: WebSocket):
         except:
             print("Failed to close WebSocket connection")
             ws_logger.error("Failed to close WebSocket connection")
+            pass
+
+
+@app.websocket("/ws/processing/")
+async def websocket_processing(websocket: WebSocket):
+    """WebSocket endpoint for real-time processing updates"""
+
+    # Get user_id from query parameters
+    user_id_str = websocket.query_params.get("user_id")
+    if not user_id_str:
+        print("No user_id provided for processing WebSocket")
+        await websocket.close(code=4002, reason="No user_id provided")
+        return
+
+    try:
+        user_id = int(user_id_str)
+    except ValueError:
+        print(f"Invalid user_id format: {user_id_str}")
+        await websocket.close(code=4002, reason="Invalid user_id format")
+        return
+
+    print(f"Processing WebSocket connection attempt for user_id: {user_id}")
+
+    # Accept connection first
+    await websocket.accept()
+    print("Processing WebSocket connection accepted")
+
+    try:
+        # Get token from query parameters
+        token = websocket.query_params.get("token")
+        if not token:
+            print("No token provided for processing WebSocket")
+            await websocket.close(code=4001, reason="No token provided")
+            return
+
+        # Create database session manually
+        from database.connection import SessionLocal
+        db = SessionLocal()
+
+        try:
+            # Validate user
+            user = await get_user_from_token(token, db)
+            if not user or user.id != user_id:
+                print(
+                    f"Processing WebSocket authentication failed - User: {user}, Expected user_id: {user_id}")
+                await websocket.close(code=4003, reason="Access denied")
+                return
+
+            print(
+                f"Processing WebSocket authentication successful for user: {user.username}")
+
+            # Connect to processing updates
+            await processing_ws_manager.connect(websocket, user_id)
+            print(f"User {user_id} connected to processing WebSocket")
+
+            try:
+                # Send welcome message
+                welcome_message = {
+                    "type": "connection",
+                    "message": "Connected to processing updates",
+                    "user_id": user_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+                await websocket.send_text(json.dumps(welcome_message))
+                print("Processing welcome message sent")
+
+                # Keep connection alive and handle messages
+                while True:
+                    data = await websocket.receive_text()
+                    print(f"Processing message received: {data}")
+
+                    try:
+                        message = json.loads(data)
+                        if message.get("type") == "subscribe_task":
+                            # Subscribe to specific task updates
+                            task_id = message.get("task_id")
+                            if task_id:
+                                await processing_ws_manager.connect_to_task(websocket, task_id)
+                                await websocket.send_text(json.dumps({
+                                    "type": "subscribed",
+                                    "task_id": task_id,
+                                    "message": f"Subscribed to task {task_id}"
+                                }))
+                        elif message.get("type") == "ping":
+                            await websocket.send_text(json.dumps({"type": "pong"}))
+                    except json.JSONDecodeError:
+                        print("Processing: Received non-JSON message, ignoring")
+
+            except WebSocketDisconnect:
+                print(f"User {user_id} disconnected from processing WebSocket")
+                await processing_ws_manager.disconnect(websocket, user_id)
+            except Exception as e:
+                print(f"Processing WebSocket error: {e}")
+                await processing_ws_manager.disconnect(websocket, user_id)
+
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"Processing WebSocket connection error: {e}")
+        try:
+            await websocket.close(code=4000, reason="Internal server error")
+        except:
+            print("Failed to close processing WebSocket connection")
             pass
 
 

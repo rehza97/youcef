@@ -1,0 +1,25 @@
+---
+description: Security, RBAC, sessions, and file upload access rules
+globs: fastapi_backend/**/*.py,frontend/src/**/*.{js,jsx,ts,tsx}
+---
+
+## Roles and Visibility
+
+- Roles: ADMIN, SUPER_USER, DOT_USER.
+- Admin and Super User can view all DOTs; DOT_USER restricted to their DOT.
+- Only Admins see and access the upload section.
+
+## Authentication
+
+- Use secure password hashing and token-based auth.
+- Admin and named account passwords must be changeable; Super User password is fixed by policy.
+- Provide password reset via Admin action or email workflow.
+
+## Session Management
+
+- Auto-logout after 15 minutes of inactivity on frontend and backend token expiry.
+
+## Input and File Security
+
+- Validate uploaded files (type/size); scan extensions and mime types.
+- Store uploads under `uploads/` with safe filenames.

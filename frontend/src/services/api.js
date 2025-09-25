@@ -357,18 +357,18 @@ export const notificationsAPI = {
 
 // Messaging API for FastAPI backend
 export const messagingAPI = {
-  fetchConversations: () => api.get("/api/messaging/conversations"),
+  fetchConversations: () => api.get("/api/conversations/"),
 
   getConversation: (conversationId) => {
     if (!conversationId)
       return Promise.reject(new Error("Conversation ID is required"));
-    return api.get(`/api/messaging/conversations/${conversationId}`);
+    return api.get(`/api/conversations/${conversationId}`);
   },
 
   // Create Conversation
   createConversation: async (conversationData) => {
     try {
-      const response = await api.post("/api/messaging/conversations", {
+      const response = await api.post("/api/conversations/", {
         name: conversationData.name,
         conversation_type: conversationData.conversation_type || "group",
         participant_ids: conversationData.participant_ids || [],
@@ -383,13 +383,13 @@ export const messagingAPI = {
   updateConversation: (conversationId, data) => {
     if (!conversationId)
       return Promise.reject(new Error("Conversation ID is required"));
-    return api.put(`/api/messaging/conversations/${conversationId}`, data);
+    return api.put(`/api/conversations/${conversationId}`, data);
   },
 
   deleteConversation: (conversationId) => {
     if (!conversationId)
       return Promise.reject(new Error("Conversation ID is required"));
-    return api.delete(`/api/messaging/conversations/${conversationId}`);
+    return api.delete(`/api/conversations/${conversationId}`);
   },
 
   fetchMessages: (conversationId, params = {}) => {
@@ -401,13 +401,13 @@ export const messagingAPI = {
     if (params.limit) queryParams.append("limit", params.limit);
 
     return api.get(
-      `/api/messaging/conversations/${conversationId}/messages?${queryParams.toString()}`
+      `/api/messages/conversations/${conversationId}/messages?${queryParams.toString()}`
     );
   },
 
   getMessage: (messageId) => {
     if (!messageId) return Promise.reject(new Error("Message ID is required"));
-    return api.get(`/api/messaging/messages/${messageId}`);
+    return api.get(`/api/messages/messages/${messageId}`);
   },
 
   sendMessage: (conversationId, messageData) => {
@@ -423,7 +423,7 @@ export const messagingAPI = {
     }
 
     return api.post(
-      `/api/messaging/conversations/${conversationId}/messages`,
+      `/api/messages/conversations/${conversationId}/messages`,
       messageData
     );
   },
@@ -440,7 +440,7 @@ export const messagingAPI = {
       });
     }
 
-    return api.put(`/api/messaging/messages/${messageId}`, {
+    return api.put(`/api/messages/messages/${messageId}`, {
       content: content.trim(),
       message_type: messageType,
     });
@@ -448,7 +448,7 @@ export const messagingAPI = {
 
   deleteMessage: (messageId) => {
     if (!messageId) return Promise.reject(new Error("Message ID is required"));
-    return api.delete(`/api/messaging/messages/${messageId}`);
+    return api.delete(`/api/messages/messages/${messageId}`);
   },
 
   addReaction: (messageId, reactionType) => {
@@ -457,7 +457,7 @@ export const messagingAPI = {
         new Error("Message ID and reaction type are required")
       );
     }
-    return api.post(`/api/messaging/messages/${messageId}/react`, {
+    return api.post(`/api/messages/messages/${messageId}/react`, {
       reaction_type: reactionType,
     });
   },
@@ -465,7 +465,7 @@ export const messagingAPI = {
   // Block/Unblock Users
   blockUser: async (blockedId, reason = "") => {
     try {
-      const response = await api.post("/api/messaging/blocks", {
+      const response = await api.post("/api/blocks/", {
         blocked_id: blockedId,
         reason: reason,
       });
@@ -477,7 +477,7 @@ export const messagingAPI = {
 
   unblockUser: async (blockedId) => {
     try {
-      const response = await api.post("/api/messaging/blocks/unblock", {
+      const response = await api.post("/api/blocks/unblock", {
         blocked_id: blockedId,
       });
       return response.data;
@@ -486,12 +486,12 @@ export const messagingAPI = {
     }
   },
 
-  getBlockedUsers: () => api.get("/api/messaging/blocks"),
-  getBlocks: () => api.get("/api/messaging/blocks"),
+  getBlockedUsers: () => api.get("/api/blocks/"),
+  getBlocks: () => api.get("/api/blocks/"),
 
   sendFile: (formData) => {
     if (!formData) return Promise.reject(new Error("Form data is required"));
-    return api.post("/api/messaging/send-file", formData, {
+    return api.post("/api/messages/send-file", formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 60000, // Longer timeout for file uploads
     });
@@ -499,7 +499,7 @@ export const messagingAPI = {
 
   sendMultiMessage: (formData) => {
     if (!formData) return Promise.reject(new Error("Form data is required"));
-    return api.post("/api/messaging/send-multi", formData, {
+    return api.post("/api/messages/send-multi", formData, {
       headers: { "Content-Type": "multipart/form-data" },
       timeout: 60000, // Longer timeout for file uploads
     });
@@ -526,6 +526,11 @@ export const filesAPI = {
     if (params.per_page) queryParams.append("per_page", params.per_page);
 
     return api.get(`/api/files/?${queryParams.toString()}`);
+  },
+
+  getFile: (fileId) => {
+    if (!fileId) return Promise.reject(new Error("File ID is required"));
+    return api.get(`/api/files/${fileId}`);
   },
 
   getFileDetails: (fileId) => {
@@ -563,6 +568,16 @@ export const filesAPI = {
     return api.get(`/api/files/${fileId}/download`, {
       responseType: "blob",
     });
+  },
+
+  processFile: (fileId) => {
+    if (!fileId) return Promise.reject(new Error("File ID is required"));
+    return api.post(`/api/files/${fileId}/process`);
+  },
+
+  cancelProcessing: (fileId) => {
+    if (!fileId) return Promise.reject(new Error("File ID is required"));
+    return api.post(`/api/files/${fileId}/cancel-processing`);
   },
 
   getFileStats: () => api.get("/api/files/stats/summary"),
@@ -619,4 +634,125 @@ export const encaissementAPI = {
   },
 };
 
-export default api;
+// ETL Processing API for FastAPI backend
+export const etlAPI = {
+  // Process Parc Corporate NGBSS files
+  processParcCorporateNGBSS: (formData) => {
+    if (!formData) return Promise.reject(new Error("Form data is required"));
+    return api.post("/api/etl/parc-corporate-ngbss/process", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 300000, // 5 minutes for ETL processing
+    });
+  },
+
+  // Get data views from processed Parc Corporate NGBSS file
+  getParcCorporateDataViews: (
+    filePath,
+    viewType = "overview",
+    filters = {}
+  ) => {
+    if (!filePath) return Promise.reject(new Error("File path is required"));
+
+    const params = new URLSearchParams();
+    params.append("view_type", viewType);
+
+    // Add filters
+    if (filters.dot && filters.dot !== "all") {
+      params.append("dot_filter", filters.dot);
+    }
+    if (filters.actel && filters.actel !== "all") {
+      params.append("actel_filter", filters.actel);
+    }
+    if (filters.subscriber && filters.subscriber !== "all") {
+      params.append("subscriber_filter", filters.subscriber);
+    }
+
+    // Encode file path for URL
+    const encodedPath = encodeURIComponent(filePath);
+
+    return api.get(
+      `/api/etl/parc-corporate-ngbss/views/${encodedPath}?${params.toString()}`
+    );
+  },
+
+  // Process other ETL types
+  processEncaissementETL: (formData) => {
+    if (!formData) return Promise.reject(new Error("Form data is required"));
+    return api.post("/api/etl/encaissement/process", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 300000, // 5 minutes for ETL processing
+    });
+  },
+
+  processSubscriberParkETL: (formData) => {
+    if (!formData) return Promise.reject(new Error("Form data is required"));
+    return api.post("/api/etl/subscriber-park/process", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 300000, // 5 minutes for ETL processing
+    });
+  },
+
+  // Validate files before processing
+  validateETLFiles: (formData) => {
+    if (!formData) return Promise.reject(new Error("Form data is required"));
+    return api.post("/api/etl/validate-etl-files", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      timeout: 60000, // 1 minute for validation
+    });
+  },
+
+  // Download ETL result files
+  downloadETLResult: (filePath) => {
+    if (!filePath) return Promise.reject(new Error("File path is required"));
+    const encodedPath = encodeURIComponent(filePath);
+    return api.get(`/api/etl/encaissement/results/${encodedPath}`, {
+      responseType: "blob",
+    });
+  },
+
+  // Get ETL processing history
+  getETLHistory: (limit = 50) => {
+    return api.get(`/api/etl/encaissement/history?limit=${limit}`);
+  },
+
+  // Park Data API
+  parkData: {
+    // Get saved park data with pagination and filtering
+    getSavedData: (params = {}) => {
+      const queryParams = new URLSearchParams();
+
+      if (params.page) queryParams.append("page", params.page);
+      if (params.pageSize) queryParams.append("page_size", params.pageSize);
+      if (params.search) queryParams.append("search", params.search);
+      if (params.subscriberStatus)
+        queryParams.append("subscriber_status", params.subscriberStatus);
+      if (params.telecomType)
+        queryParams.append("telecom_type", params.telecomType);
+      if (params.offerType) queryParams.append("offer_type", params.offerType);
+
+      const queryString = queryParams.toString();
+      return api.get(`/api/parks/data${queryString ? `?${queryString}` : ""}`);
+    },
+
+    // Get park data statistics
+    getStats: () => {
+      return api.get("/api/parks/data/stats");
+    },
+  },
+};
+
+// Comprehensive API object that includes all sections
+const comprehensiveAPI = {
+  // Axios instance for direct calls
+  ...api,
+
+  // Include all API sections
+  general: generalAPI,
+  encaissement: encaissementAPI,
+  etl: etlAPI,
+
+  // Add individual methods for backward compatibility
+  ...filesAPI,
+};
+
+export default comprehensiveAPI;

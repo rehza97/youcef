@@ -5,6 +5,9 @@ from models.notification import Notification, NotificationPreference
 from models.permission import Permission
 from models.role import Role, UserRole, RolePermission
 from models.user import User
+from models.file_upload import FileUpload
+from models.dot import DOT
+from models.park import Park
 from database.connection import Base
 import os
 import sys

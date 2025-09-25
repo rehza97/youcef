@@ -32,6 +32,7 @@ import HealthPage from "./pages/HealthPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ApiInfoPage from "./pages/ApiInfoPage";
 import FilesPage from "./pages/FilesPage";
+import FilePreviewPage from "./pages/FilePreviewPage";
 import EncaissementPage from "./pages/EncaissementPage";
 
 // Hooks
@@ -186,6 +187,14 @@ const AppContent = () => {
             element={
               <ProtectedRoute>
                 <FilesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/files/:fileId/preview"
+            element={
+              <ProtectedRoute>
+                <FilePreviewPage />
               </ProtectedRoute>
             }
           />

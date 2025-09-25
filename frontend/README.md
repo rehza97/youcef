@@ -294,10 +294,10 @@ VITE_WS_BASE_URL=ws://127.0.0.1:8000/
 
 ### Messaging
 
-- `GET /api/messaging/conversations/` - Get conversations
-- `POST /api/messaging/conversations/` - Create conversation
-- `GET /api/messaging/conversations/{id}/messages/` - Get messages
-- `POST /api/messaging/conversations/{id}/messages/` - Send message
+- `GET /api/conversations/` - Get conversations
+- `POST /api/conversations/` - Create conversation
+- `GET /api/messages/conversations/{id}/messages/` - Get messages
+- `POST /api/messages/conversations/{id}/messages/` - Send message
 
 ### Notifications
 

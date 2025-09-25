@@ -32,6 +32,8 @@ class FileUpload(Base):
     user = relationship("User", back_populates="file_uploads")
     file_previews = relationship(
         "FilePreview", back_populates="file_upload", cascade="all, delete-orphan")
+    parks = relationship("Park", back_populates="file_upload",
+                         cascade="all, delete-orphan")
 
 
 class FilePreview(Base):
@@ -126,7 +128,7 @@ class FileUploadRequest(BaseModel):
 class FilePreviewRequest(BaseModel):
     """Request model for file preview"""
     max_rows: int = Field(
-        default=10, description="Maximum number of rows to preview")
+        default=100, description="Maximum number of rows to preview")
     sheet_name: Optional[str] = Field(
         None, description="Sheet name for Excel files")
 
@@ -146,3 +148,9 @@ class FileListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+
+class FilePreviewListResponse(BaseModel):
+    """Response model for file preview list"""
+    data: List[FilePreviewResponse]
+    total: int

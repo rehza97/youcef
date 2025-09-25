@@ -62,9 +62,9 @@ const EncaissementPage = () => {
       ]);
 
       setOverview(overviewRes.data || {});
-      setByOrganisation(orgRes.data || []);
-      setByDate(dateRes.data || []);
-      setByEncaisseRate(rateRes.data || []);
+      setByOrganisation(orgRes.data?.organisations || []);
+      setByDate(dateRes.data?.data || []);
+      setByEncaisseRate(rateRes.data?.rate_buckets || []);
     } catch (error) {
       handleApiError(error, {
         showToast: true,
@@ -297,13 +297,17 @@ const EncaissementPage = () => {
                   {byOrganisation.map((org, index) => (
                     <TableRow key={index}>
                       <TableCell className="font-medium">
-                        {org.Org_Name}
+                        {org["Org Name"]}
                       </TableCell>
-                      <TableCell>{org.N_FACT}</TableCell>
-                      <TableCell>{formatCurrency(org.Montant_Ttc)}</TableCell>
-                      <TableCell>{formatCurrency(org.Encaissement)}</TableCell>
+                      <TableCell>{org["N FACT"]}</TableCell>
                       <TableCell>
-                        {formatPercentage(org.Taux_d_encaissement)}
+                        {formatCurrency(org["Montant Ttc"])}
+                      </TableCell>
+                      <TableCell>
+                        {formatCurrency(org["Encaissement"])}
+                      </TableCell>
+                      <TableCell>
+                        {formatPercentage(org["Taux d'encaissement"])}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -333,13 +337,17 @@ const EncaissementPage = () => {
                   {byDate.map((date, index) => (
                     <TableRow key={index}>
                       <TableCell className="font-medium">
-                        {date.Date_Fact}
+                        {date.period}
                       </TableCell>
-                      <TableCell>{date.N_FACT}</TableCell>
-                      <TableCell>{formatCurrency(date.Montant_Ttc)}</TableCell>
-                      <TableCell>{formatCurrency(date.Encaissement)}</TableCell>
+                      <TableCell>{date.organisations_count}</TableCell>
                       <TableCell>
-                        {formatPercentage(date.Taux_d_encaissement)}
+                        {formatCurrency(date.total_montant_ttc)}
+                      </TableCell>
+                      <TableCell>
+                        {formatCurrency(date.total_encaissement)}
+                      </TableCell>
+                      <TableCell>
+                        {formatPercentage(date.encaisse_rate)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -368,11 +376,15 @@ const EncaissementPage = () => {
                   {byEncaisseRate.map((rate, index) => (
                     <TableRow key={index}>
                       <TableCell className="font-medium">
-                        {rate.Taux_Range}
+                        {rate["Rate Bucket"]}
                       </TableCell>
-                      <TableCell>{rate.N_FACT}</TableCell>
-                      <TableCell>{formatCurrency(rate.Montant_Ttc)}</TableCell>
-                      <TableCell>{formatCurrency(rate.Encaissement)}</TableCell>
+                      <TableCell>{rate["N FACT"]}</TableCell>
+                      <TableCell>
+                        {formatCurrency(rate["Montant Ttc"])}
+                      </TableCell>
+                      <TableCell>
+                        {formatCurrency(rate["Encaissement"])}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

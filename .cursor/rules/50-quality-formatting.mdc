@@ -1,0 +1,24 @@
+---
+alwaysApply: true
+description: Quality gates, linting, testing, and performance expectations
+---
+
+## Code Quality
+
+- Match existing formatting; do not reformat unrelated code.
+- Add imports and types explicitly; avoid `any` in TypeScript.
+
+## Linting and Tests
+
+- No new linter errors allowed.
+- Add targeted unit tests for new logic, especially ETL rules.
+
+## Performance
+
+- Optimize queries with proper indexes and filters.
+- Avoid N+1; batch queries in services.
+- Memoize expensive computations in React; virtualize large lists.
+
+## File Size Limits
+
+- Enforce per-file limits: backend 300 lines; frontend 200 lines.

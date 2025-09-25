@@ -1,0 +1,37 @@
+---
+alwaysApply: true
+---
+
+## Project Structure and Entry Points
+
+- Backend entry point: [fastapi_backend/main.py](mdc:fastapi_backend/main.py)
+- Backend configuration: [fastapi_backend/core/config.py](mdc:fastapi_backend/core/config.py)
+- Backend routers live in [fastapi_backend/api/](mdc:fastapi_backend/api/)
+- Backend models live in [fastapi_backend/models/](mdc:fastapi_backend/models/)
+- Database connection: [fastapi_backend/database/connection.py](mdc:fastapi_backend/database/connection.py)
+- Alembic migration env: [fastapi_backend/alembic/env.py](mdc:fastapi_backend/alembic/env.py)
+
+- Frontend entry point: [frontend/src/main.jsx](mdc:frontend/src/main.jsx)
+- Frontend app root: [frontend/src/App.jsx](mdc:frontend/src/App.jsx)
+- Frontend components: [frontend/src/components/](mdc:frontend/src/components/)
+- Frontend pages: [frontend/src/pages/](mdc:frontend/src/pages/)
+- Frontend API layer: [frontend/src/api/](mdc:frontend/src/api/)
+
+## Modular Domains
+
+- Authentication & Users: [fastapi_backend/api/auth.py](mdc:fastapi_backend/api/auth.py), [fastapi_backend/models/user.py](mdc:fastapi_backend/models/user.py)
+- Files & Uploads: [fastapi_backend/api/files.py](mdc:fastapi_backend/api/files.py), [fastapi_backend/services/file_service.py](mdc:fastapi_backend/services/file_service.py)
+- Notifications & Messaging: [fastapi_backend/api/notifications.py](mdc:fastapi_backend/api/notifications.py), [fastapi_backend/api/messaging.py](mdc:fastapi_backend/api/messaging.py)
+
+## Single Responsibility and File Size Limits
+
+- Each file should express a single responsibility and remain small:
+  - Backend Python files: hard limit 300 lines, target ≤ 200 lines.
+  - Frontend component/page files: hard limit 200 lines, target ≤ 150 lines.
+  - Break out helpers into modules under `lib/`, `hooks/`, or `services/`.
+
+## Naming and Locations
+
+- Place new API endpoints in a dedicated router file under `fastapi_backend/api/`.
+- Place business logic in service modules under `fastapi_backend/services/`.
+- Place new React components under `frontend/src/components/` and pages under `frontend/src/pages/`.

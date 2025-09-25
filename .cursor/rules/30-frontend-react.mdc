@@ -1,0 +1,33 @@
+---
+globs: frontend/src/**/*.{js,jsx,ts,tsx}
+description: React/Vite conventions for modular pages, components, hooks, and API usage
+---
+
+## Component and Page Structure
+
+- Keep pages in `pages/` and reusable UI in `components/`.
+- Use small, focused components; lift side effects into hooks under `hooks/`.
+- Fetch data via an API layer under `api/` or `services/`; no fetches inside JSX bodies.
+
+## State and Effects
+
+- Co-locate local state; use context only for cross-cutting concerns (auth, theme).
+- Debounce filter inputs; auto-apply filters without an explicit apply button.
+
+## Accessibility and i18n
+
+- Interface must be in French; all labels and aria attributes in French.
+- Ensure keyboard navigation and roles on interactive elements.
+
+## Charts and Theme
+
+- Use Algérie Telecom colors (Bleu/Vert) consistently.
+- Encapsulate chart config in `lib/chartTheme.ts` and import from components.
+
+## Exports
+
+- Provide CSV/XLSX/PDF export actions that respect active filters.
+
+## File Size Limits
+
+- Component/page hard limit: 200 lines; extract UI fragments to smaller components.
