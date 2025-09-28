@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from services.secure_file_service import secure_file_service; print(''Import successful'')\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

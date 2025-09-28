@@ -4,7 +4,9 @@
       "Bash(find:*)",
       "Bash(npm run build:*)",
       "Bash(tree:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(alembic upgrade:*)",
+      "Bash(alembic revision:*)"
     ],
     "deny": [],
     "ask": []

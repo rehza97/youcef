@@ -12,8 +12,9 @@ class DOT(Base):
     created_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=True)
 
-    # Relationship with Park table
+    # Relationships
     parks = relationship("Park", back_populates="dot")
+    users = relationship("User", back_populates="dot")
 
     def __repr__(self):
         return f"<DOT(id={self.id}, name='{self.name}')>"

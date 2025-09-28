@@ -14,6 +14,7 @@ import io
 from services.park_processing import ParkDataProcessor
 from services.background_processor import background_processor, ProcessingStatus
 from services.processing_websocket import processing_ws_manager
+from services.dot_service import DOTService
 
 router = APIRouter(prefix="/api/parks", tags=["parks"])
 
@@ -133,6 +134,11 @@ class DOTCreate(BaseModel):
     description: Optional[str] = None
 
 
+class DOTUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
 class DOTResponse(BaseModel):
     id: int
     name: str
@@ -142,6 +148,16 @@ class DOTResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class DOTStatistics(BaseModel):
+    dot_id: int
+    dot_name: str
+    description: Optional[str] = None
+    active_users: int
+    parks: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class ParkCreate(BaseModel):
@@ -246,33 +262,192 @@ class ParkResponse(BaseModel):
 
 
 @router.post("/dots/", response_model=DOTResponse)
-def create_dot(dot: DOTCreate, db: Session = Depends(get_db)):
-    """Create a new DOT"""
-    db_dot = DOT(
-        name=dot.name,
-        description=dot.description,
-        created_at=datetime.utcnow()
-    )
-    db.add(db_dot)
-    db.commit()
-    db.refresh(db_dot)
-    return db_dot
+def create_dot(
+    dot: DOTCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create a new DOT (Admin only)"""
+    from services.permission_service import PermissionService
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        new_dot = DOTService.get_or_create_dot(
+            db=db,
+            name=dot.name,
+            description=dot.description
+        )
+        return new_dot
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/dots/", response_model=List[DOTResponse])
-def get_dots(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    """Get all DOTs"""
-    dots = db.query(DOT).offset(skip).limit(limit).all()
-    return dots
+def get_dots(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all DOTs with permission filtering"""
+    # Admins can see all DOTs
+    if current_user.is_superuser or current_user.is_staff:
+        dots = DOTService.list_dots(db=db, skip=skip, limit=limit)
+        return dots
+
+    # Regular users can only see their assigned DOT
+    if current_user.dot_id:
+        user_dot = DOTService.get_dot_by_id(db=db, dot_id=current_user.dot_id)
+        return [user_dot] if user_dot else []
+
+    return []
 
 
 @router.get("/dots/{dot_id}", response_model=DOTResponse)
-def get_dot(dot_id: int, db: Session = Depends(get_db)):
-    """Get a specific DOT by ID"""
-    dot = db.query(DOT).filter(DOT.id == dot_id).first()
+def get_dot(
+    dot_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific DOT by ID with permission check"""
+    # Validate access to this DOT
+    if not DOTService.validate_dot_access(db=db, user_id=current_user.id, target_dot_id=dot_id):
+        raise HTTPException(status_code=403, detail="Access denied to this DOT")
+
+    dot = DOTService.get_dot_by_id(db=db, dot_id=dot_id)
     if not dot:
         raise HTTPException(status_code=404, detail="DOT not found")
     return dot
+
+
+@router.put("/dots/{dot_id}", response_model=DOTResponse)
+def update_dot(
+    dot_id: int,
+    dot_update: DOTUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update a DOT (Admin only)"""
+    from services.permission_service import PermissionService
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        updated_dot = DOTService.update_dot(
+            db=db,
+            dot_id=dot_id,
+            name=dot_update.name,
+            description=dot_update.description
+        )
+        if not updated_dot:
+            raise HTTPException(status_code=404, detail="DOT not found")
+        return updated_dot
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/dots/{dot_id}")
+def delete_dot(
+    dot_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a DOT (Admin only)"""
+    from services.permission_service import PermissionService
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        success = DOTService.delete_dot(db=db, dot_id=dot_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="DOT not found")
+        return {"success": True, "message": f"DOT {dot_id} deleted successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dots/{dot_id}/statistics", response_model=DOTStatistics)
+def get_dot_statistics(
+    dot_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get statistics for a specific DOT"""
+    # Validate access to this DOT
+    if not DOTService.validate_dot_access(db=db, user_id=current_user.id, target_dot_id=dot_id):
+        raise HTTPException(status_code=403, detail="Access denied to this DOT")
+
+    try:
+        statistics = DOTService.get_dot_statistics(db=db, dot_id=dot_id)
+        return statistics
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dots/{dot_id}/users")
+def get_dot_users(
+    dot_id: int,
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get users assigned to a specific DOT (Admin only)"""
+    from services.permission_service import PermissionService
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        users = DOTService.get_users_in_dot(db=db, dot_id=dot_id, skip=skip, limit=limit)
+        return {"users": users, "dot_id": dot_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/dots/{dot_id}/assign-user/{user_id}")
+def assign_user_to_dot(
+    dot_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Assign a user to a DOT (Admin only)"""
+    from services.permission_service import PermissionService
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        success = DOTService.assign_user_to_dot(db=db, user_id=user_id, dot_id=dot_id)
+        if success:
+            return {"success": True, "message": f"User {user_id} assigned to DOT {dot_id}"}
+        return {"success": False, "message": "Assignment failed"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/users/{user_id}/dot-assignment")
+def unassign_user_from_dot(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Remove user's DOT assignment (Admin only)"""
+    from services.permission_service import PermissionService
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        success = DOTService.unassign_user_from_dot(db=db, user_id=user_id)
+        if success:
+            return {"success": True, "message": f"User {user_id} DOT assignment removed"}
+        return {"success": False, "message": "Unassignment failed"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # Park endpoints
 
@@ -298,11 +473,21 @@ def get_parks(
     service_number: Optional[str] = None,
     subscriber_status: Optional[str] = None,
     state: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get Park records with optional filtering"""
+    """Get Park records with optional filtering and DOT-based permissions"""
     query = db.query(Park)
 
+    # Apply DOT-based permission filtering
+    accessible_dots = DOTService.get_user_accessible_dots(db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        # User has no DOT access, return empty result
+        return []
+
+    # Apply other filters
     if customer_code:
         query = query.filter(Park.customer_code.contains(customer_code))
     if service_number:
@@ -319,6 +504,7 @@ def get_parks(
 @router.get("/data", response_model=ParkDataListResponse)
 async def get_saved_park_data(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(
         50, ge=1, le=1000, description="Number of records per page"),
@@ -330,10 +516,24 @@ async def get_saved_park_data(
         None, description="Filter by telecom type"),
     offer_type: Optional[str] = Query(None, description="Filter by offer type")
 ):
-    """Get saved park data with pagination and filtering"""
+    """Get saved park data with pagination, filtering, and DOT-based permissions"""
 
     # Build query
     query = db.query(Park)
+
+    # Apply DOT-based permission filtering
+    accessible_dots = DOTService.get_user_accessible_dots(db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        # User has no DOT access, return empty result
+        return ParkDataListResponse(
+            data=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+            total_pages=0
+        )
 
     # Apply search filter
     if search:
@@ -378,21 +578,38 @@ async def get_saved_park_data(
 
 
 @router.get("/data/stats")
-async def get_park_data_stats(db: Session = Depends(get_db)):
-    """Get statistics about saved park data"""
+async def get_park_data_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get statistics about saved park data with DOT-based permissions"""
 
-    total_records = db.query(Park).count()
+    # Apply DOT-based permission filtering
+    query = db.query(Park)
+    accessible_dots = DOTService.get_user_accessible_dots(db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        # User has no DOT access, return zero stats
+        return {
+            "total_records": 0,
+            "recent_records": 0,
+            "subscriber_statuses": [],
+            "telecom_types": [],
+            "offer_types": []
+        }
 
-    # Get unique values for filters
-    subscriber_statuses = db.query(Park.subscriber_status).distinct().all()
-    telecom_types = db.query(Park.telecom_type).distinct().all()
-    offer_types = db.query(Park.offer_type).distinct().all()
+    total_records = query.count()
+
+    # Get unique values for filters (within accessible DOTs)
+    subscriber_statuses = query.filter(Park.subscriber_status.isnot(None)).with_entities(Park.subscriber_status).distinct().all()
+    telecom_types = query.filter(Park.telecom_type.isnot(None)).with_entities(Park.telecom_type).distinct().all()
+    offer_types = query.filter(Park.offer_type.isnot(None)).with_entities(Park.offer_type).distinct().all()
 
     # Get recent records count (last 24 hours)
     from datetime import datetime, timedelta
     yesterday = datetime.utcnow() - timedelta(days=1)
-    recent_records = db.query(Park).filter(
-        Park.created_at >= yesterday).count()
+    recent_records = query.filter(Park.created_at >= yesterday).count()
 
     return {
         "total_records": total_records,
@@ -404,11 +621,20 @@ async def get_park_data_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/{park_id}", response_model=ParkResponse)
-def get_park(park_id: int, db: Session = Depends(get_db)):
-    """Get a specific Park record by ID"""
+def get_park(
+    park_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific Park record by ID with DOT-based permissions"""
     park = db.query(Park).filter(Park.id == park_id).first()
     if not park:
         raise HTTPException(status_code=404, detail="Park record not found")
+
+    # Check DOT-based access permission
+    if park.dot_id and not DOTService.validate_dot_access(db=db, user_id=current_user.id, target_dot_id=park.dot_id):
+        raise HTTPException(status_code=403, detail="Access denied to this park record")
+
     return park
 
 

@@ -22,6 +22,7 @@ from database.connection import SessionLocal, engine
 from models.park import Park
 from models.dot import DOT
 from services.park_processing import ParkDataProcessor
+from services.dot_service import DOTService
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -397,11 +398,21 @@ class BackgroundProcessor:
         return saved_count
 
     def _map_to_park_dict(self, record: Dict[str, Any], file_upload_id: int = None) -> Dict[str, Any]:
-        """Map Excel record to Park dictionary for bulk insert"""
+        """Map Excel record to Park dictionary for bulk insert with DOT auto-creation"""
+        # Handle DOT auto-creation if DOT name is provided instead of ID
+        dot_id = None
+        if 'dot_id' in record and record.get('dot_id') is not None:
+            dot_id = self._safe_int(record.get('dot_id'))
+        elif 'dot_name' in record and record.get('dot_name') is not None:
+            # Auto-create DOT if DOT name is provided
+            dot_name = self._safe_string(record.get('dot_name'))
+            if dot_name:
+                dot_id = self._get_or_create_dot_id(dot_name)
+
         return {
             'file_upload_id': file_upload_id,
             'extraction_date': self._safe_date(record.get('Extraction Date_Date d \'extraction')),
-            'dot_id': self._safe_int(record.get('dot_id')),
+            'dot_id': dot_id,
             'actel_code': self._safe_string(record.get('Actel Code_Code d\'actel')),
             'customer_l1_code': self._safe_string(record.get('Code Customer L1_Code Catégorie level 1')),
             'customer_l1_description': self._safe_string(record.get('Description Customer L1_Nom du Catégorie level 1')),
@@ -447,29 +458,46 @@ class BackgroundProcessor:
         }
 
     def _create_dots(self):
-        """Create DOTs if they don't exist"""
+        """Create DOTs if they don't exist using DOTService"""
         db = SessionLocal()
         try:
-            # Create DOT OUARGLA
-            if not db.query(DOT).filter(DOT.name == "DOT OUARGLA").first():
-                dot_ouargla = DOT(
-                    name="DOT OUARGLA",
-                    description="DOT for Ouargla region",
-                    created_at=datetime.utcnow()
-                )
-                db.add(dot_ouargla)
+            # Create DOT OUARGLA using DOTService
+            DOTService.get_or_create_dot(
+                db=db,
+                name="DOT OUARGLA",
+                description="DOT for Ouargla region"
+            )
 
-            # Create DOT SIEGE
-            if not db.query(DOT).filter(DOT.name == "DOT SIEGE").first():
-                dot_siege = DOT(
-                    name="DOT SIEGE",
-                    description="DOT for Grand Compte",
-                    created_at=datetime.utcnow()
-                )
-                db.add(dot_siege)
+            # Create DOT SIEGE using DOTService
+            DOTService.get_or_create_dot(
+                db=db,
+                name="DOT SIEGE",
+                description="DOT for Grand Compte"
+            )
 
-            db.commit()
+            logger.info("DOTs created/verified using DOTService")
 
+        except Exception as e:
+            logger.error(f"Error creating DOTs: {e}")
+        finally:
+            db.close()
+
+    def _get_or_create_dot_id(self, dot_name: str) -> Optional[int]:
+        """Get or create DOT by name and return its ID"""
+        if not dot_name:
+            return None
+
+        db = SessionLocal()
+        try:
+            dot = DOTService.get_or_create_dot(
+                db=db,
+                name=dot_name.strip(),
+                description=f"Auto-created DOT for region: {dot_name.strip()}"
+            )
+            return dot.id if dot else None
+        except Exception as e:
+            logger.error(f"Error getting/creating DOT '{dot_name}': {e}")
+            return None
         finally:
             db.close()
 

@@ -238,3 +238,4 @@ curl -X GET "http://localhost:8000/api/parks/status" \
 ```
 
 This implementation provides a robust foundation for testing and production use with proper resource management and shutdown procedures.
+

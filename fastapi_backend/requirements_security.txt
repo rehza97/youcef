@@ -1,0 +1,78 @@
+# Additional security dependencies for the enhanced chat and file system
+
+# File content validation and malware detection
+python-magic==0.4.27
+python-magic-bin==0.4.14  # Windows support
+
+# Encryption and cryptography
+cryptography==41.0.7
+
+# Advanced file type detection
+filetype==1.2.0
+
+# Enhanced security headers
+secure==0.3.0
+
+# Rate limiting (if needed)
+slowapi==0.1.9
+
+# Additional validation
+pydantic[email]==2.4.2
+
+# WebSocket support (if not already included)
+websockets==11.0.3
+
+# JSON validation and sanitization
+jsonschema==4.19.2
+
+# SQL injection prevention (additional)
+sqlparse==0.4.4
+
+# Secure headers middleware
+starlette-context==0.3.6
+
+# Additional file format support
+openpyxl==3.1.2
+xlrd==2.0.1
+
+# Image processing (for image file validation)
+Pillow==10.0.1
+
+# PDF processing (for PDF file validation)
+PyPDF2==3.0.1
+
+# Archive file support (for validation)
+patool==1.12.0
+
+# Memory optimization for large files
+psutil==5.9.6
+
+# Advanced logging
+structlog==23.2.0
+
+# Security scanning utilities
+bandit==1.7.5
+
+# Network security
+dnspython==2.4.2
+
+# Time-based security
+pytz==2023.3
+
+# UUID generation enhancements
+shortuuid==1.0.11
+
+# Secure random generation
+secrets==0.0.0  # Built-in, just for documentation
+
+# Hash generation
+hashlib==0.0.0  # Built-in, just for documentation
+
+# Base64 encoding utilities
+base64==0.0.0  # Built-in, just for documentation
+
+# Environment variable management
+python-decouple==3.8
+
+# Configuration management
+pydantic-settings==2.0.3

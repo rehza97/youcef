@@ -15,13 +15,18 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey(
         "conversations.id"), nullable=False)
     sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    content = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)  # Now encrypted
     # text, image, file, audio, video
     message_type = Column(String(50), default="text")
     is_edited = Column(Boolean, default=False)
     is_deleted = Column(Boolean, default=False)
-    # Additional message data (file info, etc.)
+    # Additional message data (file info, etc.) - also encrypted
     message_metadata = Column(JSON, nullable=True)
+    # New security fields
+    content_hash = Column(String(64), nullable=True)  # SHA-256 hash for integrity
+    encryption_version = Column(String(10), default="v1")  # Track encryption version
+    reply_to_id = Column(Integer, ForeignKey("messages.id"), nullable=True)  # Message threading
+    thread_id = Column(String(36), nullable=True)  # Thread grouping
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -30,6 +35,9 @@ class Message(Base):
     sender = relationship("User", foreign_keys=[
                           sender_id], back_populates="sent_messages")
     reactions = relationship("MessageReaction", back_populates="message")
+    # Self-referential relationship for threading
+    replies = relationship("Message", remote_side=[id], backref="parent_message")
+    read_receipts = relationship("MessageReadReceipt", back_populates="message")
 
 
 class MessageReaction(Base):
@@ -45,6 +53,20 @@ class MessageReaction(Base):
 
     # Relationships
     message = relationship("Message", back_populates="reactions")
+    user = relationship("User")
+
+
+class MessageReadReceipt(Base):
+    """Message read receipts model"""
+    __tablename__ = "message_read_receipts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("messages.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    read_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    message = relationship("Message", back_populates="read_receipts")
     user = relationship("User")
 
 # Pydantic models for API

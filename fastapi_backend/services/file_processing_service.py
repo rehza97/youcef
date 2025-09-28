@@ -7,6 +7,7 @@ from typing import Dict, Any
 from sqlalchemy.orm import Session
 
 from services.notification_service import NotificationService
+from services.dot_service import DOTService
 
 logger = logging.getLogger(__name__)
 

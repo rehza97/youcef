@@ -1,9 +1,9 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database.connection import Base
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -25,7 +25,11 @@ class User(Base):
     bio = Column(Text, nullable=True)
     avatar_url = Column(String(500), nullable=True)
 
+    # DOT relationship - users can be assigned to a specific DOT region
+    dot_id = Column(Integer, ForeignKey("dots.id"), nullable=True, index=True)
+
     # Relationships
+    dot = relationship("DOT", back_populates="users")
     roles = relationship("UserRole", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
     sent_messages = relationship(
@@ -40,6 +44,15 @@ class User(Base):
 
 # Pydantic models for API
 
+class DOTInfo(BaseModel):
+    """DOT information for user responses"""
+    id: int
+    name: str
+    description: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 
 class UserBase(BaseModel):
     username: str
@@ -48,6 +61,7 @@ class UserBase(BaseModel):
     last_name: Optional[str] = None
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
+    dot_id: Optional[int] = None
 
 
 class UserCreate(UserBase):
@@ -62,6 +76,7 @@ class UserUpdate(BaseModel):
     bio: Optional[str] = None
     avatar_url: Optional[str] = None
     is_active: Optional[bool] = None
+    dot_id: Optional[int] = None
 
 
 class UserResponse(UserBase):
@@ -71,6 +86,7 @@ class UserResponse(UserBase):
     is_superuser: bool
     date_joined: datetime
     last_login: Optional[datetime] = None
+    dot: Optional[DOTInfo] = None
 
     class Config:
         from_attributes = True
@@ -91,6 +107,7 @@ class UserProfile(BaseModel):
     avatar_url: Optional[str] = None
     date_joined: datetime
     last_login: Optional[datetime] = None
+    dot: Optional[DOTInfo] = None
 
     class Config:
         from_attributes = True

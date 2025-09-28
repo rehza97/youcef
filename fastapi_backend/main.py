@@ -36,6 +36,12 @@ from api.message_crud import message_crud_router
 from api.message_attachments import message_attachments_router
 from api.message_reactions import message_reactions_router
 
+# New Secure Services
+from api.secure_messaging import router as secure_messaging_router
+from api.secure_file_management import router as secure_file_router
+from api.admin_broadcast import router as admin_broadcast_router
+from api.websocket_messaging import router as websocket_router
+
 # Encaissement Management (split from encaissement.py)
 from api.encaissement_upload import encaissement_upload_router
 from api.encaissement_analytics import encaissement_analytics_router
@@ -301,6 +307,31 @@ app.include_router(
     tags=["Park Management"]
 )
 
+# New Secure Services
+app.include_router(
+    secure_messaging_router,
+    tags=["Secure Messaging"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    secure_file_router,
+    tags=["Secure File Management"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    admin_broadcast_router,
+    tags=["Admin Broadcasting"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# WebSocket endpoints
+app.include_router(
+    websocket_router,
+    tags=["WebSocket Messaging"]
+)
+
 
 @app.get("/")
 async def root():
@@ -332,15 +363,21 @@ async def api_info():
         "description": "FastAPI backend with real-time features",
         "features": [
             "Authentication & Authorization",
-            "Role-Based Access Control (RBAC)",
-            "Real-time Messaging",
+            "Role-Based Access Control (RBAC) with DOT Integration",
+            "Secure Real-time Messaging with Encryption",
             "Real-time Notifications",
-            "File Upload & Preview",
+            "Secure File Upload & Management",
+            "Admin File Broadcasting",
+            "Audit Logging & Security Tracking",
+            "Path Traversal Protection",
+            "Content Validation & Malware Scanning",
+            "DOT-based Permission System",
+            "Message Threading & Read Receipts",
             "Encaissement Processing"
         ],
         "websocket_endpoints": [
-            "/ws/notifications/{user_id}",
-            "/ws/chat/{conversation_id}"
+            "/ws/messaging",
+            "/ws/notifications"
         ]
     }
 
