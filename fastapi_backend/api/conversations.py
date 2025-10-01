@@ -33,6 +33,10 @@ class ConversationCreateRequest(BaseModel):
     conversation_metadata: Optional[Dict[str, Any]] = None
     participant_ids: List[int] = []
 
+    class Config:
+        # Allow extra fields to be ignored
+        extra = "ignore"
+
 
 @conversations_router.get("/", response_model=ConversationsListResponse)
 async def get_conversations(
@@ -70,6 +74,20 @@ async def create_conversation(
 ):
     """Create a new conversation"""
     try:
+        logger.info(
+            f"Creating conversation with data: {conversation_data.dict()}")
+        logger.info(
+            f"Participant IDs: {conversation_data.participant_ids}, type: {type(conversation_data.participant_ids)}")
+
+        # Ensure participant_ids is a list
+        if not isinstance(conversation_data.participant_ids, list):
+            logger.error(
+                f"participant_ids is not a list: {conversation_data.participant_ids}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="participant_ids must be a list"
+            )
+
         # Create conversation
         conversation = Conversation(
             name=conversation_data.name,
@@ -263,6 +281,3 @@ async def delete_conversation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error deleting conversation"
         )
-
-
-

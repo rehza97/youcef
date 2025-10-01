@@ -132,13 +132,6 @@ api.interceptors.response.use(
 );
 
 // Utility functions
-function getCookie(name) {
-  const value = `; ${document.cookie}`;
-  const parts = value.split(`; ${name}=`);
-  if (parts.length === 2) return parts.pop().split(";").shift();
-  return null;
-}
-
 function sanitizeData(data) {
   if (typeof data !== "object" || data === null) return data;
 
@@ -367,17 +360,22 @@ export const messagingAPI = {
 
   // Create Conversation
   createConversation: async (conversationData) => {
-    try {
-      const response = await api.post("/api/conversations/", {
-        name: conversationData.name,
-        conversation_type: conversationData.conversation_type || "group",
-        participant_ids: conversationData.participant_ids || [],
-        conversation_metadata: conversationData.conversation_metadata || {},
-      });
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+    // Ensure participant_ids is always an array
+    const participantIds = Array.isArray(conversationData.participant_ids)
+      ? conversationData.participant_ids
+      : [];
+
+    const requestData = {
+      name: conversationData.name,
+      conversation_type: conversationData.conversation_type || "group",
+      participant_ids: participantIds,
+      conversation_metadata: conversationData.conversation_metadata || {},
+    };
+
+    console.log("🔍 Sending conversation data:", requestData);
+
+    const response = await api.post("/api/conversations/", requestData);
+    return response.data;
   },
 
   updateConversation: (conversationId, data) => {
@@ -464,26 +462,22 @@ export const messagingAPI = {
 
   // Block/Unblock Users
   blockUser: async (blockedId, reason = "") => {
-    try {
-      const response = await api.post("/api/blocks/", {
-        blocked_id: blockedId,
-        reason: reason,
-      });
-      return response.data;
-    } catch (error) {
-      throw error;
-    }
+    const response = await api.post("/api/blocks/", {
+      blocked_id: blockedId,
+      reason: reason,
+    });
+    return response.data;
   },
 
   unblockUser: async (blockedId) => {
-    try {
-      const response = await api.post("/api/blocks/unblock", {
-        blocked_id: blockedId,
-      });
-      return response.data;
-    } catch (error) {
-      throw error;
+    if (!blockedId) {
+      throw new Error("Blocked user ID is required");
     }
+
+    const response = await api.post("/api/blocks/unblock", {
+      blocked_user_id: blockedId,
+    });
+    return response.data;
   },
 
   getBlockedUsers: () => api.get("/api/blocks/"),
