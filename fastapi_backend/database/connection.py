@@ -16,24 +16,63 @@ if settings.DATABASE_URL.startswith("sqlite"):
         echo=settings.DATABASE_ECHO
     )
 else:
-    # PostgreSQL configuration with optimized connection pool
+    # ✅ MAIN ENGINE: API requests (priority for user navigation)
     engine = create_engine(
         settings.DATABASE_URL,
         echo=settings.DATABASE_ECHO,
         poolclass=QueuePool,
-        pool_size=settings.DATABASE_POOL_SIZE,           # Base connection pool size
-        # Additional connections when needed
-        max_overflow=settings.DATABASE_MAX_OVERFLOW,
-        pool_pre_ping=True,                              # Verify connections before use
-        # Recycle connections every 5 minutes
+        # ✅ Reduced from 20 to reserve for background
+        pool_size=15,
+        max_overflow=25,                                 # ✅ Reduced from 30
+        pool_pre_ping=True,
         pool_recycle=settings.DATABASE_POOL_RECYCLE,
-        # Timeout for getting connection from pool
-        pool_timeout=settings.DATABASE_POOL_TIMEOUT,
+        # ✅ Reduced from 30 for faster failures
+        pool_timeout=10,
         connect_args={
-            "connect_timeout": 10,  # Connection timeout
-            "application_name": "youcef_backend"
+            "connect_timeout": 10,
+            "application_name": "youcef_api"             # ✅ Identify API requests
         }
     )
+
+    # ✅ BACKGROUND ENGINE: File processing (separate pool to avoid blocking API)
+    background_engine = create_engine(
+        settings.DATABASE_URL,
+        echo=False,                                      # Don't log background queries
+        poolclass=QueuePool,
+        pool_size=10,                                    # ✅ Smaller pool for background
+        max_overflow=15,                                 # ✅ Limited overflow
+        pool_pre_ping=True,
+        pool_recycle=settings.DATABASE_POOL_RECYCLE,
+        pool_timeout=5,                                  # ✅ Fast timeout for background
+        connect_args={
+            "connect_timeout": 10,
+            "application_name": "youcef_background"      # ✅ Identify background tasks
+        }
+    )
+
+    # ✅ WEBSOCKET ENGINE: Real-time connections (separate pool)
+    websocket_engine = create_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        poolclass=QueuePool,
+        pool_size=5,                                     # ✅ Small pool for WebSocket
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=settings.DATABASE_POOL_RECYCLE,
+        pool_timeout=5,
+        connect_args={
+            "connect_timeout": 10,
+            "application_name": "youcef_websocket"       # ✅ Identify WebSocket connections
+        }
+    )
+
+    logger.info(f"✅ Connection pools initialized:")
+    logger.info(f"   API Pool: {15} base + {25} overflow = 40 connections")
+    logger.info(
+        f"   Background Pool: {10} base + {15} overflow = 25 connections")
+    logger.info(
+        f"   WebSocket Pool: {5} base + {10} overflow = 15 connections")
+    logger.info(f"   TOTAL: 80 connections (PostgreSQL max: 100)")
 
 # Create SessionLocal class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

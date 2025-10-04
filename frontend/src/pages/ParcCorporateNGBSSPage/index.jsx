@@ -160,7 +160,13 @@ const ParcCorporateNGBSSPage = () => {
       const response = await exportParkAnalyticsData(filters, format);
 
       // Create and download file
-      const data = response.data.data;
+      const data = response.data.data || response.data.distribution || [];
+
+      if (data.length === 0) {
+        toast.info("Aucune donnée disponible à exporter");
+        return;
+      }
+
       const headers = Object.keys(data[0] || {});
 
       let content = "";

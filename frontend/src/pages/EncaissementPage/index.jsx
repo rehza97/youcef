@@ -138,7 +138,13 @@ const EncaissementPage = () => {
             : filters.telecom_type_filter,
       };
       const response = await exportParkAnalyticsData(apiFilters, format);
-      const data = response.data.data;
+      const data = response.data.data || response.data.distribution || [];
+
+      if (data.length === 0) {
+        toast.info("Aucune donnée disponible à exporter");
+        return;
+      }
+
       const headers = Object.keys(data[0] || {});
       let content = headers.join(",") + "\n";
       content += data
