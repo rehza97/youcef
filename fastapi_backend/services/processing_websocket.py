@@ -37,10 +37,13 @@ class ProcessingWebSocketManager:
                 del self.active_connections[user_id]
 
         # Remove from processing connections
-        for task_id, connections in self.processing_connections.items():
+        to_delete = []
+        for task_id, connections in list(self.processing_connections.items()):
             connections.discard(websocket)
             if not connections:
-                del self.processing_connections[task_id]
+                to_delete.append(task_id)
+        for task_id in to_delete:
+            del self.processing_connections[task_id]
 
         logger.info(f"User {user_id} disconnected from processing updates")
 
@@ -126,10 +129,13 @@ class ProcessingWebSocketManager:
                 disconnected.add(websocket)
 
         # Clean up disconnected connections
-        for user_id, connections in self.active_connections.items():
+        empty_users = []
+        for user_id, connections in list(self.active_connections.items()):
             connections -= disconnected
             if not connections:
-                del self.active_connections[user_id]
+                empty_users.append(user_id)
+        for user_id in empty_users:
+            del self.active_connections[user_id]
 
 
 # Global WebSocket manager instance

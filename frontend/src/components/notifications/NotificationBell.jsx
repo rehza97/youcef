@@ -2,7 +2,11 @@ import React, { useState, useEffect } from "react";
 import { Bell } from "lucide-react";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
-import { notificationsAPI } from "../../services/api";
+import {
+  fetchNotifications as apiFetchNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+} from "../../services/api";
 import { useNotificationsWebSocket } from "../../hooks/useNotificationsWebSocket";
 import { useToast } from "../../hooks/use-toast";
 import { handleApiError } from "../../lib/error-handler";
@@ -49,7 +53,7 @@ const NotificationBell = () => {
   const fetchNotifications = async () => {
     try {
       setIsLoading(true);
-      const response = await notificationsAPI.fetchNotifications({
+      const response = await apiFetchNotifications({
         limit: 20,
         unread_only: false,
       });
@@ -72,7 +76,7 @@ const NotificationBell = () => {
 
   const markAsRead = async (notificationId) => {
     try {
-      await notificationsAPI.markAsRead(notificationId);
+      await markNotificationAsRead(notificationId);
       setNotifications((prev) =>
         prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n))
       );
@@ -87,7 +91,7 @@ const NotificationBell = () => {
 
   const markAllAsRead = async () => {
     try {
-      await notificationsAPI.markAllAsRead();
+      await markAllNotificationsAsRead();
       setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
       setUnreadCount(0);
       toast({

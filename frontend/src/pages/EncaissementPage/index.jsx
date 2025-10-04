@@ -1,22 +1,26 @@
 import React, { useState, useEffect } from "react";
-import { parkAnalyticsAPI } from "../../services/api";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "../../components/ui/card";
-import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
-import { Input } from "../../components/ui/input";
-import { Label } from "../../components/ui/label";
+  getParkAnalyticsOverview,
+  getParkAnalyticsByTelecomType,
+  getParkAnalyticsBySubscriberStatus,
+  getParkAnalyticsByDOT,
+  getParkAnalyticsByCustomerL2,
+  getParkAnalyticsByCustomerL3,
+  getParkAnalyticsAvailableFilters,
+  exportParkAnalyticsData,
+} from "../../services/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../../components/ui/select";
+} from "@/components/ui/select";
 import {
   PieChart as RePieChart,
   Pie,
@@ -37,7 +41,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "../../components/ui/table";
+} from "@/components/ui/table";
 import {
   Upload,
   Download,
@@ -67,10 +71,10 @@ const EncaissementPage = () => {
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
-    dot_filter: "",
-    actel_code_filter: "",
-    subscriber_status_filter: "",
-    telecom_type_filter: "",
+    dot_filter: "all",
+    actel_code_filter: "all",
+    subscriber_status_filter: "all",
+    telecom_type_filter: "all",
   });
 
   useEffect(() => {
@@ -89,13 +93,13 @@ const EncaissementPage = () => {
         l3Res,
         filtersRes,
       ] = await Promise.all([
-        parkAnalyticsAPI.getOverview(),
-        parkAnalyticsAPI.getByTelecomType(),
-        parkAnalyticsAPI.getBySubscriberStatus(),
-        parkAnalyticsAPI.getByDOT(),
-        parkAnalyticsAPI.getByCustomerL2(),
-        parkAnalyticsAPI.getByCustomerL3(),
-        parkAnalyticsAPI.getAvailableFilters(),
+        getParkAnalyticsOverview(),
+        getParkAnalyticsByTelecomType(),
+        getParkAnalyticsBySubscriberStatus(),
+        getParkAnalyticsByDOT(),
+        getParkAnalyticsByCustomerL2(),
+        getParkAnalyticsByCustomerL3(),
+        getParkAnalyticsAvailableFilters(),
       ]);
 
       setOverview(overviewRes.data || {});
@@ -119,7 +123,21 @@ const EncaissementPage = () => {
 
   const exportData = async (format = "csv") => {
     try {
-      const response = await parkAnalyticsAPI.exportData(filters, format);
+      // Convert "all" values to empty strings for API compatibility
+      const apiFilters = {
+        dot_filter: filters.dot_filter === "all" ? "" : filters.dot_filter,
+        actel_code_filter:
+          filters.actel_code_filter === "all" ? "" : filters.actel_code_filter,
+        subscriber_status_filter:
+          filters.subscriber_status_filter === "all"
+            ? ""
+            : filters.subscriber_status_filter,
+        telecom_type_filter:
+          filters.telecom_type_filter === "all"
+            ? ""
+            : filters.telecom_type_filter,
+      };
+      const response = await exportParkAnalyticsData(apiFilters, format);
       const data = response.data.data;
       const headers = Object.keys(data[0] || {});
       let content = headers.join(",") + "\n";
@@ -246,7 +264,7 @@ const EncaissementPage = () => {
                     <SelectValue placeholder="Tous" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Tous</SelectItem>
+                    <SelectItem value="all">Tous</SelectItem>
                     {availableFilters.dots?.map((d) => (
                       <SelectItem key={d.id} value={d.id.toString()}>
                         {d.name}
@@ -267,7 +285,7 @@ const EncaissementPage = () => {
                     <SelectValue placeholder="Tous" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Tous</SelectItem>
+                    <SelectItem value="all">Tous</SelectItem>
                     {availableFilters.subscriber_statuses?.map((s) => (
                       <SelectItem key={s} value={s}>
                         {s}
@@ -288,7 +306,7 @@ const EncaissementPage = () => {
                     <SelectValue placeholder="Tous" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Tous</SelectItem>
+                    <SelectItem value="all">Tous</SelectItem>
                     {availableFilters.telecom_types?.map((t) => (
                       <SelectItem key={t} value={t}>
                         {t}

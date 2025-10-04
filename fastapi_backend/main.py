@@ -435,8 +435,8 @@ async def get_user_from_token(token: str, db: Session) -> Optional[User]:
         from models.user import User
 
         token_data = verify_token(token)
-        ws_logger.debug(
-            f"Token validation successful, user_id: {token_data.user_id}")
+        ws_logger.info(
+            f"✅ Token validation successful, user_id: {token_data.user_id}, username: {token_data.username}")
 
         if token_data and token_data.user_id:
             user = db.query(User).filter(User.id == token_data.user_id).first()
@@ -449,12 +449,17 @@ async def get_user_from_token(token: str, db: Session) -> Optional[User]:
         else:
             ws_logger.error("Token data is missing user_id")
     except HTTPException as e:
-        ws_logger.error(f"HTTP Exception during token validation: {e.detail}")
+        ws_logger.error(
+            f"❌ HTTP Exception during token validation: {e.detail}")
         ws_logger.error(f"Status code: {e.status_code}")
+        ws_logger.error(
+            f"💡 Hint: Token may be expired or invalid. Please log out and log back in.")
     except Exception as e:
-        ws_logger.error(f"Token validation error: {e}")
-        ws_logger.error(f"Error type: {type(e)}")
+        ws_logger.error(f"❌ Token validation error: {e}")
+        ws_logger.error(f"Error type: {type(e).__name__}")
         ws_logger.error(f"Error details: {str(e)}")
+        import traceback
+        ws_logger.error(f"Stack trace:\n{traceback.format_exc()}")
 
     ws_logger.error("Token validation failed")
     return None

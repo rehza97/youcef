@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { generalAPI } from "../../services/api";
+import { healthCheck, detailedHealthCheck } from "../../services/api";
 import {
   Card,
   CardContent,
@@ -25,11 +25,11 @@ const HealthPage = () => {
       setLoading(true);
 
       // Vérification de santé basique
-      const basicResponse = await generalAPI.healthCheck();
+      const basicResponse = await healthCheck();
       setHealthStatus(basicResponse.data);
 
       // Vérification de santé détaillée
-      const detailedResponse = await generalAPI.detailedHealthCheck();
+      const detailedResponse = await detailedHealthCheck();
       setDetailedHealth(detailedResponse.data);
 
       setLastChecked(new Date());

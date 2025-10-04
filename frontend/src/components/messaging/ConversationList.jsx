@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { messagingAPI } from "../../services/api";
+import { fetchConversations } from "../../services/api";
 
 export default function ConversationList({ onSelect }) {
   const {
@@ -9,7 +9,7 @@ export default function ConversationList({ onSelect }) {
   } = useQuery({
     queryKey: ["conversations"],
     queryFn: async () => {
-      const response = await messagingAPI.fetchConversations();
+      const response = await fetchConversations();
       return response.data;
     },
   });

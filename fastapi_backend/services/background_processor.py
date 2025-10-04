@@ -296,14 +296,18 @@ class BackgroundProcessor:
 
     def _process_chunk(self, chunk_df: pd.DataFrame, task_id: str) -> Dict[str, Any]:
         """Process a chunk of data"""
+        db_session = None
         try:
             # Get file_upload_id from task
             task = self.active_tasks.get(task_id, {})
             file_upload_id = int(task.get("file_id")) if task.get(
                 "file_id") else None
 
+            # Create database session for processing
+            db_session = SessionLocal()
+
             # Apply processing rules
-            processor = ParkDataProcessor(SessionLocal())
+            processor = ParkDataProcessor(db_session)
             processed_df = processor._apply_processing_rules(chunk_df)
 
             # Get statistics
@@ -333,6 +337,13 @@ class BackgroundProcessor:
                 "anomalies": [],
                 "statistics": {}
             }
+        finally:
+            # Always close the database session
+            if db_session:
+                try:
+                    db_session.close()
+                except Exception as e:
+                    logger.warning(f"Error closing database session: {e}")
 
     def _bulk_save_parks(self, records: List[Dict[str, Any]], file_upload_id: int = None) -> int:
         """Bulk save parks to database for maximum performance"""
@@ -425,27 +436,36 @@ class BackgroundProcessor:
         try:
             park_dict = map_prk_record_to_park_dict(record, file_upload_id)
 
-            # Get actel code for DOT assignment
+            # Get actel code and DOT name for DOT assignment
             actel_code = park_dict.get('actel_code')
+            dot_name = park_dict.get('dot_name')  # Get from mapped park_dict
 
-            # Handle DOT assignment - check for DOT column in original record first
+            # Handle DOT assignment - prioritize DOT name from file
             dot_id = None
-            if 'dot_id' in record and record.get('dot_id') is not None:
-                dot_id = self._safe_int(record.get('dot_id'))
-            elif 'DOT' in record and record.get('DOT') is not None:
-                # Use DOT column from PRK file
-                dot_name = self._safe_string(record.get('DOT'))
-                if dot_name:
-                    dot_id = self._get_or_create_dot_id(dot_name)
+            if 'dot_id' in park_dict and park_dict.get('dot_id') is not None:
+                # DOT ID already set
+                dot_id = self._safe_int(park_dict.get('dot_id'))
+            elif dot_name:
+                # Use DOT name from file (most reliable source)
+                dot_id = self._get_or_create_dot_id(dot_name)
+                logger.debug(
+                    f"DOT assigned from file: {dot_name} -> ID {dot_id}")
             elif actel_code:
                 # Auto-assign DOT based on actel code
                 dot_id = self._get_dot_id_from_actel_code(actel_code)
+                logger.debug(
+                    f"DOT assigned from actel code: {actel_code} -> ID {dot_id}")
 
             # Fallback: assign to DOT OUARGLA if no DOT is determined
             if dot_id is None:
                 dot_id = self._get_or_create_dot_id("DOT OUARGLA")
+                logger.debug(
+                    f"DOT assigned fallback: DOT OUARGLA -> ID {dot_id}")
 
             park_dict['dot_id'] = dot_id
+            # Remove dot_name from park_dict as we now have dot_id
+            if 'dot_name' in park_dict:
+                del park_dict['dot_name']
             return park_dict
 
         except Exception as e:

@@ -24,6 +24,7 @@ from services.dot_service import DOTService
 
 logger = logging.getLogger(__name__)
 
+
 class SecureFileService:
     """Secure file service with proper validation and sanitization"""
 
@@ -71,7 +72,8 @@ class SecureFileService:
     }
 
     def __init__(self, upload_dir: str = "secure_uploads"):
-        self.upload_dir = Path(upload_dir).resolve()  # Resolve to absolute path
+        # Resolve to absolute path
+        self.upload_dir = Path(upload_dir).resolve()
         self._setup_directories()
 
     def _setup_directories(self):
@@ -81,14 +83,16 @@ class SecureFileService:
             self.upload_dir.mkdir(exist_ok=True, mode=0o750)
 
             # Create subdirectories for different file types
-            subdirs = ['images', 'documents', 'excel', 'csv', 'messages', 'broadcast', 'temp']
+            subdirs = ['images', 'documents', 'excel',
+                       'csv', 'messages', 'broadcast', 'temp']
             for subdir in subdirs:
                 (self.upload_dir / subdir).mkdir(exist_ok=True, mode=0o750)
 
             # Create quarantine directory for suspicious files
             (self.upload_dir / 'quarantine').mkdir(exist_ok=True, mode=0o700)
 
-            logger.info(f"Secure upload directories created at: {self.upload_dir}")
+            logger.info(
+                f"Secure upload directories created at: {self.upload_dir}")
         except Exception as e:
             logger.error(f"Failed to create secure upload directories: {e}")
             raise
@@ -96,10 +100,12 @@ class SecureFileService:
     def _sanitize_filename(self, filename: str) -> str:
         """Sanitize filename to prevent path traversal attacks"""
         if not filename:
-            raise HTTPException(status_code=400, detail="Filename cannot be empty")
+            raise HTTPException(
+                status_code=400, detail="Filename cannot be empty")
 
         # Remove path separators and dangerous characters
-        dangerous_chars = ['/', '\\', '..', '~', '$', '&', ';', '|', '<', '>', '`']
+        dangerous_chars = ['/', '\\', '..', '~',
+                           '$', '&', ';', '|', '<', '>', '`']
         sanitized = filename
 
         for char in dangerous_chars:
@@ -143,7 +149,8 @@ class SecureFileService:
             detected_mime, _ = mimetypes.guess_type(filename)
 
         if not detected_mime:
-            raise HTTPException(status_code=400, detail="Cannot determine file type")
+            raise HTTPException(
+                status_code=400, detail="Cannot determine file type")
 
         # Handle Office documents special case
         if detected_mime == 'application/vnd.openxmlformats-officedocument':
@@ -167,7 +174,8 @@ class SecureFileService:
         file_size = len(content)
 
         # Determine size limit based on upload type or file type
-        size_limit = self.MAX_FILE_SIZES.get(upload_type) or self.MAX_FILE_SIZES.get(file_type) or self.MAX_FILE_SIZES['default']
+        size_limit = self.MAX_FILE_SIZES.get(upload_type) or self.MAX_FILE_SIZES.get(
+            file_type) or self.MAX_FILE_SIZES['default']
 
         if file_size > size_limit:
             size_mb = size_limit / (1024 * 1024)
@@ -217,7 +225,8 @@ class SecureFileService:
         content_lower = content.lower()
         for pattern in suspicious_patterns:
             if pattern in content_lower:
-                logger.warning(f"Suspicious content detected in file: {filename}")
+                logger.warning(
+                    f"Suspicious content detected in file: {filename}")
                 return False
 
         return True
@@ -234,10 +243,12 @@ class SecureFileService:
         try:
             # Read file content
             content = await file.read()
-            original_filename = self._sanitize_filename(file.filename or "unknown")
+            original_filename = self._sanitize_filename(
+                file.filename or "unknown")
 
             # Validate file content and get actual type
-            detected_mime, file_type = self._validate_file_content(content, original_filename)
+            detected_mime, file_type = self._validate_file_content(
+                content, original_filename)
 
             # Validate file size
             self._validate_file_size(content, file_type, upload_context)
@@ -245,25 +256,30 @@ class SecureFileService:
             # Scan for malware
             if not self._scan_for_malware(content, original_filename):
                 # Move to quarantine
-                quarantine_path = self.upload_dir / 'quarantine' / f"quarantine_{uuid.uuid4().hex[:8]}_{original_filename}"
+                quarantine_path = self.upload_dir / 'quarantine' / \
+                    f"quarantine_{uuid.uuid4().hex[:8]}_{original_filename}"
                 with open(quarantine_path, 'wb') as f:
                     f.write(content)
-                logger.error(f"File quarantined due to suspicious content: {original_filename}")
-                raise HTTPException(status_code=400, detail="File contains suspicious content")
+                logger.error(
+                    f"File quarantined due to suspicious content: {original_filename}")
+                raise HTTPException(
+                    status_code=400, detail="File contains suspicious content")
 
             # Generate unique secure filename
             file_extension = Path(original_filename).suffix.lower()
             unique_filename = f"{uuid.uuid4().hex}_{int(datetime.utcnow().timestamp())}{file_extension}"
 
             # Get secure file path
-            file_path = self._get_secure_file_path(file_type, unique_filename, upload_context)
+            file_path = self._get_secure_file_path(
+                file_type, unique_filename, upload_context)
 
             # Calculate file hash for integrity
             file_hash = self._calculate_file_hash(content)
 
             # Apply additional validation if provided
             if additional_validation:
-                additional_validation(content, original_filename, detected_mime)
+                additional_validation(
+                    content, original_filename, detected_mime)
 
             # Save file with restricted permissions
             with open(file_path, 'wb') as f:
@@ -286,7 +302,8 @@ class SecureFileService:
             db.commit()
             db.refresh(file_upload)
 
-            logger.info(f"File saved securely: {file_upload.id} ({original_filename})")
+            logger.info(
+                f"File saved securely: {file_upload.id} ({original_filename})")
             return file_upload
 
         except HTTPException:
@@ -294,7 +311,8 @@ class SecureFileService:
         except Exception as e:
             logger.error(f"Error saving file securely: {e}")
             db.rollback()
-            raise HTTPException(status_code=500, detail="Failed to save file securely")
+            raise HTTPException(
+                status_code=500, detail="Failed to save file securely")
 
     def validate_file_access(
         self,
@@ -332,7 +350,8 @@ class SecureFileService:
             if access_context == 'message_attachment':
                 # This would need integration with conversation/message models
                 # For now, allow access if user is in same DOT
-                uploader = db.query(User).filter(User.id == file_upload.uploaded_by).first()
+                uploader = db.query(User).filter(
+                    User.id == file_upload.uploaded_by).first()
                 if uploader and user.dot_id and user.dot_id == uploader.dot_id:
                     return True
 
@@ -349,7 +368,8 @@ class SecureFileService:
 
             # Ensure path is within our upload directory
             if not str(file_path.resolve()).startswith(str(self.upload_dir)):
-                logger.error(f"File path outside upload directory: {file_path}")
+                logger.error(
+                    f"File path outside upload directory: {file_path}")
                 return None
 
             # Check if file exists
@@ -375,8 +395,8 @@ class SecureFileService:
                     f.flush()
                     os.fsync(f.fileno())
 
-                # Delete file
-                file_path.unlink()
+                # Delete file using safe deletion method
+                self._safe_delete_file(str(file_path))
 
             # Remove database record
             db.delete(file_upload)
@@ -389,6 +409,65 @@ class SecureFileService:
             logger.error(f"Error deleting file securely: {e}")
             db.rollback()
             return False
+
+    def _safe_delete_file(self, file_path: str) -> bool:
+        """Safely delete a file, handling Windows file locking issues"""
+        import time
+        import gc
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Force garbage collection to release any file handles
+                gc.collect()
+
+                # Try to delete the file
+                os.remove(file_path)
+                logger.info(f"Successfully deleted file: {file_path}")
+                return True
+
+            except PermissionError as e:
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        f"File deletion attempt {attempt + 1} failed (PermissionError): {e}")
+                    logger.info(f"Retrying file deletion in 1 second...")
+                    time.sleep(1)
+                    continue
+                else:
+                    logger.error(
+                        f"Failed to delete file after {max_attempts} attempts: {e}")
+                    # Try to rename the file instead of deleting it
+                    try:
+                        import tempfile
+                        temp_dir = tempfile.gettempdir()
+                        temp_name = f"deleted_{os.path.basename(file_path)}_{int(time.time())}"
+                        temp_path = os.path.join(temp_dir, temp_name)
+                        os.rename(file_path, temp_path)
+                        logger.info(f"Renamed locked file to: {temp_path}")
+                        return True
+                    except Exception as rename_error:
+                        logger.error(
+                            f"Failed to rename locked file: {rename_error}")
+                        raise e
+
+            except OSError as e:
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        f"File deletion attempt {attempt + 1} failed (OSError): {e}")
+                    logger.info(f"Retrying file deletion in 1 second...")
+                    time.sleep(1)
+                    continue
+                else:
+                    logger.error(
+                        f"Failed to delete file after {max_attempts} attempts: {e}")
+                    raise e
+
+            except Exception as e:
+                logger.error(f"Unexpected error deleting file: {e}")
+                raise e
+
+        return False
+
 
 # Global instance
 secure_file_service = SecureFileService()

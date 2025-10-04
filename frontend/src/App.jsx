@@ -11,6 +11,7 @@ import { Toaster } from "sonner";
 
 // Context
 import { AuthProvider } from "./contexts/AuthContext";
+import { ProcessingProvider } from "./contexts/ProcessingContext";
 
 // Components
 import Sidebar from "./components/layout/Sidebar";
@@ -156,10 +157,6 @@ const AppContent = () => {
             }
           />
           <Route
-            path="/permissions"
-            element={<Navigate to="/dashboard" replace />}
-          />
-          <Route
             path="/notifications"
             element={
               <ProtectedRoute>
@@ -237,10 +234,12 @@ function App() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <AuthProvider>
-            <Router>
-              <AppContent />
-              <Toaster />
-            </Router>
+            <ProcessingProvider>
+              <Router>
+                <AppContent />
+                <Toaster />
+              </Router>
+            </ProcessingProvider>
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>

@@ -11,10 +11,12 @@ import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { useAuth } from "../../contexts/AuthContext";
 import {
-  usersAPI,
-  notificationsAPI,
-  messagingAPI,
-  generalAPI,
+  getUsers,
+  fetchNotifications,
+  getNotificationStats,
+  fetchConversations,
+  healthCheck,
+  detailedHealthCheck,
 } from "../../services/api";
 import { handleApiError } from "../../lib/error-handler";
 import { toast } from "sonner";
@@ -62,10 +64,10 @@ const Dashboard = () => {
         conversationsResponse,
         healthResponse,
       ] = await Promise.allSettled([
-        usersAPI.getUsers(),
-        notificationsAPI.getStats(),
-        messagingAPI.fetchConversations(),
-        generalAPI.detailedHealthCheck(),
+        getUsers(),
+        getNotificationStats(),
+        fetchConversations(),
+        detailedHealthCheck(),
       ]);
 
       // Process users data

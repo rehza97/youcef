@@ -1,5 +1,24 @@
 import React from "react";
-import { usersAPI } from "../../services/api";
+import {
+  getUsers,
+  getUser,
+  createUser,
+  updateUser,
+  deleteUser,
+  getRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  getPermissions,
+  createPermission,
+  updatePermission,
+  deletePermission,
+  assignRole,
+  removeUserRole,
+  getUserRoles,
+  getRolePermissions,
+  updateRolePermissions,
+} from "../../services/api";
 import {
   Card,
   CardContent,
@@ -107,7 +126,7 @@ const UsersPage = () => {
       try {
         setLoading(true);
         setError("");
-        const res = await usersAPI.getUsers();
+        const res = await getUsers();
         const baseUsers = (res.data || []).map((u) => ({
           id: u.id,
           name:
@@ -124,7 +143,7 @@ const UsersPage = () => {
         const withRoles = await Promise.all(
           baseUsers.map(async (bu) => {
             try {
-              const rolesRes = await usersAPI.getUserRoles(bu.id);
+              const rolesRes = await getUserRoles(bu.id);
               const roleNames = (rolesRes.data?.roles || []).map((r) => r.name);
               return { ...bu, roles: roleNames };
             } catch {
@@ -143,7 +162,7 @@ const UsersPage = () => {
     const fetchRoles = async () => {
       try {
         setRolesLoading(true);
-        const res = await usersAPI.getRoles();
+        const res = await getRoles();
         setRoles(res.data || []);
       } finally {
         setRolesLoading(false);
@@ -160,7 +179,7 @@ const UsersPage = () => {
     }
     try {
       setCreating(true);
-      await usersAPI.createUser({
+      await createUser({
         username: form.username.trim(),
         email: form.email.trim(),
         password: form.password,
@@ -169,12 +188,12 @@ const UsersPage = () => {
         is_active: !!form.is_active,
       });
       // fetch newly created user id by reloading users then assign role
-      const newest = await usersAPI.getUsers();
+      const newest = await getUsers();
       const created = (newest.data || []).find(
         (u) => u.username === form.username
       );
       if (created && form.role_id) {
-        await usersAPI.assignRole({
+        await assignRole({
           user_id: created.id,
           role_id: Number(form.role_id),
         });
@@ -192,7 +211,7 @@ const UsersPage = () => {
       });
       // reload users
       setLoading(true);
-      const res = await usersAPI.getUsers();
+      const res = await getUsers();
       const baseUsers = (res.data || []).map((u) => ({
         id: u.id,
         name:
@@ -207,7 +226,7 @@ const UsersPage = () => {
       const withRoles = await Promise.all(
         baseUsers.map(async (bu) => {
           try {
-            const rolesRes = await usersAPI.getUserRoles(bu.id);
+            const rolesRes = await getUserRoles(bu.id);
             const roleNames = (rolesRes.data?.roles || []).map((r) => r.name);
             return { ...bu, roles: roleNames };
           } catch {
@@ -229,7 +248,7 @@ const UsersPage = () => {
       setSelectedUser(user);
       setIsEditOpen(true);
       // load user roles
-      const res = await usersAPI.getUserRoles(user.id);
+      const res = await getUserRoles(user.id);
       const rolesArr = res.data?.roles || [];
       const primaryRoleId = rolesArr.length ? String(rolesArr[0].id) : "";
       setEditForm({
@@ -253,7 +272,7 @@ const UsersPage = () => {
     if (!selectedUser) return;
     try {
       setEditing(true);
-      await usersAPI.updateUser(selectedUser.id, {
+      await updateUser(selectedUser.id, {
         email: editForm.email?.trim(),
         first_name: editForm.first_name?.trim() || null,
         last_name: editForm.last_name?.trim() || null,
@@ -268,13 +287,13 @@ const UsersPage = () => {
       if (prevId !== nextId) {
         if (prevId) {
           try {
-            await usersAPI.removeUserRole(selectedUser.id, prevId);
+            await removeUserRole(selectedUser.id, prevId);
           } catch (err) {
             console.warn(err);
           }
         }
         if (nextId) {
-          await usersAPI.assignRole({
+          await assignRole({
             user_id: selectedUser.id,
             role_id: nextId,
           });
@@ -286,7 +305,7 @@ const UsersPage = () => {
       setSelectedUser(null);
       // refresh users
       setLoading(true);
-      const res = await usersAPI.getUsers();
+      const res = await getUsers();
       const baseUsers = (res.data || []).map((u) => ({
         id: u.id,
         name:
@@ -301,7 +320,7 @@ const UsersPage = () => {
       const withRoles = await Promise.all(
         baseUsers.map(async (bu) => {
           try {
-            const rolesRes = await usersAPI.getUserRoles(bu.id);
+            const rolesRes = await getUserRoles(bu.id);
             const roleNames = (rolesRes.data?.roles || []).map((r) => r.name);
             return { ...bu, roles: roleNames };
           } catch {
@@ -327,13 +346,13 @@ const UsersPage = () => {
     if (!selectedUser) return;
     try {
       setDeleting(true);
-      await usersAPI.deleteUser(selectedUser.id);
+      await deleteUser(selectedUser.id);
       success("User deleted");
       setIsDeleteOpen(false);
       setSelectedUser(null);
       // refresh list
       setLoading(true);
-      const res = await usersAPI.getUsers();
+      const res = await getUsers();
       const baseUsers = (res.data || []).map((u) => ({
         id: u.id,
         name:
@@ -348,7 +367,7 @@ const UsersPage = () => {
       const withRoles = await Promise.all(
         baseUsers.map(async (bu) => {
           try {
-            const rolesRes = await usersAPI.getUserRoles(bu.id);
+            const rolesRes = await getUserRoles(bu.id);
             const roleNames = (rolesRes.data?.roles || []).map((r) => r.name);
             return { ...bu, roles: roleNames };
           } catch {

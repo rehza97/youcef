@@ -1,5 +1,12 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { authAPI } from "../services/api";
+import {
+  login as apiLogin,
+  register as apiRegister,
+  logout as apiLogout,
+  refreshToken as apiRefreshToken,
+  getCurrentUser,
+  updateProfile as apiUpdateProfile,
+} from "../services/api";
 import { handleApiError } from "../lib/error-handler";
 import { clearPermissionCache } from "../hooks/usePermission";
 
@@ -131,7 +138,7 @@ export const AuthProvider = ({ children }) => {
       try {
         const refreshToken = tokenStorage.getRefreshToken();
         if (refreshToken) {
-          const response = await authAPI.refreshToken(refreshToken);
+          const response = await apiRefreshToken(refreshToken);
           const { access_token: newToken, refresh_token: newRefreshToken } =
             response.data;
           tokenStorage.setToken(newToken, false);
@@ -181,7 +188,7 @@ export const AuthProvider = ({ children }) => {
       setError(null);
       setLoading(true);
 
-      const response = await authAPI.login(credentials);
+      const response = await apiLogin(credentials);
       const { access_token, refresh_token, user: userData } = response.data;
 
       // Validate token format (basic check)
@@ -246,7 +253,7 @@ export const AuthProvider = ({ children }) => {
         throw new Error("Le mot de passe doit contenir au moins 8 caractères");
       }
 
-      const response = await authAPI.register(userData);
+      const response = await apiRegister(userData);
       const { success, message, data } = response.data;
 
       if (!success) {
@@ -285,7 +292,7 @@ export const AuthProvider = ({ children }) => {
       setLoading(true);
 
       // Call server logout endpoint to invalidate token
-      await authAPI.logout();
+      await apiLogout();
     } catch (error) {
       console.error("Server logout failed:", error);
       // Continue with client-side logout even if server fails
@@ -307,7 +314,7 @@ export const AuthProvider = ({ children }) => {
         throw new Error("Aucun token de rafraîchissement disponible");
       }
 
-      const response = await authAPI.refreshToken(refreshToken);
+      const response = await apiRefreshToken(refreshToken);
       const { access_token, refresh_token: newRefreshToken } = response.data;
 
       tokenStorage.setToken(access_token, false);
@@ -323,7 +330,7 @@ export const AuthProvider = ({ children }) => {
   const updateProfile = async (profileData) => {
     try {
       setError(null);
-      const response = await authAPI.updateProfile(profileData);
+      const response = await apiUpdateProfile(profileData);
       const updatedUser = response.data.user;
 
       // Update user state

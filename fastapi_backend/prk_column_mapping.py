@@ -116,81 +116,107 @@ def get_prk_column_mapping():
 
 
 def map_prk_record_to_park_dict(record: dict, file_upload_id: int = None) -> dict:
-    """Map a PRK record to Park dictionary format"""
+    """Map a PRK record to Park dictionary with robust header matching."""
     from datetime import datetime
+    import pandas as pd
 
-    def safe_get(key, default=None):
-        return record.get(key, default)
+    def _norm(s):
+        if s is None:
+            return ""
+        return (
+            str(s).lower()
+            .replace("_", " ")
+            .replace("-", " ")
+            .replace("’", "'")
+            .replace("‘", "'")
+            .strip()
+        )
 
-    def safe_string(value):
-        if value is None:
+    keys = list(record.keys())
+    norm_map = {_norm(k): k for k in keys}
+
+    def _find(keywords):
+        tokens = [_norm(t) for t in keywords]
+        for nk, orig in norm_map.items():
+            if all(t in nk for t in tokens):
+                return orig
+        for nk, orig in norm_map.items():
+            if any(t in nk for t in tokens):
+                return orig
+        return None
+
+    def _get(keywords, default=None):
+        k = _find(keywords)
+        return record.get(k, default) if k else default
+
+    def _s(v):
+        if v is None:
             return None
-        text = str(value).strip()
-        return text if text else None
+        t = str(v).strip()
+        return t if t else None
 
-    def safe_float(value):
-        if value is None:
+    def _f(v):
+        if v is None:
             return None
-        text = str(value).strip()
-        if not text:
+        t = str(v).strip()
+        if not t:
             return None
         try:
-            return float(text.replace(',', '.'))
+            return float(t.replace(",", "."))
         except Exception:
             return None
 
-    def safe_date(value):
-        if value is None:
+    def _d(v):
+        if v is None:
             return None
-        text = str(value).strip()
-        if not text:
+        t = str(v).strip()
+        if not t:
             return None
-        # Try pandas/ISO first; fallback to None if unparseable
         try:
-            import pandas as pd
-            return pd.to_datetime(text, errors='coerce', dayfirst=False).to_pydatetime()
+            return pd.to_datetime(t, errors="coerce", dayfirst=True).to_pydatetime()
         except Exception:
             return None
 
     park_dict = {
-        'file_upload_id': file_upload_id,
-        'extraction_date': safe_date(safe_get('Extraction Date_Date d ‘extraction')),
-        'actel_code': safe_string(safe_get('Actel Code_Code d’actel')),
-        'telecom_type': safe_string(safe_get('Telecom type_SERVICE / PRODUIT')),
-        'offer_type': safe_string(safe_get('Offer Type_Type d’offre')),
-        'offer_name': safe_string(safe_get('Offer name_Nom de l’offre')),
-        'rental_fees': safe_float(safe_get('Rental Fees_Frais d’abonnement')),
-        'customer_code': safe_string(safe_get('Customer code_NCLI')),
-        'service_number': safe_string(safe_get('Service number_ND')),
-        'related_service_number': safe_string(safe_get('Related Service Number_Numero de service correspondant')),
-        'username': safe_string(safe_get('USERNAME_Nom d’utilisateur')),
-        'subscriber_status': safe_string(safe_get('Subscriber status_Status de l’abonne')),
-        'status_date': safe_date(safe_get('Status date_Date du statut')),
-        'creation_date': safe_date(safe_get('Creation Date_Date de creation')),
-        'active_date': safe_date(safe_get('Active Date_Date d'"+"'"+"activation')),
-        'csr_name': safe_string(safe_get('CSR Name_Nom CSR')),
-        'department_name': safe_string(safe_get('Department Name_Nom de département1')),
-        'state': safe_string(safe_get('State_Wilaya')),
-        'area': safe_string(safe_get('Area_Daira')),
-        'town': safe_string(safe_get('Town_Commune')),
-        'grid': safe_string(safe_get('Grid_Quartier')),
-        'street': safe_string(safe_get('Street_Voie')),
-        'street_number': safe_string(safe_get('Street Number_Numero De Voie')),
-        'building_no': safe_string(safe_get('Building No._Batiment')),
-        'unit': safe_string(safe_get('Unit_Escalier')),
-        'floor': safe_string(safe_get('Floor_Etage')),
-        'house_no': safe_string(safe_get('House No._Numero de maison')),
-        'additional_address_info': safe_string(safe_get("Additional Address Information_Complément d'adresse")),
-        'customer_full_name': safe_string(safe_get('Customer full name_NOM ET PRENOM')),
-        'province': safe_string(safe_get('Province_Wilaya')),
-        'district': safe_string(safe_get('District_Daira')),
-        'city': safe_string(safe_get('City_Commune')),
-        'postal_code': safe_string(safe_get('Postal Code_Code postal')),
-        'expiry_date': safe_date(safe_get('Expiry Date_Date d’expiration')),
-        'iccid': safe_string(safe_get('ICCID_N° SIM')),
-        'imsi': safe_string(safe_get('IMSI_IMSI')),
-        'contact_number': safe_string(safe_get('Contact number_Numéro de contact')),
-        'created_at': datetime.utcnow()
+        "file_upload_id": file_upload_id,
+        "extraction_date": _d(_get(["extraction date", "extraction"])),
+        "dot_name": _s(_get(["dot"])),  # Extract DOT name from file
+        "actel_code": _s(_get(["actel code", "actel"])),
+        "telecom_type": _s(_get(["telecom type", "service", "produit"])),
+        "offer_type": _s(_get(["offer type", "offre"])),
+        "offer_name": _s(_get(["offer name", "offre"])),
+        "rental_fees": _f(_get(["rental fees", "abonnement"])),
+        "customer_code": _s(_get(["customer code", "ncli"])),
+        "service_number": _s(_get(["service number", "nd"])),
+        "related_service_number": _s(_get(["related service number"])),
+        "username": _s(_get(["username"])),
+        "subscriber_status": _s(_get(["subscriber status", "abonne"])),
+        "status_date": _d(_get(["status date", "statut"])),
+        "creation_date": _d(_get(["creation date", "creation"])),
+        "active_date": _d(_get(["active date", "activation"])),
+        "csr_name": _s(_get(["csr name"])),
+        "department_name": _s(_get(["department name"])),
+        "state": _s(_get(["state", "wilaya"])),
+        "area": _s(_get(["area", "daira"])),
+        "town": _s(_get(["town", "commune"])),
+        "grid": _s(_get(["grid", "quartier"])),
+        "street": _s(_get(["street", "voie"])),
+        "street_number": _s(_get(["street number", "numero de voie"])),
+        "building_no": _s(_get(["building no", "batiment"])),
+        "unit": _s(_get(["unit", "escalier"])),
+        "floor": _s(_get(["floor", "etage"])),
+        "house_no": _s(_get(["house no", "numero de maison"])),
+        "additional_address_info": _s(_get(["additional address information", "complément d'adresse"])),
+        "customer_full_name": _s(_get(["customer full name", "nom et prenom"])),
+        "province": _s(_get(["province", "wilaya"])),
+        "district": _s(_get(["district", "daira"])),
+        "city": _s(_get(["city", "commune"])),
+        "postal_code": _s(_get(["postal code", "code postal"])),
+        "expiry_date": _d(_get(["expiry date", "expiration"])),
+        "iccid": _s(_get(["iccid", "sim"])),
+        "imsi": _s(_get(["imsi"])),
+        "contact_number": _s(_get(["contact number", "numéro de contact"])),
+        "created_at": datetime.utcnow(),
     }
 
     return park_dict

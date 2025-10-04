@@ -1,7 +1,17 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { filesAPI, encaissementAPI } from "../../services/api";
+import {
+  uploadFile,
+  uploadBatchFiles,
+  getUserFiles,
+  deleteFile,
+  processFile,
+  getFileStats,
+  downloadFile,
+} from "../../services/api";
 import { useNotificationsWebSocket } from "../../hooks/useNotificationsWebSocket";
+import { useAuth } from "../../contexts/AuthContext";
+import { useProcessing } from "../../contexts/ProcessingContext";
 import { debugComponent } from "../../lib/debug.js";
 import {
   Card,
@@ -96,6 +106,7 @@ const FilesPage = () => {
   const debug = debugComponent("FilesPage");
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { user, token } = useAuth();
   const [selectedFile, setSelectedFile] = useState(null);
   const [showFileDetails, setShowFileDetails] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
@@ -103,6 +114,10 @@ const FilesPage = () => {
   // Real-time notifications from WebSocket
   const { notifications: liveNotifications, isConnected: wsConnected } =
     useNotificationsWebSocket();
+
+  // Processing WebSocket connection
+  const [processingWs, setProcessingWs] = useState(null);
+  const [processingTasks, setProcessingTasks] = useState({});
 
   // Count file-related notifications
   const fileNotificationCount = liveNotifications.filter(
@@ -122,6 +137,8 @@ const FilesPage = () => {
   const [processingStatus, setProcessingStatus] = useState({});
   const [overview, setOverview] = useState(null);
   const [chartData, setChartData] = useState(null);
+  const [liveProcessingData, setLiveProcessingData] = useState({}); // Real-time processing stats
+  const [processedRecordsCount, setProcessedRecordsCount] = useState({}); // Progressive record count
   const [filters, setFilters] = useState({
     organisation: "all",
     dateFact: "all",
@@ -220,12 +237,12 @@ const FilesPage = () => {
     refetch: refetchFiles,
   } = useQuery({
     queryKey: ["files", currentPage],
-    queryFn: () => filesAPI.getUserFiles({ page: currentPage, per_page: 10 }),
+    queryFn: () => getUserFiles({ page: currentPage, per_page: 10 }),
   });
 
   const { data: fileStats, isLoading: statsLoading } = useQuery({
     queryKey: ["fileStats"],
-    queryFn: () => filesAPI.getFileStats(),
+    queryFn: () => getFileStats(),
   });
 
   const uploadFileMutation = useMutation({
@@ -235,19 +252,36 @@ const FilesPage = () => {
         fileSize: file.size,
       });
       setUploadProgress(0); // Reset progress
-      return filesAPI.uploadFile(file, (progress) => {
+      return uploadFile(file, (progress) => {
         setUploadProgress(progress);
       });
     },
     onSuccess: (response) => {
       debug.success("File upload successful", response.data);
       setUploadProgress(100);
+
+      // Store the uploaded file info for optional processing (no auto-start)
+      const uploadedFile = response.data;
+      if (uploadedFile && uploadedFile.id) {
+        debug.log("File uploaded; waiting for user to start processing", {
+          fileId: uploadedFile.id,
+        });
+      } else {
+        console.error("Invalid file upload response:", response.data);
+        toast.error("Réponse de téléchargement invalide");
+      }
+
+      toast.success("Fichier téléchargé avec succès");
+
+      // Invalidate queries and reset progress
       queryClient.invalidateQueries({ queryKey: ["files"] });
       queryClient.invalidateQueries({ queryKey: ["fileStats"] });
-      processFileData(response.data.file_id, response.data.file);
-      toast.success("Fichier téléchargé avec succès");
-      // Reset progress after a delay
-      setTimeout(() => setUploadProgress(0), 2000);
+
+      // Reset progress immediately after showing success
+      setTimeout(() => {
+        setUploadProgress(0);
+        debug.log("Upload progress reset");
+      }, 1500);
     },
     onError: (error) => {
       debug.error("File upload failed", error);
@@ -259,7 +293,7 @@ const FilesPage = () => {
   const deleteFileMutation = useMutation({
     mutationFn: (fileId) => {
       debug.log("Delete mutation started", { fileId });
-      return filesAPI.deleteFile(fileId);
+      return deleteFile(fileId);
     },
     onSuccess: () => {
       debug.success("File deleted successfully");
@@ -273,71 +307,159 @@ const FilesPage = () => {
     },
   });
 
+  // Handle file upload
+  const handleFileUpload = (event) => {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
+
+    console.log(`📁 Selected ${files.length} file(s) for upload`);
+
+    if (files.length === 1) {
+      // Single file upload
+      console.log(`🚀 Starting single file upload: ${files[0].name}`);
+      uploadFileMutation.mutate(files[0]);
+    } else {
+      // Multiple files - use batch upload for better performance
+      console.log(`🚀 Starting batch upload for ${files.length} files`);
+      const uploadBatch = async () => {
+        try {
+          setUploadProgress(0);
+          const response = await uploadBatchFiles(files, (progress) => {
+            setUploadProgress(progress);
+          });
+
+          console.log(`✅ Batch upload successful:`, response.data);
+          setUploadProgress(100);
+          toast.success(`${files.length} fichiers téléchargés avec succès`);
+
+          queryClient.invalidateQueries({ queryKey: ["files"] });
+          queryClient.invalidateQueries({ queryKey: ["fileStats"] });
+
+          // Reset progress after delay
+          setTimeout(() => {
+            setUploadProgress(0);
+            console.log("Batch upload progress reset");
+          }, 1500);
+        } catch (error) {
+          console.error(`❌ Batch upload failed:`, error);
+          toast.error("Erreur lors du téléchargement des fichiers");
+          setUploadProgress(0);
+        }
+      };
+
+      uploadBatch();
+    }
+
+    // Reset the input
+    event.target.value = "";
+  };
+
   useEffect(() => {
     setChartData(sampleChartData);
   }, []);
 
-  const handleFileUpload = async (event) => {
-    const file = event.target.files[0];
-    debug.fileUpload(file, {
-      type: file?.type,
-      size: file?.size,
-      name: file?.name,
-    });
-
-    if (!file) {
-      debug.warn("No file selected");
-      return;
-    }
-
-    const allowedTypes = [
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "application/vnd.ms-excel",
-      "text/csv",
-      "application/csv",
-    ];
-
-    if (!allowedTypes.includes(file.type)) {
-      debug.error("Invalid file type", {
-        fileType: file.type,
-        allowedTypes,
-      });
-      toast.error(
-        "Seuls les fichiers Excel (.xlsx, .xls) et CSV (.csv) sont autorisés"
-      );
-      return;
-    }
-
-    debug.log("Starting file upload", {
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: file.type,
-    });
-
-    uploadFileMutation.mutate(file);
-  };
+  const processingContext = useProcessing();
+  const { subscribeTask, isConnected, connectionStatus, reconnect } =
+    processingContext || {};
 
   const processFileData = async (fileId, file) => {
     try {
+      console.log(`🚀 Starting file processing for fileId: ${fileId}`);
       setProcessingStatus((prev) => ({ ...prev, [fileId]: "processing" }));
 
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await encaissementAPI.uploadData(file);
+      console.log(`📡 Calling processFile(${fileId})`);
+      const response = await processFile(fileId);
+      const taskId = response.data.task_id || String(fileId);
 
       setProcessedData((prev) => ({
         ...prev,
-        [fileId]: response.data,
+        [fileId]: {
+          status: "processing",
+          message: response.data.message,
+          task_id: taskId,
+        },
       }));
 
+      // subscribe globally for updates with progressive data loading
+      const unsubscribe = subscribeTask(taskId, (message) => {
+        try {
+          if (message?.task_id !== taskId) return;
+
+          if (message.type === "processing_update") {
+            const stats = message.data?.statistics || {};
+
+            // Update live processing data for progressive display
+            setLiveProcessingData((prev) => ({
+              ...prev,
+              [fileId]: {
+                progress: message.data?.progress ?? 0,
+                status: message.data?.status || "processing",
+                message: message.data?.message || "Traitement en cours...",
+                total_rows: stats.total_rows || stats.total_records || 0,
+                processed_rows: stats.processed_rows || 0,
+                saved_rows: stats.saved_rows || 0,
+                filtered_rows: stats.filtered_rows || 0,
+                errors: stats.errors || 0,
+                timestamp: new Date().toISOString(),
+              },
+            }));
+
+            // Update progressive record count
+            if (stats.saved_rows > 0) {
+              setProcessedRecordsCount((prev) => ({
+                ...prev,
+                [fileId]: stats.saved_rows,
+              }));
+            }
+
+            // Update main processed data
+            setProcessedData((prev) => ({
+              ...prev,
+              [fileId]: {
+                ...(prev[fileId] || {}),
+                status: message.data?.status || "processing",
+                progress: message.data?.progress ?? prev[fileId]?.progress,
+                message: message.data?.message ?? prev[fileId]?.message,
+                statistics: stats,
+              },
+            }));
+          } else if (message.type === "completed") {
+            setProcessingStatus((prev) => ({ ...prev, [fileId]: "completed" }));
+            setLiveProcessingData((prev) => ({
+              ...prev,
+              [fileId]: {
+                ...prev[fileId],
+                status: "completed",
+                progress: 100,
+              },
+            }));
+            toast.success("Traitement terminé avec succès!");
+            queryClient.invalidateQueries({ queryKey: ["files"] });
+            queryClient.invalidateQueries({ queryKey: ["fileStats"] });
+            unsubscribe && unsubscribe();
+          } else if (message.type === "failed") {
+            setProcessingStatus((prev) => ({ ...prev, [fileId]: "failed" }));
+            setLiveProcessingData((prev) => ({
+              ...prev,
+              [fileId]: {
+                ...prev[fileId],
+                status: "failed",
+                message: message.data?.message || "Échec du traitement",
+              },
+            }));
+            toast.error("Traitement échoué");
+            unsubscribe && unsubscribe();
+          }
+        } catch (error) {
+          console.error("Error handling processing update:", error);
+        }
+      });
+
       updateCombinedOverview();
-      setProcessingStatus((prev) => ({ ...prev, [fileId]: "completed" }));
-      toast.success(`Données traitées pour ${file.name}`);
     } catch (error) {
-      console.error("Erreur lors du traitement des données:", error);
+      console.error("❌ Error processing file:", error);
       setProcessingStatus((prev) => ({ ...prev, [fileId]: "failed" }));
-      toast.error("Erreur lors du traitement des données");
+      toast.error("Erreur lors du traitement du fichier");
     }
   };
 
@@ -413,7 +535,7 @@ const FilesPage = () => {
 
   const handleDownloadFile = async (fileId) => {
     try {
-      const response = await filesAPI.downloadFile(fileId);
+      const response = await downloadFile(fileId);
       const blob = new Blob([response.data]);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -575,19 +697,19 @@ const FilesPage = () => {
               <div className="flex items-center mt-2">
                 <div
                   className={`flex items-center text-sm ${
-                    wsConnected ? "text-green-600" : "text-red-600"
+                    isConnected ? "text-green-600" : "text-red-600"
                   }`}
                 >
-                  {wsConnected ? (
+                  {isConnected ? (
                     <Wifi className="h-4 w-4 mr-1" />
                   ) : (
                     <WifiOff className="h-4 w-4 mr-1" />
                   )}
-                  {wsConnected
+                  {isConnected
                     ? "Notifications en temps réel activées"
                     : "Notifications en temps réel désactivées"}
                 </div>
-                {wsConnected && fileNotificationCount > 0 && (
+                {isConnected && fileNotificationCount > 0 && (
                   <Badge variant="secondary" className="ml-2">
                     {fileNotificationCount} notification
                     {fileNotificationCount > 1 ? "s" : ""}
@@ -689,11 +811,32 @@ const FilesPage = () => {
                 <CardTitle className="flex items-center gap-2">
                   <Upload className="h-5 w-5" />
                   Télécharger un fichier
-                  {wsConnected && (
-                    <Badge variant="outline" className="ml-2">
-                      <Wifi className="h-3 w-3 mr-1" />
-                      Temps réel
-                    </Badge>
+                  <Badge
+                    variant={isConnected ? "default" : "secondary"}
+                    className="ml-2"
+                  >
+                    {isConnected ? (
+                      <>
+                        <Wifi className="h-3 w-3 mr-1" />
+                        Temps réel
+                      </>
+                    ) : (
+                      <>
+                        <WifiOff className="h-3 w-3 mr-1" />
+                        {connectionStatus === "error" ? "Erreur" : "Déconnecté"}
+                      </>
+                    )}
+                  </Badge>
+                  {!isConnected && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={reconnect}
+                      className="ml-2"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Reconnecter
+                    </Button>
                   )}
                 </CardTitle>
               </CardHeader>
@@ -702,6 +845,7 @@ const FilesPage = () => {
                   <input
                     type="file"
                     accept=".xlsx,.xls,.csv"
+                    multiple
                     onChange={handleFileUpload}
                     disabled={uploadFileMutation.isPending}
                     className="hidden"
@@ -710,14 +854,14 @@ const FilesPage = () => {
                   <label htmlFor="file-upload" className="cursor-pointer">
                     <div className="text-4xl mb-4">📁</div>
                     <p className="text-lg font-medium mb-2">
-                      {uploadFileMutation.isPending
-                        ? "Téléchargement et traitement en cours..."
-                        : "Cliquez pour sélectionner un fichier"}
+                      {uploadFileMutation.isPending || uploadProgress > 0
+                        ? "Téléchargement en cours..."
+                        : "Cliquez pour sélectionner un ou plusieurs fichiers"}
                     </p>
                     <p className="text-gray-600">
                       Formats supportés: Excel (.xlsx, .xls) et CSV (.csv)
                     </p>
-                    {uploadFileMutation.isPending && (
+                    {(uploadFileMutation.isPending || uploadProgress > 0) && (
                       <div className="mt-4 space-y-2">
                         <Progress value={uploadProgress} className="w-full" />
                         <p className="text-sm text-blue-600">
@@ -725,17 +869,61 @@ const FilesPage = () => {
                         </p>
                         {uploadProgress === 100 && (
                           <p className="text-sm text-green-600">
-                            ✓ Upload terminé, traitement du fichier...
+                            ✓ Upload terminé avec succès
                           </p>
                         )}
                       </div>
                     )}
-                    {!wsConnected && (
-                      <div className="mt-4 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                        <p className="text-sm text-yellow-700">
-                          ⚠️ Notifications en temps réel désactivées. Les mises
-                          à jour peuvent être retardées.
-                        </p>
+                    {!isConnected && (
+                      <div
+                        className={`mt-4 p-3 border rounded ${
+                          connectionStatus === "auth_failed"
+                            ? "bg-red-50 border-red-300"
+                            : "bg-yellow-50 border-yellow-200"
+                        }`}
+                      >
+                        {connectionStatus === "auth_failed" ? (
+                          <>
+                            <p className="text-sm font-semibold text-red-700 mb-2">
+                              🔐 Échec d'authentification
+                            </p>
+                            <p className="text-sm text-red-600 mb-2">
+                              Votre token de session est invalide. Cela se
+                              produit généralement après un redémarrage du
+                              serveur.
+                            </p>
+                            <p className="text-sm text-red-600 font-medium">
+                              ⚠️ Sans connexion temps réel, vous ne verrez pas
+                              la progression du traitement !
+                            </p>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => (window.location.href = "/login")}
+                              className="mt-3"
+                            >
+                              Se reconnecter
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm text-yellow-700">
+                              ⚠️ Connexion temps réel perdue.
+                              {connectionStatus === "error"
+                                ? " Erreur de connexion."
+                                : " Tentative de reconnexion automatique..."}
+                            </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={reconnect}
+                              className="mt-2"
+                            >
+                              <RefreshCw className="h-3 w-3 mr-1" />
+                              Reconnecter maintenant
+                            </Button>
+                          </>
+                        )}
                       </div>
                     )}
                   </label>
@@ -834,7 +1022,51 @@ const FilesPage = () => {
                             </div>
                           </TableCell>
                           <TableCell>
-                            {processingStatus[file.id] && (
+                            {liveProcessingData[file.id] ? (
+                              <div className="space-y-2 min-w-[200px]">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-medium">
+                                    {liveProcessingData[file.id].status ===
+                                    "completed"
+                                      ? "✅ Terminé"
+                                      : liveProcessingData[file.id].status ===
+                                        "failed"
+                                      ? "❌ Échec"
+                                      : "🔄 En cours..."}
+                                  </span>
+                                  <span className="font-semibold text-blue-600">
+                                    {Math.round(
+                                      liveProcessingData[file.id].progress || 0
+                                    )}
+                                    %
+                                  </span>
+                                </div>
+                                <Progress
+                                  value={
+                                    liveProcessingData[file.id].progress || 0
+                                  }
+                                  className="h-2"
+                                />
+                                <div className="flex items-center justify-between text-[10px] text-gray-600">
+                                  <span>
+                                    {liveProcessingData[
+                                      file.id
+                                    ].saved_rows?.toLocaleString() || 0}{" "}
+                                    /{" "}
+                                    {liveProcessingData[
+                                      file.id
+                                    ].total_rows?.toLocaleString() || 0}{" "}
+                                    lignes
+                                  </span>
+                                  {liveProcessingData[file.id].errors > 0 && (
+                                    <span className="text-red-600">
+                                      {liveProcessingData[file.id].errors}{" "}
+                                      erreurs
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : processingStatus[file.id] ? (
                               <div className="flex items-center space-x-2">
                                 <Badge className="flex items-center gap-1">
                                   {getProcessingStatusIcon(
@@ -846,16 +1078,8 @@ const FilesPage = () => {
                                     ? "En cours"
                                     : "Échec"}
                                 </Badge>
-                                {processingStatus[file.id] === "processing" && (
-                                  <div className="flex items-center space-x-1">
-                                    <div className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full"></div>
-                                    <span className="text-xs text-green-600">
-                                      Analyse
-                                    </span>
-                                  </div>
-                                )}
                               </div>
-                            )}
+                            ) : null}
                           </TableCell>
                           <TableCell>
                             <div className="flex items-center space-x-2">

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { notificationsAPI } from "../../services/api";
+import { fetchNotifications } from "../../services/api";
 
 export default function NotificationList() {
   const {
@@ -9,7 +9,7 @@ export default function NotificationList() {
   } = useQuery({
     queryKey: ["notifications"],
     queryFn: async () => {
-      const response = await notificationsAPI.fetchNotifications();
+      const response = await fetchNotifications();
       return response.data;
     },
   });

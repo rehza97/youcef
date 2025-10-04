@@ -1,21 +1,24 @@
-// This file is now deprecated - use notificationsAPI from services/api.js instead
-import { notificationsAPI } from "../services/api";
+// This file is now deprecated - use direct functions from services/api.js instead
+import {
+  fetchNotifications as apiFetchNotifications,
+  markNotificationAsRead as apiMarkNotificationAsRead,
+  updateNotificationPreferences as apiUpdateNotificationPreferences,
+} from "../services/api";
 
-// Re-export for backward compatibility
-export { notificationsAPI };
+// Backward-compatible shims
 
 // Legacy functions for backward compatibility
 export async function fetchNotifications() {
-  const response = await notificationsAPI.fetchNotifications();
+  const response = await apiFetchNotifications();
   return response.data;
 }
 
 export async function markNotificationAsRead(id) {
-  const response = await notificationsAPI.markAsRead(id);
+  const response = await apiMarkNotificationAsRead(id);
   return response.data;
 }
 
 export async function updateNotificationPreferences(prefs) {
-  const response = await notificationsAPI.updatePreferences(prefs);
+  const response = await apiUpdateNotificationPreferences(prefs);
   return response.data;
 }

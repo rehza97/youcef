@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { generalAPI } from "../services/api";
+import { protectedRoute } from "../services/api";
 import PageHeader from "../components/PageHeader";
 import { Button } from "@/components/ui/button";
 
@@ -18,7 +18,7 @@ export default function Dashboard() {
     setLoading(true);
     setError("");
     try {
-      const protectedRes = await generalAPI.protected();
+      const protectedRes = await protectedRoute();
       setProtectedMessage(protectedRes.data.message);
     } catch {
       setError(

@@ -1,9 +1,14 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { filesAPI } from "../../services/api";
-import api from "../../services/api";
-import { useAuth } from "../../contexts/AuthContext";
+import {
+  getFile,
+  processFile,
+  downloadFile,
+  getParkDataSavedData,
+  getParkDataStats,
+} from "../../services/api";
+import { useProcessing } from "../../contexts/ProcessingContext";
 import {
   Card,
   CardContent,
@@ -69,7 +74,7 @@ import { toast } from "sonner";
 const FilePreviewPage = () => {
   const { fileId } = useParams();
   const navigate = useNavigate();
-  const { user, token } = useAuth();
+  const { subscribeTask, isConnected } = useProcessing();
 
   // State for preview data
   const [previewData, setPreviewData] = useState([]);
@@ -84,16 +89,8 @@ const FilePreviewPage = () => {
 
   // Processing state
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingTask, setProcessingTask] = useState(null);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState("");
-  const [processingStats, setProcessingStats] = useState({});
-  const [processingErrors, setProcessingErrors] = useState([]);
-  const [processingAnomalies, setProcessingAnomalies] = useState([]);
-
-  // WebSocket connection
-  const wsRef = useRef(null);
-  const [wsConnected, setWsConnected] = useState(false);
 
   // Saved data state
   const [savedDataPage, setSavedDataPage] = useState(1);
@@ -110,14 +107,18 @@ const FilePreviewPage = () => {
     data: fileData,
     isLoading: fileLoading,
     error: fileError,
+    refetch: refetchFile,
   } = useQuery({
     queryKey: ["file", fileId],
-    queryFn: () => filesAPI.getFile(fileId),
+    queryFn: () => getFile(fileId),
     enabled: !!fileId,
   });
 
   // Extract previews from fileData (since the API returns both file data and previews)
-  const previews = fileData?.data?.file_previews || [];
+  const previews = useMemo(
+    () => fileData?.data?.file_previews || [],
+    [fileData?.data?.file_previews]
+  );
 
   // Fetch saved park data
   const {
@@ -134,7 +135,7 @@ const FilePreviewPage = () => {
       savedDataFilters,
     ],
     queryFn: () =>
-      api.etl.parkData.getSavedData({
+      getParkDataSavedData({
         page: savedDataPage,
         pageSize: savedDataPageSize,
         search: savedDataSearch || undefined,
@@ -155,9 +156,9 @@ const FilePreviewPage = () => {
   });
 
   // Fetch park data statistics
-  const { data: parkStats } = useQuery({
+  const { data: parkStats, refetch: refetchStats } = useQuery({
     queryKey: ["parkStats"],
-    queryFn: () => api.etl.parkData.getStats(),
+    queryFn: () => getParkDataStats(),
     enabled: true,
   });
 
@@ -273,7 +274,7 @@ const FilePreviewPage = () => {
 
   const handleDownload = async () => {
     try {
-      const response = await filesAPI.downloadFile(fileId);
+      const response = await downloadFile(fileId);
       const blob = new Blob([response.data]);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -293,158 +294,41 @@ const FilePreviewPage = () => {
   const startProcessing = async () => {
     try {
       setIsProcessing(true);
-      setProcessingStatus("Starting processing...");
+      const result = await processFile(fileId);
+      const taskId = result?.data?.task_id || String(fileId);
 
-      // Use the proper file processing endpoint via API service
-      const result = await filesAPI.processFile(fileId);
-
-      if (result.data && result.data.message) {
-        const taskId = result.data.task_id || fileId; // Use task_id if available, fallback to fileId
-        setProcessingTask(taskId);
-        setProcessingStatus("Processing started");
-        toast.success("Traitement démarré en arrière-plan");
-
-        console.log(
-          `🆔 Processing started with task_id: ${taskId} for file_id: ${fileId}`
-        );
-
-        // Connect to WebSocket for real-time updates using the correct task_id
-        connectToProcessingUpdates(taskId);
-      } else {
-        throw new Error(result.data?.message || "Failed to start processing");
-      }
-    } catch (error) {
-      console.error("Processing error:", error);
-      toast.error("Erreur lors du démarrage du traitement");
-      setIsProcessing(false);
-      setProcessingStatus("Failed to start");
-    }
-  };
-
-  const connectToProcessingUpdates = (taskId) => {
-    try {
-      // Use token from AuthContext
-      const authToken = token;
-      const userId = user?.id || "1";
-
-      if (!authToken) {
-        console.error(
-          "❌ No authentication token available for WebSocket connection"
-        );
-        toast.error(
-          "Token d'authentification manquant. Veuillez vous reconnecter."
-        );
-        return;
-      }
-
-      // Check if token might be expired (basic check)
-      try {
-        const tokenPayload = JSON.parse(atob(authToken.split(".")[1]));
-        const currentTime = Math.floor(Date.now() / 1000);
-        if (tokenPayload.exp && tokenPayload.exp < currentTime) {
-          console.error("❌ Token appears to be expired");
-          toast.error("Session expirée. Veuillez vous reconnecter.");
-          return;
-        }
-      } catch (e) {
-        console.warn("⚠️ Could not parse token for expiration check:", e);
-      }
-
-      console.log(
-        `🔌 Connecting to WebSocket for task: ${taskId}, user: ${userId}`
-      );
-      const wsUrl = `ws://localhost:8000/ws/processing/?user_id=${userId}&token=${authToken}`;
-      console.log(`🔗 WebSocket URL: ${wsUrl}`);
-
-      wsRef.current = new WebSocket(wsUrl);
-
-      wsRef.current.onopen = () => {
-        console.log("✅ Connected to processing WebSocket");
-        setWsConnected(true);
-
-        // Subscribe to task updates
-        const subscribeMessage = {
-          type: "subscribe_task",
-          task_id: taskId,
-        };
-        console.log("📤 Sending subscription message:", subscribeMessage);
-        wsRef.current.send(JSON.stringify(subscribeMessage));
-      };
-
-      wsRef.current.onmessage = (event) => {
+      const unsubscribe = subscribeTask(taskId, (message) => {
         try {
-          const message = JSON.parse(event.data);
-          console.log("📨 Processing update received:", message);
-
+          if (message?.task_id !== taskId) return;
           if (message.type === "processing_update") {
-            const data = message.data;
-            console.log("📊 Processing data:", data);
-
-            setProcessingProgress(data.progress || 0);
-            setProcessingStatus(data.message || data.status || "");
-            setProcessingStats(data.statistics || {});
-            setProcessingErrors(data.errors || []);
-            setProcessingAnomalies(data.anomalies || []);
-
-            if (data.status === "completed") {
-              setIsProcessing(false);
-              toast.success("Traitement terminé avec succès");
-            } else if (data.status === "failed") {
-              setIsProcessing(false);
-              toast.error("Traitement échoué");
-            }
-          } else if (message.type === "connection") {
-            console.log("🔗 WebSocket connection confirmed:", message);
+            setProcessingProgress(message.data?.progress ?? 0);
+            setProcessingStatus(message.data?.status || "processing");
+          } else if (message.type === "completed") {
+            setProcessingStatus("completed");
+            setIsProcessing(false);
+            refetchFile();
+            refetchStats();
+            unsubscribe && unsubscribe();
+          } else if (message.type === "failed") {
+            setProcessingStatus("failed");
+            setIsProcessing(false);
+            unsubscribe && unsubscribe();
           }
-        } catch (error) {
-          console.error("❌ Error parsing WebSocket message:", error);
-          console.error("Raw message:", event.data);
+        } catch (e) {
+          console.error("Error handling processing message:", e);
         }
-      };
-
-      wsRef.current.onclose = (event) => {
-        console.log(
-          "🔌 Disconnected from processing WebSocket",
-          event.code,
-          event.reason
-        );
-        setWsConnected(false);
-      };
-
-      wsRef.current.onerror = (error) => {
-        console.error("❌ Processing WebSocket error:", error);
-        setWsConnected(false);
-      };
-    } catch (error) {
-      console.error("Error connecting to WebSocket:", error);
+      });
+    } catch (e) {
+      console.error("Error starting processing:", e);
+      setIsProcessing(false);
     }
   };
 
   const cancelProcessing = async () => {
-    if (processingTask) {
-      try {
-        const result = await filesAPI.cancelProcessing(processingTask);
-
-        if (result.data && result.data.message) {
-          setIsProcessing(false);
-          setProcessingStatus("Cancelled");
-          toast.info("Traitement annulé");
-        }
-      } catch (error) {
-        console.error("Error cancelling processing:", error);
-        toast.error("Erreur lors de l'annulation");
-      }
-    }
+    toast.info("Annulation du traitement non disponible pour le moment");
   };
 
-  // Cleanup WebSocket on unmount
-  useEffect(() => {
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, []);
+  // Removed local WebSocket cleanup; global provider manages lifecycle
 
   if (fileLoading) {
     return (
@@ -629,75 +513,15 @@ const FilePreviewPage = () => {
 
                 {/* Status */}
                 <div className="flex items-center space-x-2">
-                  <Badge variant={wsConnected ? "default" : "secondary"}>
-                    {wsConnected ? "Connecté" : "Déconnecté"}
+                  <Badge variant={isConnected ? "default" : "secondary"}>
+                    {isConnected ? "Connecté" : "Déconnecté"}
                   </Badge>
                   <span className="text-sm text-gray-600">
                     {processingStatus}
                   </span>
                 </div>
 
-                {/* Statistics */}
-                {Object.keys(processingStats).length > 0 && (
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
-                      <Label className="text-sm font-medium text-gray-600">
-                        Lignes traitées
-                      </Label>
-                      <p className="text-lg font-semibold">
-                        {processingStats.total_records || 0}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium text-gray-600">
-                        Lignes filtrées
-                      </Label>
-                      <p className="text-lg font-semibold text-orange-600">
-                        {processingStats.filtered_rows || 0}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium text-gray-600">
-                        Anomalies
-                      </Label>
-                      <p className="text-lg font-semibold text-red-600">
-                        {processingAnomalies.length}
-                      </p>
-                    </div>
-                    <div>
-                      <Label className="text-sm font-medium text-gray-600">
-                        Erreurs
-                      </Label>
-                      <p className="text-lg font-semibold text-red-600">
-                        {processingErrors.length}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Anomalies */}
-                {processingAnomalies.length > 0 && (
-                  <div>
-                    <Label className="text-sm font-medium text-gray-600 mb-2 block">
-                      Anomalies détectées
-                    </Label>
-                    <div className="max-h-32 overflow-y-auto space-y-1">
-                      {processingAnomalies.slice(0, 5).map((anomaly, index) => (
-                        <div
-                          key={index}
-                          className="text-xs bg-yellow-50 p-2 rounded border"
-                        >
-                          <strong>{anomaly.type}:</strong> {anomaly.description}
-                        </div>
-                      ))}
-                      {processingAnomalies.length > 5 && (
-                        <div className="text-xs text-gray-500">
-                          ... et {processingAnomalies.length - 5} autres
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
+                {/* Statistics placeholder (can be re-enabled when server provides them routinely) */}
               </div>
             </CardContent>
           </Card>

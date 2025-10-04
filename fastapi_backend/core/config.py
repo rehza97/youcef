@@ -13,17 +13,24 @@ class Settings(BaseSettings):
 
     # Server
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8001
 
     # Security
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    # Use a fixed SECRET_KEY to prevent token invalidation on server restart
+    # In production, set this via environment variable
+    SECRET_KEY: str = os.getenv(
+        "SECRET_KEY", "youcef-dev-secret-key-DO-NOT-USE-IN-PRODUCTION-12345678")
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours for development
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Database
     DATABASE_URL: str = "postgresql://postgres:123456789@localhost:5432/youcef_db"
     DATABASE_ECHO: bool = False
+    DATABASE_POOL_SIZE: int = 20
+    DATABASE_MAX_OVERFLOW: int = 30
+    DATABASE_POOL_TIMEOUT: int = 30
+    DATABASE_POOL_RECYCLE: int = 300
 
     # Redis (for caching and WebSocket)
     REDIS_URL: str = "redis://localhost:6379"

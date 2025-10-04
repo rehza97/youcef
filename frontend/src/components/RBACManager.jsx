@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import { usersAPI } from "../services/api";
+import {
+  getPermissions,
+  createPermission,
+  updatePermission,
+  deletePermission,
+  getRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  getRolePermissions,
+  updateRolePermissions,
+} from "../services/api";
 import { Button } from "@/components/ui/button";
 
 export const RBACManager = () => {
@@ -21,8 +32,8 @@ export const RBACManager = () => {
   const fetchData = async () => {
     setLoading(true);
     const [permsRes, rolesRes] = await Promise.all([
-      usersAPI.getPermissions(),
-      usersAPI.getRoles(),
+      getPermissions(),
+      getRoles(),
     ]);
     setPermissions(permsRes.data);
     setRoles(rolesRes.data);
@@ -46,7 +57,7 @@ export const RBACManager = () => {
   const handleUpdateRolePermissions = async () => {
     if (!selectedRole) return;
     setLoading(true);
-    await usersAPI.updateRolePermissions(selectedRole.id, selectedPermissions);
+    await updateRolePermissions(selectedRole.id, selectedPermissions);
     setMessage("Permissions mises à jour !");
     fetchData();
     setLoading(false);
@@ -55,7 +66,7 @@ export const RBACManager = () => {
   const handleCreatePermission = async (e) => {
     e.preventDefault();
     setLoading(true);
-    await usersAPI.createPermission(newPermission);
+    await createPermission(newPermission);
     setNewPermission({ codename: "", description: "" });
     setMessage("Permission créée !");
     fetchData();

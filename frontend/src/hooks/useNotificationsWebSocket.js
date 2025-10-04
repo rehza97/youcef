@@ -1,17 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { debug } from "../lib/debug.js";
+import { createNotificationsWebSocket } from "../services/api";
 
 export const useNotificationsWebSocket = () => {
   const { user, token } = useAuth();
-  const [notifications, setNotifications] = useState([]);
   const [liveNotifications, setLiveNotifications] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
-  const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-  const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 5;
+  const wsConnectionRef = useRef(null);
 
   const connect = useCallback(() => {
     if (!user || !token) {
@@ -24,24 +21,9 @@ export const useNotificationsWebSocket = () => {
     });
 
     try {
-      // Updated URL format with query parameters
-      const wsUrl = `ws://localhost:8000/ws/notifications/?user_id=${user.id}&token=${token}`;
-      console.log("🔍 DEBUG: WebSocket URL being used:", wsUrl);
-      debug.websocket("useNotificationsWebSocket: Connecting to", wsUrl);
-
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        debug.websocket("useNotificationsWebSocket: Connection opened");
-        setIsConnected(true);
-        setConnectionStatus("connected");
-        reconnectAttempts.current = 0;
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
+      // Use centralized WebSocket service from api.js
+      const wsConnection = createNotificationsWebSocket(
+        (data) => {
           debug.websocket("useNotificationsWebSocket: Message received", data);
 
           if (data.type === "connection") {
@@ -56,51 +38,29 @@ export const useNotificationsWebSocket = () => {
             );
             setLiveNotifications((prev) => [data, ...prev]);
           }
-        } catch (error) {
-          debug.error(
-            "useNotificationsWebSocket: Error parsing message",
-            error
-          );
+        },
+        () => {
+          debug.websocket("useNotificationsWebSocket: Connection opened");
+          setIsConnected(true);
+          setConnectionStatus("connected");
+        },
+        (event) => {
+          debug.websocket("useNotificationsWebSocket: Connection closed", {
+            code: event.code,
+            reason: event.reason,
+          });
+          setIsConnected(false);
+          setConnectionStatus("disconnected");
+        },
+        (error) => {
+          debug.error("useNotificationsWebSocket: WebSocket error", error);
+          setConnectionStatus("error");
         }
-      };
+      );
 
-      ws.onclose = (event) => {
-        debug.websocket("useNotificationsWebSocket: Connection closed", {
-          code: event.code,
-          reason: event.reason,
-        });
-        setIsConnected(false);
-        setConnectionStatus("disconnected");
-        wsRef.current = null;
-
-        // Attempt to reconnect if not a clean close
-        if (
-          event.code !== 1000 &&
-          reconnectAttempts.current < maxReconnectAttempts
-        ) {
-          const delay = Math.pow(2, reconnectAttempts.current) * 1000; // Exponential backoff
-          debug.websocket(
-            `useNotificationsWebSocket: Reconnecting in ${delay}ms (attempt ${
-              reconnectAttempts.current + 1
-            })`
-          );
-
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttempts.current++;
-            connect();
-          }, delay);
-        } else {
-          debug.warn(
-            "useNotificationsWebSocket: Max reconnection attempts reached or clean close"
-          );
-          setConnectionStatus("failed");
-        }
-      };
-
-      ws.onerror = (error) => {
-        debug.error("useNotificationsWebSocket: WebSocket error", error);
-        setConnectionStatus("error");
-      };
+      if (wsConnection) {
+        wsConnectionRef.current = wsConnection;
+      }
     } catch (error) {
       debug.error("useNotificationsWebSocket: Connection error", error);
       setConnectionStatus("error");
@@ -109,13 +69,9 @@ export const useNotificationsWebSocket = () => {
 
   const disconnect = useCallback(() => {
     debug.websocket("useNotificationsWebSocket: Disconnecting");
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-      reconnectTimeoutRef.current = null;
-    }
-    if (wsRef.current) {
-      wsRef.current.close(1000, "User disconnected");
-      wsRef.current = null;
+    if (wsConnectionRef.current) {
+      wsConnectionRef.current.close();
+      wsConnectionRef.current = null;
     }
     setIsConnected(false);
     setConnectionStatus("disconnected");
@@ -124,7 +80,6 @@ export const useNotificationsWebSocket = () => {
   const reconnect = useCallback(() => {
     debug.websocket("useNotificationsWebSocket: Manual reconnect");
     disconnect();
-    reconnectAttempts.current = 0;
     setTimeout(connect, 1000);
   }, [disconnect, connect]);
 

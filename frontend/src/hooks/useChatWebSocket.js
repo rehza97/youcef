@@ -1,62 +1,62 @@
 import { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { createChatWebSocket } from "../services/api";
 
 export const useChatWebSocket = (conversationId) => {
   const { user, token } = useAuth();
-  const [messages, setMessages] = useState([]);
   const [liveMessages, setLiveMessages] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
-  const wsRef = useRef(null);
+  const wsConnectionRef = useRef(null);
 
   useEffect(() => {
     if (!conversationId || !user || !token) return;
 
-    // Updated URL format with query parameters
-    const wsUrl = `ws://localhost:8000/ws/chat/?conversation_id=${conversationId}&token=${token}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log("Chat WebSocket connected");
-      setIsConnected(true);
-    };
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "message") {
-        setLiveMessages((prev) => [...prev, data]);
+    // Use centralized WebSocket service from api.js
+    const wsConnection = createChatWebSocket(
+      conversationId,
+      (data) => {
+        if (data.type === "message") {
+          setLiveMessages((prev) => [...prev, data]);
+        }
+      },
+      () => {
+        console.log("Chat WebSocket connected");
+        setIsConnected(true);
+      },
+      () => {
+        console.log("Chat WebSocket disconnected");
+        setIsConnected(false);
+      },
+      (error) => {
+        console.error("Chat WebSocket error:", error);
+        setIsConnected(false);
       }
-    };
+    );
 
-    ws.onclose = () => {
-      console.log("Chat WebSocket disconnected");
-      setIsConnected(false);
-    };
-
-    ws.onerror = (error) => {
-      console.error("Chat WebSocket error:", error);
-      setIsConnected(false);
-    };
+    if (wsConnection) {
+      wsConnectionRef.current = wsConnection;
+    }
 
     return () => {
-      ws.close();
+      if (wsConnectionRef.current) {
+        wsConnectionRef.current.close();
+        wsConnectionRef.current = null;
+      }
     };
   }, [conversationId, user, token]);
 
   const sendMessage = (content) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(
-        JSON.stringify({
-          type: "message",
-          content: content,
-          conversation_id: conversationId,
-        })
-      );
+    if (wsConnectionRef.current) {
+      wsConnectionRef.current.send({
+        type: "message",
+        content: content,
+        conversation_id: conversationId,
+      });
     }
   };
 
   return {
-    messages: [...messages, ...liveMessages],
+    messages: liveMessages,
     liveMessages,
     isConnected,
     sendMessage,

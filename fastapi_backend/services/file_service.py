@@ -308,9 +308,9 @@ class FileService:
                 f"Deleting {park_count} park records related to file {file_id}")
             db.query(Park).filter(Park.file_upload_id == file_id).delete()
 
-        # Delete physical file
+        # Delete physical file with Windows file locking handling
         if os.path.exists(file_upload.file_path):
-            os.remove(file_upload.file_path)
+            self._safe_delete_file(file_upload.file_path)
 
         # Delete from database (this will also delete file_previews due to cascade)
         db.delete(file_upload)
@@ -319,6 +319,64 @@ class FileService:
         logger.info(
             f"Successfully deleted file {file_id} and {park_count} related park records")
         return True
+
+    def _safe_delete_file(self, file_path: str) -> bool:
+        """Safely delete a file, handling Windows file locking issues"""
+        import time
+        import gc
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                # Force garbage collection to release any file handles
+                gc.collect()
+
+                # Try to delete the file
+                os.remove(file_path)
+                logger.info(f"Successfully deleted file: {file_path}")
+                return True
+
+            except PermissionError as e:
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        f"File deletion attempt {attempt + 1} failed (PermissionError): {e}")
+                    logger.info(f"Retrying file deletion in 1 second...")
+                    time.sleep(1)
+                    continue
+                else:
+                    logger.error(
+                        f"Failed to delete file after {max_attempts} attempts: {e}")
+                    # Try to rename the file instead of deleting it
+                    try:
+                        import tempfile
+                        temp_dir = tempfile.gettempdir()
+                        temp_name = f"deleted_{os.path.basename(file_path)}_{int(time.time())}"
+                        temp_path = os.path.join(temp_dir, temp_name)
+                        os.rename(file_path, temp_path)
+                        logger.info(f"Renamed locked file to: {temp_path}")
+                        return True
+                    except Exception as rename_error:
+                        logger.error(
+                            f"Failed to rename locked file: {rename_error}")
+                        raise e
+
+            except OSError as e:
+                if attempt < max_attempts - 1:
+                    logger.warning(
+                        f"File deletion attempt {attempt + 1} failed (OSError): {e}")
+                    logger.info(f"Retrying file deletion in 1 second...")
+                    time.sleep(1)
+                    continue
+                else:
+                    logger.error(
+                        f"Failed to delete file after {max_attempts} attempts: {e}")
+                    raise e
+
+            except Exception as e:
+                logger.error(f"Unexpected error deleting file: {e}")
+                raise e
+
+        return False
 
     def get_file_previews(self, db: Session, file_id: int, user_id: int) -> List[FilePreview]:
         """Get file previews for a specific file"""

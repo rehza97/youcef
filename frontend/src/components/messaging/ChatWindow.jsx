@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { messagingAPI } from "../../services/api";
+import { fetchMessages } from "../../services/api";
 import { useChatWebSocket } from "../../hooks/useChatWebSocket";
 
 export default function ChatWindow({ conversation }) {
@@ -10,7 +10,7 @@ export default function ChatWindow({ conversation }) {
   } = useQuery({
     queryKey: ["messages", conversation?.id],
     queryFn: async () => {
-      const response = await messagingAPI.fetchMessages(conversation.id);
+      const response = await fetchMessages(conversation.id);
       return response.data;
     },
     enabled: !!conversation,

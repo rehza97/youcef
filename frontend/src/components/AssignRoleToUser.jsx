@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { usersAPI } from "../services/api";
+import { getUsers, getRoles, assignRole } from "../services/api";
 import { Button } from "@/components/ui/button";
 
 export const AssignRoleToUser = () => {
@@ -16,10 +16,7 @@ export const AssignRoleToUser = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    const [usersRes, rolesRes] = await Promise.all([
-      usersAPI.getUsers(),
-      usersAPI.getRoles(),
-    ]);
+    const [usersRes, rolesRes] = await Promise.all([getUsers(), getRoles()]);
     setUsers(usersRes.data);
     setRoles(rolesRes.data);
     setLoading(false);
@@ -29,7 +26,7 @@ export const AssignRoleToUser = () => {
     e.preventDefault();
     if (!selectedUser || !selectedRole) return;
     setLoading(true);
-    await usersAPI.assignRole({ user_id: selectedUser, role_id: selectedRole });
+    await assignRole({ user_id: selectedUser, role_id: selectedRole });
     setMessage("Rôle attribué !");
     setLoading(false);
   };

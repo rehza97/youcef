@@ -145,7 +145,8 @@ async def process_file_background(file_id: int, user_id: int, task_id: str = Non
 
     try:
         # Start processing
-        logger.info(f"⚙️ Calling processing service for file_id: {file_id} with task_id: {task_id}")
+        logger.info(
+            f"⚙️ Calling processing service for file_id: {file_id} with task_id: {task_id}")
         result = await processing_service.process_file(db, file_id, task_id)
         logger.info(f"✅ Processing service completed for file_id: {file_id}")
 

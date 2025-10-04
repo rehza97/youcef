@@ -1,5 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
-import { messagingAPI, usersAPI } from "../../services/api";
+import {
+  fetchConversations,
+  fetchMessages,
+  sendMessage as apiSendMessage,
+  sendFile as apiSendFile,
+  createConversation as apiCreateConversation,
+  blockUser as apiBlockUser,
+  unblockUser as apiUnblockUser,
+  getBlockedUsers,
+  getUsers,
+} from "../../services/api";
 import { useChatWebSocket } from "../../hooks/useChatWebSocket";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -80,8 +90,8 @@ const MessagingPage = () => {
   } = useChatWebSocket(selectedConversation?.id);
 
   useEffect(() => {
-    fetchConversations();
-    fetchBlockedUsers();
+    fetchConversationsHandler();
+    fetchBlockedUsersHandler();
     fetchAllUsers();
   }, []);
 
@@ -101,10 +111,10 @@ const MessagingPage = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  const fetchConversations = async () => {
+  const fetchConversationsHandler = async () => {
     try {
       setLoading(true);
-      const response = await messagingAPI.fetchConversations();
+      const response = await fetchConversations();
       setConversations(response.data.conversations || []);
     } catch (error) {
       handleApiError(error, {
@@ -116,9 +126,9 @@ const MessagingPage = () => {
     }
   };
 
-  const fetchBlockedUsers = async () => {
+  const fetchBlockedUsersHandler = async () => {
     try {
-      const response = await messagingAPI.getBlockedUsers();
+      const response = await getBlockedUsers();
       setBlockedUsers(response.data.blocked_users || []);
     } catch (error) {
       handleApiError(error, {
@@ -130,7 +140,7 @@ const MessagingPage = () => {
 
   const fetchAllUsers = async () => {
     try {
-      const response = await usersAPI.getUsers();
+      const response = await getUsers();
       setAllUsers(response.data || []);
     } catch (error) {
       handleApiError(error, {
@@ -142,7 +152,7 @@ const MessagingPage = () => {
 
   const handleConversationClick = async (conversation) => {
     try {
-      const response = await messagingAPI.fetchMessages(conversation.id);
+      const response = await fetchMessages(conversation.id);
       setSelectedConversation({
         ...conversation,
         messages: response.data.messages || [],
@@ -175,7 +185,7 @@ const MessagingPage = () => {
       }
 
       // Fallback to REST API if WebSocket not connected
-      const response = await messagingAPI.sendMessage(
+      const response = await apiSendMessage(
         selectedConversation.id,
         messageData
       );
@@ -209,7 +219,7 @@ const MessagingPage = () => {
       formData.append("message_type", "file");
       formData.append("content", `Fichier: ${selectedFile.name}`);
 
-      const response = await messagingAPI.sendFile(formData);
+      const response = await apiSendFile(formData);
 
       setSelectedConversation((prev) => ({
         ...prev,
@@ -241,7 +251,7 @@ const MessagingPage = () => {
       console.log("🔍 Creating conversation with data:", conversationData);
       console.log("🔍 Selected user:", selectedUser);
 
-      const response = await messagingAPI.createConversation(conversationData);
+      const response = await apiCreateConversation(conversationData);
 
       setConversations((prev) => [...prev, response.data]);
       setShowCreateDialog(false);
@@ -263,7 +273,7 @@ const MessagingPage = () => {
     if (!selectedUser) return;
 
     try {
-      await messagingAPI.blockUser(selectedUser.id, blockReason);
+      await apiBlockUser(selectedUser.id, blockReason);
 
       setBlockedUsers((prev) => [
         ...prev,
@@ -289,7 +299,7 @@ const MessagingPage = () => {
 
   const handleUnblockUser = async (userId) => {
     try {
-      await messagingAPI.unblockUser(userId);
+      await apiUnblockUser(userId);
       setBlockedUsers((prev) => prev.filter((user) => user.id !== userId));
       toast.success("Utilisateur débloqué avec succès");
     } catch (error) {

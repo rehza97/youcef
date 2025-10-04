@@ -17,7 +17,7 @@ import {
 import { Badge } from "../../components/ui/badge";
 import { Separator } from "../../components/ui/separator";
 import { useAuth } from "../../contexts/AuthContext";
-import { usersAPI } from "../../services/api";
+import { getCurrentUser, updateCurrentUser } from "../../services/api";
 import { handleApiError } from "../../lib/error-handler";
 import { toast } from "sonner";
 import {
@@ -64,7 +64,7 @@ const ProfilePage = () => {
       setLoading(true);
       setError(null);
 
-      const response = await usersAPI.getCurrentUser();
+      const response = await getCurrentUser();
       const userData = response.data;
 
       // Map backend data to frontend format
@@ -139,7 +139,7 @@ const ProfilePage = () => {
         return;
       }
 
-      const response = await usersAPI.updateCurrentUser(updateData);
+      const response = await updateCurrentUser(updateData);
       const updatedUser = response.data;
 
       // Update local state

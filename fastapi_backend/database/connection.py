@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import StaticPool, QueuePool
 from core.config import settings
 import logging
 
@@ -16,12 +16,23 @@ if settings.DATABASE_URL.startswith("sqlite"):
         echo=settings.DATABASE_ECHO
     )
 else:
-    # PostgreSQL configuration
+    # PostgreSQL configuration with optimized connection pool
     engine = create_engine(
         settings.DATABASE_URL,
         echo=settings.DATABASE_ECHO,
-        pool_pre_ping=True,
-        pool_recycle=300
+        poolclass=QueuePool,
+        pool_size=settings.DATABASE_POOL_SIZE,           # Base connection pool size
+        # Additional connections when needed
+        max_overflow=settings.DATABASE_MAX_OVERFLOW,
+        pool_pre_ping=True,                              # Verify connections before use
+        # Recycle connections every 5 minutes
+        pool_recycle=settings.DATABASE_POOL_RECYCLE,
+        # Timeout for getting connection from pool
+        pool_timeout=settings.DATABASE_POOL_TIMEOUT,
+        connect_args={
+            "connect_timeout": 10,  # Connection timeout
+            "application_name": "youcef_backend"
+        }
     )
 
 # Create SessionLocal class

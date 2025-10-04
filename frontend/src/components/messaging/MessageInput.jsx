@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { usersAPI, messagingAPI } from "../../services/api";
+import { getUsers, sendMultiMessage } from "../../services/api";
 import Select from "react-select";
 
 export default function MessageInput({ conversation, onSend }) {
@@ -15,7 +15,7 @@ export default function MessageInput({ conversation, onSend }) {
   const [results, setResults] = useState([]);
 
   useEffect(() => {
-    usersAPI.getUsers().then((res) => setUsers(res.data));
+    getUsers().then((res) => setUsers(res.data));
   }, []);
 
   const userOptions = users.map((user) => ({
@@ -53,7 +53,7 @@ export default function MessageInput({ conversation, onSend }) {
     formData.append("content", value);
     if (file) formData.append("file", file);
     try {
-      const response = await messagingAPI.sendMulti(formData);
+      const response = await sendMultiMessage(formData);
       setSuccess("Message envoyé !");
       setResults(response.data.results || []);
       setValue("");

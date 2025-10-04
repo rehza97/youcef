@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { usersAPI } from "../services/api";
+import { checkPermission } from "../services/api";
 
 // In-memory cache for permission checks
 const permissionCache = new Map();
@@ -33,8 +33,7 @@ export function usePermission(codename) {
 
     // Make a new request
     setLoading(true);
-    const requestPromise = usersAPI
-      .checkPermission(codename)
+    const requestPromise = checkPermission(codename)
       .then((res) => {
         const result = res.data.has_permission;
         // Cache the result

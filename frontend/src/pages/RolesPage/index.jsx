@@ -1,5 +1,16 @@
 import React from "react";
-import { usersAPI } from "../../services/api";
+import {
+  getRoles,
+  createRole,
+  updateRole,
+  deleteRole,
+  getPermissions,
+  createPermission,
+  updatePermission,
+  deletePermission,
+  getRolePermissions,
+  updateRolePermissions,
+} from "../../services/api";
 import {
   Card,
   CardContent,
@@ -121,7 +132,7 @@ const RolesPage = () => {
     try {
       setLoading(true);
       setError("");
-      const res = await usersAPI.getRoles();
+      const res = await getRoles();
       setRoles(res.data || []);
     } catch (e) {
       setError(e?.response?.data?.detail || "Failed to load roles");
@@ -133,7 +144,7 @@ const RolesPage = () => {
 
   const loadAllPermissions = async () => {
     try {
-      const res = await usersAPI.getPermissions();
+      const res = await getPermissions();
       setAllPermissions(res.data || []);
     } catch (e) {
       console.error("Failed to load permissions", e);
@@ -209,17 +220,14 @@ const RolesPage = () => {
     }
     try {
       setSaving(true);
-      const res = await usersAPI.createRole({
+      const res = await createRole({
         name: createForm.name.trim(),
         description: createForm.description?.trim() || null,
       });
 
       // Assign permissions if any selected
       if (createForm.permissionIds.length > 0) {
-        await usersAPI.updateRolePermissions(
-          res.data.id,
-          createForm.permissionIds
-        );
+        await updateRolePermissions(res.data.id, createForm.permissionIds);
       }
 
       setIsCreateOpen(false);
@@ -244,7 +252,7 @@ const RolesPage = () => {
       permissionIds: [],
     });
     try {
-      const rp = await usersAPI.getRolePermissions(role.id);
+      const rp = await getRolePermissions(role.id);
       const ids = (rp.data?.permissions || []).map((p) => p.id);
       setEditForm((prev) => ({ ...prev, permissionIds: ids }));
     } catch (e) {
@@ -257,7 +265,7 @@ const RolesPage = () => {
     setIsViewOpen(true);
     setViewingPermissions([]);
     try {
-      const rp = await usersAPI.getRolePermissions(role.id);
+      const rp = await getRolePermissions(role.id);
       setViewingPermissions(rp.data?.permissions || []);
     } catch {
       toastError("Failed to load role permissions");
@@ -273,11 +281,11 @@ const RolesPage = () => {
     }
     try {
       setSaving(true);
-      await usersAPI.updateRole(editForm.id, {
+      await updateRole(editForm.id, {
         name: editForm.name?.trim(),
         description: editForm.description?.trim() || null,
       });
-      await usersAPI.updateRolePermissions(editForm.id, editForm.permissionIds);
+      await updateRolePermissions(editForm.id, editForm.permissionIds);
       setIsEditOpen(false);
       setSelectedRole(null);
       success("Role updated successfully");
@@ -298,7 +306,7 @@ const RolesPage = () => {
     if (!selectedRole) return;
     try {
       setDeleting(true);
-      await usersAPI.deleteRole(selectedRole.id);
+      await deleteRole(selectedRole.id);
       setIsDeleteOpen(false);
       setSelectedRole(null);
       success("Role deleted successfully");
@@ -313,9 +321,7 @@ const RolesPage = () => {
   const handleBulkDelete = async () => {
     try {
       setDeleting(true);
-      await Promise.all(
-        Array.from(selectedRoles).map((id) => usersAPI.deleteRole(id))
-      );
+      await Promise.all(Array.from(selectedRoles).map((id) => deleteRole(id)));
       setIsBulkDeleteOpen(false);
       setSelectedRoles(new Set());
       success(`${selectedRoles.size} roles deleted successfully`);
@@ -330,16 +336,16 @@ const RolesPage = () => {
   const handleDuplicateRole = async (role) => {
     try {
       setSaving(true);
-      const newRole = await usersAPI.createRole({
+      const newRole = await createRole({
         name: `${role.name} (Copy)`,
         description: role.description,
       });
 
       // Copy permissions
-      const rp = await usersAPI.getRolePermissions(role.id);
+      const rp = await getRolePermissions(role.id);
       const ids = (rp.data?.permissions || []).map((p) => p.id);
       if (ids.length > 0) {
-        await usersAPI.updateRolePermissions(newRole.data.id, ids);
+        await updateRolePermissions(newRole.data.id, ids);
       }
 
       success("Role duplicated successfully");

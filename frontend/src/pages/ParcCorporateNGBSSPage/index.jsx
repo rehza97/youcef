@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from "react";
-import { parkAnalyticsAPI } from "../../services/api";
+import {
+  getParkAnalyticsOverview,
+  getParkAnalyticsByTelecomType,
+  getParkAnalyticsBySubscriberStatus,
+  getParkAnalyticsByCustomerL2,
+  getParkAnalyticsByCustomerL3,
+  getParkAnalyticsByDOT,
+  getParkAnalyticsAvailableFilters,
+  exportParkAnalyticsData,
+} from "../../services/api";
 import {
   Card,
   CardContent,
@@ -120,13 +129,13 @@ const ParcCorporateNGBSSPage = () => {
         dotRes,
         filtersRes,
       ] = await Promise.all([
-        parkAnalyticsAPI.getOverview(),
-        parkAnalyticsAPI.getByTelecomType(),
-        parkAnalyticsAPI.getBySubscriberStatus(),
-        parkAnalyticsAPI.getByCustomerL2(),
-        parkAnalyticsAPI.getByCustomerL3(),
-        parkAnalyticsAPI.getByDOT(),
-        parkAnalyticsAPI.getAvailableFilters(),
+        getParkAnalyticsOverview(),
+        getParkAnalyticsByTelecomType(),
+        getParkAnalyticsBySubscriberStatus(),
+        getParkAnalyticsByCustomerL2(),
+        getParkAnalyticsByCustomerL3(),
+        getParkAnalyticsByDOT(),
+        getParkAnalyticsAvailableFilters(),
       ]);
 
       setOverview(overviewRes.data || {});
@@ -148,7 +157,7 @@ const ParcCorporateNGBSSPage = () => {
 
   const handleExport = async (format = "csv") => {
     try {
-      const response = await parkAnalyticsAPI.exportData(filters, format);
+      const response = await exportParkAnalyticsData(filters, format);
 
       // Create and download file
       const data = response.data.data;
@@ -198,24 +207,17 @@ const ParcCorporateNGBSSPage = () => {
             cy="50%"
             labelLine={false}
             label={({ name, percentage }) => `${name}: ${percentage}%`}
-            outerRadius={80}
-            fill="#8884d8"
             dataKey={dataKey}
             nameKey={nameKey}
           >
             {data.map((entry, index) => (
               <Cell
                 key={`cell-${index}`}
-                fill={
-                  TELECOM_COLORS[entry[nameKey]] ||
-                  COLORS[index % COLORS.length]
-                }
+                fill={COLORS[index % COLORS.length]}
               />
             ))}
           </Pie>
-          <Tooltip
-            formatter={(value, name) => [value.toLocaleString(), name]}
-          />
+          <Tooltip />
           <Legend />
         </PieChart>
       </ResponsiveContainer>

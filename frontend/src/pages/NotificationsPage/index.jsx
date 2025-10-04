@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { notificationsAPI } from "../../services/api";
+import {
+  fetchNotifications as apiFetchNotifications,
+  markNotificationAsRead,
+  markAllNotificationsAsRead,
+  getNotificationStats,
+  getNotificationPreferences,
+  updateNotificationPreferences,
+} from "../../services/api";
 import {
   Card,
   CardContent,
@@ -52,7 +59,7 @@ const NotificationsPage = () => {
   const fetchNotifications = async () => {
     try {
       setLoading(true);
-      const response = await notificationsAPI.fetchNotifications();
+      const response = await apiFetchNotifications();
       setNotifications(response.data.notifications || []);
     } catch (error) {
       console.error("Erreur lors du chargement des notifications:", error);
@@ -64,7 +71,7 @@ const NotificationsPage = () => {
 
   const fetchStats = async () => {
     try {
-      const response = await notificationsAPI.getStats();
+      const response = await getNotificationStats();
       setStats(response.data.stats || {});
     } catch (error) {
       console.error("Erreur lors du chargement des statistiques:", error);
@@ -73,7 +80,7 @@ const NotificationsPage = () => {
 
   const fetchPreferences = async () => {
     try {
-      const response = await notificationsAPI.getPreferences();
+      const response = await getNotificationPreferences();
       setPreferences(response.data.preferences || {});
     } catch (error) {
       console.error("Erreur lors du chargement des préférences:", error);
@@ -82,7 +89,7 @@ const NotificationsPage = () => {
 
   const handleMarkAsRead = async (notificationId) => {
     try {
-      await notificationsAPI.markAsRead(notificationId);
+      await markNotificationAsRead(notificationId);
       setNotifications((prev) =>
         prev.map((notif) =>
           notif.id === notificationId ? { ...notif, read: true } : notif
@@ -97,7 +104,7 @@ const NotificationsPage = () => {
 
   const handleMarkAllAsRead = async () => {
     try {
-      await notificationsAPI.markAllAsRead();
+      await markAllNotificationsAsRead();
       setNotifications((prev) =>
         prev.map((notif) => ({ ...notif, read: true }))
       );
@@ -110,7 +117,7 @@ const NotificationsPage = () => {
 
   const handleUpdatePreferences = async (newPreferences) => {
     try {
-      await notificationsAPI.updatePreferences(newPreferences);
+      await updateNotificationPreferences(newPreferences);
       setPreferences(newPreferences);
       toast.success("Préférences mises à jour");
     } catch (error) {
