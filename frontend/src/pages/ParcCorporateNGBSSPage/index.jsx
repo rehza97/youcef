@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { etlAPI } from "../../services/api";
+import { parkAnalyticsAPI } from "../../services/api";
 import {
   Card,
   CardContent,
@@ -32,139 +32,229 @@ import {
   TabsTrigger,
 } from "../../components/ui/tabs";
 import {
-  Upload,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+import {
   Download,
   BarChart3,
-  PieChart,
-  Building2,
-  FileText,
-  AlertCircle,
-  CheckCircle,
-  Clock,
+  PieChart as PieChartIcon,
+  TrendingUp,
+  Users,
+  Building,
   Filter,
-  Search,
   RefreshCw,
-  Eye,
-  Network,
 } from "lucide-react";
 import { toast } from "sonner";
 import { handleApiError } from "../../lib/error-handler";
-import {
-  SimpleBarChart,
-  SimplePieChart,
-} from "../../components/ui/charts/SimpleChart";
+
+// Color palettes for charts
+const COLORS = [
+  "#0088FE",
+  "#00C49F",
+  "#FFBB28",
+  "#FF8042",
+  "#8884D8",
+  "#82CA9D",
+  "#FFC658",
+  "#FF7C7C",
+  "#8DD1E1",
+  "#D084D0",
+];
+
+const TELECOM_COLORS = {
+  UNKNOWN: "#8884D8",
+  PSTN: "#0088FE",
+  xDSL: "#00C49F",
+  "Specialized Line": "#FFBB28",
+  LTE: "#FF8042",
+  FTTx: "#82CA9D",
+  VOIP: "#FFC658",
+  x25: "#FF7C7C",
+  WIFI: "#8DD1E1",
+};
 
 const ParcCorporateNGBSSPage = () => {
+  // State for data
   const [overview, setOverview] = useState({});
-  const [dotData, setDotData] = useState({});
-  const [telecomData, setTelecomData] = useState({});
-  const [customerL2Data, setCustomerL2Data] = useState({});
-  const [customerL3Data, setCustomerL3Data] = useState({});
-  const [previewData, setPreviewData] = useState({});
+  const [telecomTypeData, setTelecomTypeData] = useState([]);
+  const [subscriberStatusData, setSubscriberStatusData] = useState([]);
+  const [customerL2Data, setCustomerL2Data] = useState([]);
+  const [customerL3Data, setCustomerL3Data] = useState([]);
+  const [dotData, setDotData] = useState([]);
+  const [availableFilters, setAvailableFilters] = useState({});
 
-  const [loading, setLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [selectedFiles, setSelectedFiles] = useState([]);
+  // State for UI
+  const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("overview");
-  const [lastProcessedFile, setLastProcessedFile] = useState("");
-
-  // Filters
   const [filters, setFilters] = useState({
-    dot: "all",
-    actel: "all",
-    subscriber: "all",
+    dot_filter: "",
+    actel_code_filter: "",
+    subscriber_status_filter: "",
+    telecom_type_filter: "",
   });
-  const [searchTerm, setSearchTerm] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
 
-  // Process Parc Corporate NGBSS files
-  const handleFileUpload = async () => {
-    if (!selectedFiles || selectedFiles.length === 0) {
-      toast.error("Please select files to upload");
-      return;
-    }
+  useEffect(() => {
+    fetchAllData();
+  }, []);
 
-    setUploading(true);
-    const formData = new FormData();
-
-    selectedFiles.forEach(file => {
-      formData.append("files", file);
-    });
-
+  const fetchAllData = async () => {
     try {
-      const response = await etlAPI.processParcCorporateNGBSS(formData);
-
-      if (response.success) {
-        toast.success(
-          `ETL Processing completed successfully! Processed ${response.output_records} records.`
-        );
-
-        // Store the output file path for data viewing
-        if (response.output_files && response.output_files.length > 0) {
-          setLastProcessedFile(response.output_files[0]);
-          await loadDataViews(response.output_files[0]);
-        }
-
-        setSelectedFiles([]);
-        const fileInput = document.querySelector('input[type="file"]');
-        if (fileInput) fileInput.value = '';
-      } else {
-        toast.error("ETL processing failed");
-      }
-    } catch (error) {
-      handleApiError(error, "Failed to process Parc Corporate NGBSS files");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  // Load data views from processed file
-  const loadDataViews = async (filePath) => {
-    if (!filePath) return;
-
-    setLoading(true);
-    try {
-      // Load all views in parallel
-      const [overviewRes, dotRes, telecomRes, l2Res, l3Res, previewRes] = await Promise.all([
-        etlAPI.getParcCorporateDataViews(filePath, "overview", filters),
-        etlAPI.getParcCorporateDataViews(filePath, "by_dot", filters),
-        etlAPI.getParcCorporateDataViews(filePath, "by_telecom_type", filters),
-        etlAPI.getParcCorporateDataViews(filePath, "by_customer_l2", filters),
-        etlAPI.getParcCorporateDataViews(filePath, "by_customer_l3", filters),
-        etlAPI.getParcCorporateDataViews(filePath, "preview_data", filters),
+      setLoading(true);
+      const [
+        overviewRes,
+        telecomRes,
+        statusRes,
+        l2Res,
+        l3Res,
+        dotRes,
+        filtersRes,
+      ] = await Promise.all([
+        parkAnalyticsAPI.getOverview(),
+        parkAnalyticsAPI.getByTelecomType(),
+        parkAnalyticsAPI.getBySubscriberStatus(),
+        parkAnalyticsAPI.getByCustomerL2(),
+        parkAnalyticsAPI.getByCustomerL3(),
+        parkAnalyticsAPI.getByDOT(),
+        parkAnalyticsAPI.getAvailableFilters(),
       ]);
 
-      setOverview(overviewRes);
-      setDotData(dotRes);
-      setTelecomData(telecomRes);
-      setCustomerL2Data(l2Res);
-      setCustomerL3Data(l3Res);
-      setPreviewData(previewRes);
+      setOverview(overviewRes.data || {});
+      setTelecomTypeData(telecomRes.data?.distribution || []);
+      setSubscriberStatusData(statusRes.data?.distribution || []);
+      setCustomerL2Data(l2Res.data?.distribution || []);
+      setCustomerL3Data(l3Res.data?.distribution || []);
+      setDotData(dotRes.data?.distribution || []);
+      setAvailableFilters(filtersRes.data || {});
     } catch (error) {
-      handleApiError(error, "Failed to load data views");
+      handleApiError(error, {
+        showToast: true,
+        fallbackMessage: "Erreur lors du chargement des données",
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  // Apply filters
-  const applyFilters = () => {
-    if (lastProcessedFile) {
-      loadDataViews(lastProcessedFile);
+  const handleExport = async (format = "csv") => {
+    try {
+      const response = await parkAnalyticsAPI.exportData(filters, format);
+
+      // Create and download file
+      const data = response.data.data;
+      const headers = Object.keys(data[0] || {});
+
+      let content = "";
+      if (format === "csv") {
+        content = headers.join(",") + "\n";
+        content += data
+          .map((row) =>
+            headers.map((header) => `"${row[header] || ""}"`).join(",")
+          )
+          .join("\n");
+      }
+
+      const blob = new Blob([content], {
+        type: format === "csv" ? "text/csv" : "application/vnd.ms-excel",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `parc_corporate_ngbss_${
+        new Date().toISOString().split("T")[0]
+      }.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success(`Données exportées en ${format.toUpperCase()}`);
+    } catch (error) {
+      handleApiError(error, {
+        showToast: true,
+        fallbackMessage: "Erreur lors de l'export",
+      });
     }
   };
 
-  const formatNumber = (num) => {
-    return new Intl.NumberFormat().format(num);
-  };
+  const renderPieChart = (data, title, dataKey = "count", nameKey = "type") => (
+    <div className="h-80">
+      <h3 className="text-lg font-semibold mb-4 text-center">{title}</h3>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Pie
+            data={data}
+            cx="50%"
+            cy="50%"
+            labelLine={false}
+            label={({ name, percentage }) => `${name}: ${percentage}%`}
+            outerRadius={80}
+            fill="#8884d8"
+            dataKey={dataKey}
+            nameKey={nameKey}
+          >
+            {data.map((entry, index) => (
+              <Cell
+                key={`cell-${index}`}
+                fill={
+                  TELECOM_COLORS[entry[nameKey]] ||
+                  COLORS[index % COLORS.length]
+                }
+              />
+            ))}
+          </Pie>
+          <Tooltip
+            formatter={(value, name) => [value.toLocaleString(), name]}
+          />
+          <Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
 
-  const prepareChartData = (data, labelKey, valueKey) => {
-    if (!data || typeof data !== 'object') return [];
+  const renderBarChart = (data, title, dataKey = "count", nameKey = "type") => (
+    <div className="h-80">
+      <h3 className="text-lg font-semibold mb-4 text-center">{title}</h3>
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={data}
+          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis
+            dataKey={nameKey}
+            angle={-45}
+            textAnchor="end"
+            height={100}
+            fontSize={12}
+          />
+          <YAxis />
+          <Tooltip
+            formatter={(value, name) => [value.toLocaleString(), "Abonnés"]}
+          />
+          <Bar dataKey={dataKey} fill="#0088FE" />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
 
-    return Object.entries(data).map(([key, value]) => ({
-      label: key.length > 15 ? key.substring(0, 15) + '...' : key,
-      value: typeof value === 'object' ? value[valueKey] || value.subscriber_count || 0 : value,
-    })).slice(0, 10); // Limit to top 10
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -172,463 +262,430 @@ const ParcCorporateNGBSSPage = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Parc Corporate NGBSS</h1>
-          <p className="text-gray-600 mt-1">
-            Algérie Télécom Corporate Subscriber Data Processing & Analytics
+          <p className="text-gray-600">
+            Tableau de bord analytique en temps réel
           </p>
         </div>
-
-        {lastProcessedFile && (
+        <div className="flex items-center space-x-4">
           <Button
-            onClick={() => loadDataViews(lastProcessedFile)}
-            disabled={loading}
             variant="outline"
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center space-x-2"
           >
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh Data
+            <Filter className="h-4 w-4" />
+            <span>Filtres</span>
           </Button>
-        )}
+          <Button
+            onClick={fetchAllData}
+            variant="outline"
+            className="flex items-center space-x-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>Actualiser</span>
+          </Button>
+          <Button
+            onClick={() => handleExport("csv")}
+            className="flex items-center space-x-2"
+          >
+            <Download className="h-4 w-4" />
+            <span>Exporter CSV</span>
+          </Button>
+        </div>
       </div>
 
-      {/* File Upload Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Upload className="w-5 h-5" />
-            Upload & Process Files
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label htmlFor="files">Select Parc Corporate NGBSS Files (CSV/Excel)</Label>
-            <Input
-              id="files"
-              type="file"
-              multiple
-              accept=".csv,.xlsx,.xls"
-              onChange={(e) => setSelectedFiles(Array.from(e.target.files))}
-              className="mt-1"
-            />
-            {selectedFiles.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {selectedFiles.map((file, index) => (
-                  <Badge key={index} variant="secondary">
-                    {file.name}
-                  </Badge>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="flex gap-2">
-            <Button
-              onClick={handleFileUpload}
-              disabled={uploading || selectedFiles.length === 0}
-              className="flex items-center gap-2"
-            >
-              {uploading ? (
-                <>
-                  <Clock className="w-4 h-4 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4" />
-                  Process Files
-                </>
-              )}
-            </Button>
-          </div>
-
-          {/* Business Rules Info */}
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <h4 className="font-medium text-blue-900 mb-2">Applied Business Rules:</h4>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• DOT Mapping: 2B|HASSI MESSAOUD → DOT OUARGLA</li>
-              <li>• DOT Mapping: 99|Grand Compte → DOT SIEGE</li>
-              <li>• Filters: Customer L3 categories 5, 57 removed</li>
-              <li>• Filters: Predeactivated subscribers removed</li>
-              <li>• Filters: Supplementary offers removed</li>
-              <li>• Anomaly Detection: Moohtarif patterns flagged</li>
-            </ul>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Filters Section */}
-      {lastProcessedFile && (
+      {/* Filters Panel */}
+      {showFilters && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Filter className="w-5 h-5" />
-              Data Filters
-            </CardTitle>
+            <CardTitle>Filtres</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
-                <Label>DOT Filter</Label>
-                <Select value={filters.dot} onValueChange={(value) => setFilters({...filters, dot: value})}>
+                <Label>DOT</Label>
+                <Select
+                  value={filters.dot_filter}
+                  onValueChange={(value) =>
+                    setFilters((prev) => ({ ...prev, dot_filter: value }))
+                  }
+                >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue placeholder="Sélectionner DOT" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All DOTs</SelectItem>
-                    <SelectItem value="OUARGLA">DOT OUARGLA</SelectItem>
-                    <SelectItem value="SIEGE">DOT SIEGE</SelectItem>
-                    <SelectItem value="CONSTANTINE">DOT CONSTANTINE</SelectItem>
-                    <SelectItem value="ALGER">DOT ALGER</SelectItem>
+                    <SelectItem value="">Tous</SelectItem>
+                    {availableFilters.dots?.map((dot) => (
+                      <SelectItem key={dot.id} value={dot.id.toString()}>
+                        {dot.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
 
               <div>
-                <Label>Actel Code Filter</Label>
+                <Label>Statut Abonné</Label>
+                <Select
+                  value={filters.subscriber_status_filter}
+                  onValueChange={(value) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      subscriber_status_filter: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner statut" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Tous</SelectItem>
+                    {availableFilters.subscriber_statuses?.map((status) => (
+                      <SelectItem key={status} value={status}>
+                        {status}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label>Type Télécom</Label>
+                <Select
+                  value={filters.telecom_type_filter}
+                  onValueChange={(value) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      telecom_type_filter: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sélectionner type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Tous</SelectItem>
+                    {availableFilters.telecom_types?.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {type}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label>Code Actel</Label>
                 <Input
-                  placeholder="Filter by Actel Code"
-                  value={filters.actel}
-                  onChange={(e) => setFilters({...filters, actel: e.target.value})}
+                  placeholder="Rechercher code actel"
+                  value={filters.actel_code_filter}
+                  onChange={(e) =>
+                    setFilters((prev) => ({
+                      ...prev,
+                      actel_code_filter: e.target.value,
+                    }))
+                  }
                 />
               </div>
-
-              <div>
-                <Label>Subscriber Status</Label>
-                <Select value={filters.subscriber} onValueChange={(value) => setFilters({...filters, subscriber: value})}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="Active">Active</SelectItem>
-                    <SelectItem value="Inactive">Inactive</SelectItem>
-                    <SelectItem value="Suspended">Suspended</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-end">
-                <Button onClick={applyFilters} disabled={loading}>
-                  <Search className="w-4 h-4 mr-2" />
-                  Apply Filters
-                </Button>
-              </div>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Data Views Tabs */}
-      {lastProcessedFile && (
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-6">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="by_dot">By DOT</TabsTrigger>
-            <TabsTrigger value="by_telecom">By Telecom Type</TabsTrigger>
-            <TabsTrigger value="by_customer_l2">Customer L2</TabsTrigger>
-            <TabsTrigger value="by_customer_l3">Customer L3</TabsTrigger>
-            <TabsTrigger value="preview_data">Preview Data</TabsTrigger>
-          </TabsList>
-
-          {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center gap-2">
-                    <Building2 className="w-8 h-8 text-blue-600" />
-                    <div>
-                      <p className="text-sm text-gray-600">Total Records</p>
-                      <p className="text-2xl font-bold">{formatNumber(overview.total_records || 0)}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center gap-2">
-                    <Network className="w-8 h-8 text-green-600" />
-                    <div>
-                      <p className="text-sm text-gray-600">Unique DOTs</p>
-                      <p className="text-2xl font-bold">{formatNumber(overview.unique_dots || 0)}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-8 h-8 text-orange-600" />
-                    <div>
-                      <p className="text-sm text-gray-600">Actel Codes</p>
-                      <p className="text-2xl font-bold">{formatNumber(overview.unique_actel_codes || 0)}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex items-center gap-2">
-                    <BarChart3 className="w-8 h-8 text-purple-600" />
-                    <div>
-                      <p className="text-sm text-gray-600">Customer L2</p>
-                      <p className="text-2xl font-bold">{formatNumber(overview.unique_customer_l2 || 0)}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Status and Telecom Type Distribution Charts */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Subscriber Status Distribution</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <SimplePieChart
-                    data={prepareChartData(overview.status_distribution)}
-                    width={400}
-                    height={300}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Telecom Type Distribution</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <SimpleBarChart
-                    data={prepareChartData(overview.telecom_type_distribution)}
-                    width={400}
-                    height={300}
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* By DOT Tab */}
-          <TabsContent value="by_dot" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Subscribers by DOT</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <SimpleBarChart
-                    data={prepareChartData(dotData.data, 'dot', 'subscriber_count')}
-                    width={500}
-                    height={400}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>DOT Statistics</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>DOT</TableHead>
-                        <TableHead>Subscribers</TableHead>
-                        <TableHead>Customer L2</TableHead>
-                        <TableHead>Customer L3</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {dotData.data && Object.entries(dotData.data).slice(0, 10).map(([dot, stats]) => (
-                        <TableRow key={dot}>
-                          <TableCell className="font-medium">{dot}</TableCell>
-                          <TableCell>{formatNumber(stats.subscriber_count || 0)}</TableCell>
-                          <TableCell>{formatNumber(stats.code_customer_l2 || 0)}</TableCell>
-                          <TableCell>{formatNumber(stats.code_customer_l3 || 0)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* By Telecom Type Tab */}
-          <TabsContent value="by_telecom" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Telecom Type Distribution</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <SimplePieChart
-                    data={prepareChartData(telecomData.data, 'type', 'subscriber_count')}
-                    width={400}
-                    height={350}
-                  />
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Telecom Type Details</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Telecom Type</TableHead>
-                        <TableHead>Subscribers</TableHead>
-                        <TableHead>Unique DOTs</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {telecomData.data && Object.entries(telecomData.data).map(([type, stats]) => (
-                        <TableRow key={type}>
-                          <TableCell className="font-medium">{type}</TableCell>
-                          <TableCell>{formatNumber(stats.subscriber_count || 0)}</TableCell>
-                          <TableCell>{formatNumber(stats.dot || 0)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Customer L2 Tab */}
-          <TabsContent value="by_customer_l2" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Customer L2 Codes</CardTitle>
-                <p className="text-sm text-gray-600">
-                  Showing top {Object.keys(customerL2Data.top_codes || {}).length} Customer L2 codes by subscriber count
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <SimpleBarChart
-                    data={prepareChartData(customerL2Data.top_codes)}
-                    width={500}
-                    height={400}
-                  />
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Customer L2 Code</TableHead>
-                        <TableHead>Subscriber Count</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {customerL2Data.top_codes && Object.entries(customerL2Data.top_codes).slice(0, 15).map(([code, count]) => (
-                        <TableRow key={code}>
-                          <TableCell className="font-medium">{code}</TableCell>
-                          <TableCell>{formatNumber(count)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Customer L3 Tab */}
-          <TabsContent value="by_customer_l3" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Customer L3 Codes</CardTitle>
-                <p className="text-sm text-gray-600">
-                  Showing top {Object.keys(customerL3Data.top_codes || {}).length} Customer L3 codes by subscriber count
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <SimpleBarChart
-                    data={prepareChartData(customerL3Data.top_codes)}
-                    width={500}
-                    height={400}
-                  />
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Customer L3 Code</TableHead>
-                        <TableHead>Subscriber Count</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {customerL3Data.top_codes && Object.entries(customerL3Data.top_codes).slice(0, 15).map(([code, count]) => (
-                        <TableRow key={code}>
-                          <TableCell className="font-medium">{code}</TableCell>
-                          <TableCell>{formatNumber(count)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Preview Data Tab */}
-          <TabsContent value="preview_data" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Eye className="w-5 h-5" />
-                  Data Preview
-                </CardTitle>
-                <p className="text-sm text-gray-600">
-                  Showing {previewData.showing || 0} of {formatNumber(previewData.total_records || 0)} records
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        {previewData.columns && previewData.columns.slice(0, 8).map((col) => (
-                          <TableHead key={col}>{col}</TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {previewData.data && previewData.data.slice(0, 20).map((row, index) => (
-                        <TableRow key={index}>
-                          {previewData.columns && previewData.columns.slice(0, 8).map((col) => (
-                            <TableCell key={col}>
-                              {row[col] !== null && row[col] !== undefined ? String(row[col]).substring(0, 50) : '-'}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      )}
-
-      {/* No Data State */}
-      {!lastProcessedFile && !uploading && (
+      {/* Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
-          <CardContent className="p-12 text-center">
-            <Building2 className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-600 mb-2">
-              No Parc Corporate Data Available
-            </h3>
-            <p className="text-gray-500 mb-6">
-              Upload and process your Parc Corporate NGBSS files to view analytics and insights
-            </p>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">
+                  Total Abonnés Actifs
+                </p>
+                <p className="text-3xl font-bold text-blue-600">
+                  {overview.total_active_subscribers?.toLocaleString() || "0"}
+                </p>
+              </div>
+              <Users className="h-8 w-8 text-blue-600" />
+            </div>
           </CardContent>
         </Card>
-      )}
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total DOTs</p>
+                <p className="text-3xl font-bold text-green-600">
+                  {overview.total_dots || "0"}
+                </p>
+              </div>
+              <Building className="h-8 w-8 text-green-600" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">
+                  Activité Récente
+                </p>
+                <p className="text-3xl font-bold text-orange-600">
+                  {overview.recent_activity?.toLocaleString() || "0"}
+                </p>
+                <p className="text-xs text-gray-500">7 derniers jours</p>
+              </div>
+              <TrendingUp className="h-8 w-8 text-orange-600" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">
+                  Dernière MAJ
+                </p>
+                <p className="text-sm font-bold text-purple-600">
+                  {overview.last_updated
+                    ? new Date(overview.last_updated).toLocaleString("fr-FR")
+                    : "N/A"}
+                </p>
+              </div>
+              <RefreshCw className="h-8 w-8 text-purple-600" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Charts Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-6">
+          <TabsTrigger value="overview">Aperçu</TabsTrigger>
+          <TabsTrigger value="telecom">Type Télécom</TabsTrigger>
+          <TabsTrigger value="status">Statut Abonné</TabsTrigger>
+          <TabsTrigger value="customer-l2">Customer L2</TabsTrigger>
+          <TabsTrigger value="customer-l3">Customer L3</TabsTrigger>
+          <TabsTrigger value="dot">Par DOT</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  telecomTypeData,
+                  "Distribution par Type Télécom",
+                  "count",
+                  "type"
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  subscriberStatusData,
+                  "Distribution par Statut Abonné",
+                  "count",
+                  "status"
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="telecom" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  telecomTypeData,
+                  "Distribution par Type Télécom",
+                  "count",
+                  "type"
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                {renderBarChart(
+                  telecomTypeData,
+                  "Abonnés par Type Télécom",
+                  "count",
+                  "type"
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Data Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Détails par Type Télécom</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Type Télécom</TableHead>
+                    <TableHead>Nombre d'Abonnés</TableHead>
+                    <TableHead>Pourcentage</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {telecomTypeData.map((item, index) => (
+                    <TableRow key={index}>
+                      <TableCell className="font-medium">{item.type}</TableCell>
+                      <TableCell>{item.count.toLocaleString()}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{item.percentage}%</Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="status" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  subscriberStatusData,
+                  "Distribution par Statut",
+                  "count",
+                  "status"
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                {renderBarChart(
+                  subscriberStatusData,
+                  "Abonnés par Statut",
+                  "count",
+                  "status"
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="customer-l2" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  customerL2Data.slice(0, 10),
+                  "Distribution par Code Customer L2",
+                  "count",
+                  "description"
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                {renderBarChart(
+                  customerL2Data.slice(0, 10),
+                  "Top 10 Customer L2",
+                  "count",
+                  "code"
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="customer-l3" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  customerL3Data.slice(0, 10),
+                  "Distribution par Code Customer L3",
+                  "count",
+                  "description"
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                {renderBarChart(
+                  customerL3Data.slice(0, 10),
+                  "Top 10 Customer L3",
+                  "count",
+                  "code"
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="dot" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardContent className="p-6">
+                {renderPieChart(
+                  dotData,
+                  "Distribution par DOT",
+                  "count",
+                  "dot_name"
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                {renderBarChart(
+                  dotData,
+                  "Abonnés par DOT",
+                  "count",
+                  "dot_name"
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* DOT Data Table */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Détails par DOT</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>DOT</TableHead>
+                    <TableHead>Nombre d'Abonnés</TableHead>
+                    <TableHead>Pourcentage</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dotData.map((item, index) => (
+                    <TableRow key={index}>
+                      <TableCell className="font-medium">
+                        {item.dot_name}
+                      </TableCell>
+                      <TableCell>{item.count.toLocaleString()}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{item.percentage}%</Badge>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

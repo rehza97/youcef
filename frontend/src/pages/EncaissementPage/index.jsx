@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { encaissementAPI } from "../../services/api";
+import { parkAnalyticsAPI } from "../../services/api";
 import {
   Card,
   CardContent,
@@ -10,6 +10,26 @@ import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import {
+  PieChart as RePieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 import {
   Table,
   TableBody,
@@ -22,7 +42,6 @@ import {
   Upload,
   Download,
   BarChart3,
-  PieChart,
   TrendingUp,
   FileText,
   AlertCircle,
@@ -38,14 +57,21 @@ import { handleApiError } from "../../lib/error-handler";
 
 const EncaissementPage = () => {
   const [overview, setOverview] = useState({});
-  const [byOrganisation, setByOrganisation] = useState([]);
-  const [byDate, setByDate] = useState([]);
-  const [byEncaisseRate, setByEncaisseRate] = useState([]);
-  const [chartData, setChartData] = useState({});
+  const [telecomTypeData, setTelecomTypeData] = useState([]);
+  const [subscriberStatusData, setSubscriberStatusData] = useState([]);
+  const [dotData, setDotData] = useState([]);
+  const [customerL2Data, setCustomerL2Data] = useState([]);
+  const [customerL3Data, setCustomerL3Data] = useState([]);
+  const [availableFilters, setAvailableFilters] = useState({});
   const [loading, setLoading] = useState(true);
-  const [uploading, setUploading] = useState(false);
-  const [selectedFile, setSelectedFile] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filters, setFilters] = useState({
+    dot_filter: "",
+    actel_code_filter: "",
+    subscriber_status_filter: "",
+    telecom_type_filter: "",
+  });
 
   useEffect(() => {
     fetchData();
@@ -54,17 +80,31 @@ const EncaissementPage = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [overviewRes, orgRes, dateRes, rateRes] = await Promise.all([
-        encaissementAPI.getOverview(),
-        encaissementAPI.getByOrganisation(),
-        encaissementAPI.getByDate(),
-        encaissementAPI.getByEncaisseRate(),
+      const [
+        overviewRes,
+        telecomRes,
+        statusRes,
+        dotRes,
+        l2Res,
+        l3Res,
+        filtersRes,
+      ] = await Promise.all([
+        parkAnalyticsAPI.getOverview(),
+        parkAnalyticsAPI.getByTelecomType(),
+        parkAnalyticsAPI.getBySubscriberStatus(),
+        parkAnalyticsAPI.getByDOT(),
+        parkAnalyticsAPI.getByCustomerL2(),
+        parkAnalyticsAPI.getByCustomerL3(),
+        parkAnalyticsAPI.getAvailableFilters(),
       ]);
 
       setOverview(overviewRes.data || {});
-      setByOrganisation(orgRes.data?.organisations || []);
-      setByDate(dateRes.data?.data || []);
-      setByEncaisseRate(rateRes.data?.rate_buckets || []);
+      setTelecomTypeData(telecomRes.data?.distribution || []);
+      setSubscriberStatusData(statusRes.data?.distribution || []);
+      setDotData(dotRes.data?.distribution || []);
+      setCustomerL2Data(l2Res.data?.distribution || []);
+      setCustomerL3Data(l3Res.data?.distribution || []);
+      setAvailableFilters(filtersRes.data || {});
     } catch (error) {
       handleApiError(error, {
         showToast: true,
@@ -75,81 +115,35 @@ const EncaissementPage = () => {
     }
   };
 
-  const handleFileChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setSelectedFile(file);
-    }
-  };
+  // (Removed unused format helpers to satisfy linter)
 
-  const handleFileUpload = async () => {
-    if (!selectedFile) {
-      toast.error("Veuillez sélectionner un fichier");
-      return;
-    }
-
+  const exportData = async (format = "csv") => {
     try {
-      setUploading(true);
-      await encaissementAPI.uploadData(selectedFile);
-      toast.success("Fichier uploadé avec succès");
-      setSelectedFile(null);
-      fetchData(); // Refresh data after upload
+      const response = await parkAnalyticsAPI.exportData(filters, format);
+      const data = response.data.data;
+      const headers = Object.keys(data[0] || {});
+      let content = headers.join(",") + "\n";
+      content += data
+        .map((row) => headers.map((h) => `"${row[h] || ""}"`).join(","))
+        .join("\n");
+      const blob = new Blob([content], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `encaissement_parc_${
+        new Date().toISOString().split("T")[0]
+      }.csv`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success("Export CSV généré");
     } catch (error) {
       handleApiError(error, {
         showToast: true,
-        fallbackMessage: "Erreur lors de l'upload du fichier",
-      });
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const fetchChartData = async (chartType) => {
-    try {
-      const response = await encaissementAPI.getChartData(chartType);
-      setChartData((prev) => ({ ...prev, [chartType]: response.data }));
-    } catch (error) {
-      handleApiError(error, {
-        showToast: true,
-        fallbackMessage: "Erreur lors du chargement des données du graphique",
+        fallbackMessage: "Erreur export",
       });
     }
-  };
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("fr-DZ", {
-      style: "currency",
-      currency: "DZD",
-    }).format(amount || 0);
-  };
-
-  const formatPercentage = (value) => {
-    return `${(value || 0).toFixed(2)}%`;
-  };
-
-  const renderChart = (chartType, customData) => {
-    const data = customData || chartData[chartType];
-    if (!data) {
-      return (
-        <div className="flex items-center justify-center h-64 bg-gray-50 dark:bg-gray-800 rounded-lg">
-          <div className="text-center">
-            <BarChart3 className="h-12 w-12 text-gray-400 mx-auto mb-2" />
-            <p className="text-gray-500">Aucune donnée disponible</p>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="h-64 bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
-        <div className="text-center">
-          <BarChart3 className="h-8 w-8 text-blue-600 mx-auto mb-2" />
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Graphique {chartType}
-          </p>
-        </div>
-      </div>
-    );
   };
 
   if (loading) {
@@ -164,21 +158,14 @@ const EncaissementPage = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Encaissement AR DOT</h1>
-        <div className="flex items-center space-x-4">
-          <Input
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            onChange={handleFileChange}
-            className="max-w-xs"
-          />
-          <Button
-            onClick={handleFileUpload}
-            disabled={!selectedFile || uploading}
-            className="flex items-center space-x-2"
-          >
-            <Upload className="h-4 w-4" />
-            {uploading ? "Upload en cours..." : "Upload"}
+        <div className="flex items-center space-x-2">
+          <Button variant="outline" onClick={() => setShowFilters((s) => !s)}>
+            Filtres
           </Button>
+          <Button variant="outline" onClick={fetchData}>
+            Actualiser
+          </Button>
+          <Button onClick={() => exportData("csv")}>Exporter CSV</Button>
         </div>
       </div>
 
@@ -186,12 +173,14 @@ const EncaissementPage = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Organisations</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Abonnés Actifs
+            </CardTitle>
             <Building className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {overview.total_organisations || 0}
+              {overview.total_active_subscribers || 0}
             </div>
           </CardContent>
         </Card>
@@ -199,25 +188,25 @@ const EncaissementPage = () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
-              Total Factures
+              DOTs Accessibles
             </CardTitle>
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {overview.total_factures || 0}
-            </div>
+            <div className="text-2xl font-bold">{overview.total_dots || 0}</div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Montant TTC</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Activité 7 Jours
+            </CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatCurrency(overview.total_montant_ttc)}
+              {overview.recent_activity || 0}
             </div>
           </CardContent>
         </Card>
@@ -225,25 +214,114 @@ const EncaissementPage = () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
-              Taux d'Encaissement
+              Dernière Mise à jour
             </CardTitle>
             <Percent className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatPercentage(overview.avg_encaisse_rate)}
+              {new Date(overview.last_updated || Date.now()).toLocaleString()}
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Filters */}
+      {showFilters && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Filtres</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <Label>DOT</Label>
+                <Select
+                  value={filters.dot_filter}
+                  onValueChange={(v) =>
+                    setFilters((p) => ({ ...p, dot_filter: v }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tous" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Tous</SelectItem>
+                    {availableFilters.dots?.map((d) => (
+                      <SelectItem key={d.id} value={d.id.toString()}>
+                        {d.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Statut</Label>
+                <Select
+                  value={filters.subscriber_status_filter}
+                  onValueChange={(v) =>
+                    setFilters((p) => ({ ...p, subscriber_status_filter: v }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tous" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Tous</SelectItem>
+                    {availableFilters.subscriber_statuses?.map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Type Télécom</Label>
+                <Select
+                  value={filters.telecom_type_filter}
+                  onValueChange={(v) =>
+                    setFilters((p) => ({ ...p, telecom_type_filter: v }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Tous" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Tous</SelectItem>
+                    {availableFilters.telecom_types?.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {t}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Code Actel</Label>
+                <Input
+                  placeholder="Rechercher code actel"
+                  value={filters.actel_code_filter}
+                  onChange={(e) =>
+                    setFilters((p) => ({
+                      ...p,
+                      actel_code_filter: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tabs */}
       <div className="flex space-x-2 border-b">
         {[
           { id: "overview", label: "Aperçu", icon: BarChart3 },
           { id: "organisation", label: "Par Organisation", icon: Building },
-          { id: "date", label: "Par Date", icon: Calendar },
-          { id: "rate", label: "Par Taux", icon: TrendingUp },
+          { id: "l2", label: "Par Customer L2", icon: FileText },
+          { id: "l3", label: "Par Customer L3", icon: FileText },
         ].map((tab) => (
           <Button
             key={tab.id}
@@ -261,18 +339,65 @@ const EncaissementPage = () => {
       <div className="space-y-6">
         {activeTab === "overview" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Telecom type distribution */}
             <Card>
               <CardHeader>
-                <CardTitle>Graphique Histogramme Combiné</CardTitle>
+                <CardTitle>Distribution par Type Télécom</CardTitle>
               </CardHeader>
-              <CardContent>{renderChart("histogram_combined")}</CardContent>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <RePieChart>
+                      <Pie
+                        data={telecomTypeData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        dataKey="count"
+                        nameKey="type"
+                        label
+                      >
+                        {telecomTypeData.map((_, i) => (
+                          <Cell
+                            key={i}
+                            fill={
+                              [
+                                "#0088FE",
+                                "#00C49F",
+                                "#FFBB28",
+                                "#FF8042",
+                                "#8884D8",
+                              ][i % 5]
+                            }
+                          />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v) => v.toLocaleString()} />
+                      <Legend />
+                    </RePieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
             </Card>
 
+            {/* Subscriber status distribution */}
             <Card>
               <CardHeader>
-                <CardTitle>Graphique Pie 3D</CardTitle>
+                <CardTitle>Distribution par Statut Abonné</CardTitle>
               </CardHeader>
-              <CardContent>{renderChart("pie_3d")}</CardContent>
+              <CardContent>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={subscriberStatusData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="status" />
+                      <YAxis />
+                      <Tooltip formatter={(v) => v.toLocaleString()} />
+                      <Bar dataKey="count" fill="#7C3AED" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
             </Card>
           </div>
         )}
@@ -280,115 +405,89 @@ const EncaissementPage = () => {
         {activeTab === "organisation" && (
           <Card>
             <CardHeader>
-              <CardTitle>Données par Organisation</CardTitle>
+              <CardTitle>Abonnés par DOT</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Organisation</TableHead>
-                    <TableHead>Nombre de Factures</TableHead>
-                    <TableHead>Montant TTC</TableHead>
-                    <TableHead>Encaissement</TableHead>
-                    <TableHead>Taux</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {byOrganisation.map((org, index) => (
-                    <TableRow key={index}>
-                      <TableCell className="font-medium">
-                        {org["Org Name"]}
-                      </TableCell>
-                      <TableCell>{org["N FACT"]}</TableCell>
-                      <TableCell>
-                        {formatCurrency(org["Montant Ttc"])}
-                      </TableCell>
-                      <TableCell>
-                        {formatCurrency(org["Encaissement"])}
-                      </TableCell>
-                      <TableCell>
-                        {formatPercentage(org["Taux d'encaissement"])}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={dotData}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="dot_name"
+                      angle={-45}
+                      textAnchor="end"
+                      interval={0}
+                      height={80}
+                    />
+                    <YAxis />
+                    <Tooltip formatter={(v) => v.toLocaleString()} />
+                    <Bar dataKey="count" fill="#10B981" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {activeTab === "date" && (
+        {activeTab === "l2" && (
           <Card>
             <CardHeader>
-              <CardTitle>Données par Date</CardTitle>
+              <CardTitle>Distribution par Customer L2</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Nombre de Factures</TableHead>
-                    <TableHead>Montant TTC</TableHead>
-                    <TableHead>Encaissement</TableHead>
-                    <TableHead>Taux</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {byDate.map((date, index) => (
-                    <TableRow key={index}>
-                      <TableCell className="font-medium">
-                        {date.period}
-                      </TableCell>
-                      <TableCell>{date.organisations_count}</TableCell>
-                      <TableCell>
-                        {formatCurrency(date.total_montant_ttc)}
-                      </TableCell>
-                      <TableCell>
-                        {formatCurrency(date.total_encaissement)}
-                      </TableCell>
-                      <TableCell>
-                        {formatPercentage(date.encaisse_rate)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={customerL2Data}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="description"
+                      angle={-45}
+                      textAnchor="end"
+                      interval={0}
+                      height={80}
+                    />
+                    <YAxis />
+                    <Tooltip formatter={(v) => v.toLocaleString()} />
+                    <Bar dataKey="count" fill="#3B82F6" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {activeTab === "rate" && (
+        {activeTab === "l3" && (
           <Card>
             <CardHeader>
-              <CardTitle>Données par Taux d'Encaissement</CardTitle>
+              <CardTitle>Distribution par Customer L3</CardTitle>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Plage de Taux</TableHead>
-                    <TableHead>Nombre de Factures</TableHead>
-                    <TableHead>Montant TTC</TableHead>
-                    <TableHead>Encaissement</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {byEncaisseRate.map((rate, index) => (
-                    <TableRow key={index}>
-                      <TableCell className="font-medium">
-                        {rate["Rate Bucket"]}
-                      </TableCell>
-                      <TableCell>{rate["N FACT"]}</TableCell>
-                      <TableCell>
-                        {formatCurrency(rate["Montant Ttc"])}
-                      </TableCell>
-                      <TableCell>
-                        {formatCurrency(rate["Encaissement"])}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <div className="h-96">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={customerL3Data}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 80 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis
+                      dataKey="description"
+                      angle={-45}
+                      textAnchor="end"
+                      interval={0}
+                      height={80}
+                    />
+                    <YAxis />
+                    <Tooltip formatter={(v) => v.toLocaleString()} />
+                    <Bar dataKey="count" fill="#F59E0B" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </CardContent>
           </Card>
         )}

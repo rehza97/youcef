@@ -5,6 +5,8 @@ from models.dot import DOT
 from models.user import DOTInfo
 
 logger = logging.getLogger(__name__)
+# Set to INFO level to suppress DEBUG logs during bulk processing
+logger.setLevel(logging.INFO)
 
 
 class DOTService:
@@ -20,7 +22,8 @@ class DOTService:
             ).first()
 
             if existing_dot:
-                logger.info(f"Found existing DOT: {existing_dot.name} (ID: {existing_dot.id})")
+                logger.debug(
+                    f"Found existing DOT: {existing_dot.name} (ID: {existing_dot.id})")
                 return existing_dot
 
             # Create new DOT if not found
@@ -36,7 +39,8 @@ class DOTService:
             return new_dot
 
         except Exception as e:
-            logger.error(f"Error in get_or_create_dot for name '{name}': {str(e)}")
+            logger.error(
+                f"Error in get_or_create_dot for name '{name}': {str(e)}")
             db.rollback()
             raise
 
@@ -100,14 +104,17 @@ class DOTService:
             from models.user import User
             user_count = db.query(User).filter(User.dot_id == dot_id).count()
             if user_count > 0:
-                raise ValueError(f"Cannot delete DOT '{dot.name}' - {user_count} users are assigned to it")
+                raise ValueError(
+                    f"Cannot delete DOT '{dot.name}' - {user_count} users are assigned to it")
 
             # Check if any parks are assigned to this DOT
             try:
                 from models.park import Park
-                park_count = db.query(Park).filter(Park.dot_id == dot_id).count()
+                park_count = db.query(Park).filter(
+                    Park.dot_id == dot_id).count()
                 if park_count > 0:
-                    raise ValueError(f"Cannot delete DOT '{dot.name}' - {park_count} parks are assigned to it")
+                    raise ValueError(
+                        f"Cannot delete DOT '{dot.name}' - {park_count} parks are assigned to it")
             except ImportError:
                 # Park model might not exist in all deployments
                 pass
@@ -151,11 +158,13 @@ class DOTService:
             user.dot_id = dot_id
             db.commit()
 
-            logger.info(f"Assigned user {user.username} (ID: {user_id}) to DOT {dot.name} (ID: {dot_id})")
+            logger.info(
+                f"Assigned user {user.username} (ID: {user_id}) to DOT {dot.name} (ID: {dot_id})")
             return True
 
         except Exception as e:
-            logger.error(f"Error assigning user {user_id} to DOT {dot_id}: {str(e)}")
+            logger.error(
+                f"Error assigning user {user_id} to DOT {dot_id}: {str(e)}")
             db.rollback()
             raise
 
@@ -173,11 +182,13 @@ class DOTService:
             user.dot_id = None
             db.commit()
 
-            logger.info(f"Removed DOT assignment for user {user.username} (ID: {user_id}) from DOT ID: {old_dot_id}")
+            logger.info(
+                f"Removed DOT assignment for user {user.username} (ID: {user_id}) from DOT ID: {old_dot_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Error removing DOT assignment for user {user_id}: {str(e)}")
+            logger.error(
+                f"Error removing DOT assignment for user {user_id}: {str(e)}")
             db.rollback()
             raise
 
@@ -201,7 +212,8 @@ class DOTService:
             park_count = 0
             try:
                 from models.park import Park
-                park_count = db.query(Park).filter(Park.dot_id == dot_id).count()
+                park_count = db.query(Park).filter(
+                    Park.dot_id == dot_id).count()
             except ImportError:
                 pass
 
@@ -216,7 +228,8 @@ class DOTService:
             }
 
         except Exception as e:
-            logger.error(f"Error getting statistics for DOT {dot_id}: {str(e)}")
+            logger.error(
+                f"Error getting statistics for DOT {dot_id}: {str(e)}")
             raise
 
     @staticmethod
@@ -237,7 +250,8 @@ class DOTService:
             return user.dot_id == target_dot_id
 
         except Exception as e:
-            logger.error(f"Error validating DOT access for user {user_id}, DOT {target_dot_id}: {str(e)}")
+            logger.error(
+                f"Error validating DOT access for user {user_id}, DOT {target_dot_id}: {str(e)}")
             return False
 
     @staticmethod
@@ -262,5 +276,6 @@ class DOTService:
             return []
 
         except Exception as e:
-            logger.error(f"Error getting accessible DOTs for user {user_id}: {str(e)}")
+            logger.error(
+                f"Error getting accessible DOTs for user {user_id}: {str(e)}")
             return []

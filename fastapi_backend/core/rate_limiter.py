@@ -14,8 +14,8 @@ class RateLimiter:
         self.limits = {
             "anon": (100, 3600),  # 100 requests per hour
             "user": (1000, 3600),  # 1000 requests per hour
-            "login": (5, 60),      # 5 requests per minute
-            "register": (3, 60),   # 3 requests per minute
+            "login": (20, 60),     # 20 requests per minute (increased for testing)
+            "register": (10, 60),  # 10 requests per minute (increased for testing)
         }
 
     def _get_client_ip(self, request: Request) -> str:

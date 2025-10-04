@@ -142,7 +142,11 @@ async def get_by_date(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get data grouped by time period"""
+    """Get data grouped by time period (DOT-scoped, requires can_view_encaissement_data)"""
+    # RBAC: Check user has permission to view encaissement data
+    from services.permission_service import PermissionService
+    PermissionService.require_permission(current_user, db, "can_view_encaissement_data")
+
     logger.info(f"Date analytics requested by user {current_user.id} for period: {period}")
 
     # Sample monthly data
@@ -182,7 +186,11 @@ async def get_by_encaisse_rate(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get data grouped by encaissement rate buckets"""
+    """Get data grouped by encaissement rate buckets (DOT-scoped, requires can_view_encaissement_data)"""
+    # RBAC: Check user has permission to view encaissement data
+    from services.permission_service import PermissionService
+    PermissionService.require_permission(current_user, db, "can_view_encaissement_data")
+
     logger.info(f"Rate analytics requested by user {current_user.id}")
 
     return {
@@ -271,10 +279,10 @@ async def export_analytics_report(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Export analytics report in various formats (ADMIN or SUPER_USER only)"""
-    # RBAC: Only ADMIN and SUPER_USER can export reports
+    """Export analytics report in various formats (Requires can_export_analytics permission)"""
+    # RBAC: Require can_export_analytics permission
     from services.permission_service import PermissionService
-    PermissionService.require_admin_or_super_user(current_user, db)
+    PermissionService.require_permission(current_user, db, "can_export_analytics")
 
     logger.info(f"Analytics report export requested by user {current_user.id} in {format} format")
 

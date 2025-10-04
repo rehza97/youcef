@@ -7,6 +7,13 @@ from database.connection import get_db
 from core.security import get_current_user, get_password_hash
 from models.user import User, UserResponse, UserUpdate, UserProfile, UserCreate
 from models.role import Role, UserRole
+from models.conversation import ConversationParticipant
+from models.message import Message, MessageReaction, MessageReadReceipt
+from models.notification import Notification, NotificationPreference
+from models.file_upload import FileUpload
+from models.user_block import UserBlock
+from models.conversation import ConversationParticipant
+from services.permission_service import PermissionService
 from core.config import settings
 
 users_management_router = APIRouter()
@@ -19,23 +26,11 @@ async def create_user(
     db: Session = Depends(get_db)
 ):
     """Create a new user (Admin only)"""
-    # Check if current user is admin
-    admin_role = db.query(Role).filter(Role.name == "admin").first()
-    if not admin_role:
+    # Enforce admin OR can_manage_users permission
+    if not (PermissionService.is_admin(current_user, db) or PermissionService.has_permission(current_user, db, "can_manage_users")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role not found"
-        )
-
-    user_role = db.query(UserRole).filter(
-        UserRole.user_id == current_user.id,
-        UserRole.role_id == admin_role.id
-    ).first()
-
-    if not user_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can create users"
+            detail="Permission required: can_manage_users"
         )
 
     # Check if user already exists
@@ -55,9 +50,13 @@ async def create_user(
         username=user_data.username,
         email=user_data.email,
         hashed_password=hashed_password,
-        full_name=user_data.full_name,
-        is_active=user_data.is_active if user_data.is_active is not None else True,
-        created_at=datetime.utcnow()
+        first_name=getattr(user_data, "first_name", None),
+        last_name=getattr(user_data, "last_name", None),
+        is_active=user_data.is_active if getattr(
+            user_data, "is_active", None) is not None else True,
+        bio=getattr(user_data, "bio", None),
+        avatar_url=getattr(user_data, "avatar_url", None),
+        dot_id=getattr(user_data, "dot_id", None)
     )
 
     db.add(db_user)
@@ -73,18 +72,12 @@ async def get_users(
     db: Session = Depends(get_db)
 ):
     """Get all users (Admin only)"""
-    # Check admin permissions
-    admin_role = db.query(Role).filter(Role.name == "admin").first()
-    if admin_role:
-        user_role = db.query(UserRole).filter(
-            UserRole.user_id == current_user.id,
-            UserRole.role_id == admin_role.id
-        ).first()
-        if not user_role:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only admins can view all users"
-            )
+    # Enforce admin OR can_manage_users
+    if not (PermissionService.is_admin(current_user, db) or PermissionService.has_permission(current_user, db, "can_manage_users")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission required: can_manage_users"
+        )
 
     users = db.query(User).all()
     return [UserResponse.from_orm(user) for user in users]
@@ -115,7 +108,7 @@ async def update_current_user(
             elif hasattr(current_user, field):
                 setattr(current_user, field, value)
 
-        current_user.updated_at = datetime.utcnow()
+        # Model has no updated_at column; skip timestamp update
         db.commit()
         db.refresh(current_user)
 
@@ -177,18 +170,10 @@ async def update_user(
 
     # Check permissions (admin or own profile)
     is_own_profile = user_id == current_user.id
-    is_admin = False
-
-    if not is_own_profile:
-        admin_role = db.query(Role).filter(Role.name == "admin").first()
-        if admin_role:
-            user_role = db.query(UserRole).filter(
-                UserRole.user_id == current_user.id,
-                UserRole.role_id == admin_role.id
-            ).first()
-            is_admin = user_role is not None
-
-    if not is_own_profile and not is_admin:
+    if not is_own_profile and not (
+        PermissionService.is_admin(current_user, db)
+        or PermissionService.has_permission(current_user, db, "can_manage_users")
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this user"
@@ -205,7 +190,7 @@ async def update_user(
             elif hasattr(user, field):
                 setattr(user, field, value)
 
-        user.updated_at = datetime.utcnow()
+        # Model has no updated_at column; skip timestamp update
         db.commit()
         db.refresh(user)
 
@@ -225,23 +210,11 @@ async def delete_user(
     db: Session = Depends(get_db)
 ):
     """Delete user (Admin only)"""
-    # Check if current user is admin
-    admin_role = db.query(Role).filter(Role.name == "admin").first()
-    if not admin_role:
+    # Enforce admin OR can_manage_users
+    if not (PermissionService.is_admin(current_user, db) or PermissionService.has_permission(current_user, db, "can_manage_users")):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role not found"
-        )
-
-    user_role = db.query(UserRole).filter(
-        UserRole.user_id == current_user.id,
-        UserRole.role_id == admin_role.id
-    ).first()
-
-    if not user_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can delete users"
+            detail="Permission required: can_manage_users"
         )
 
     # Check if user exists
@@ -260,7 +233,46 @@ async def delete_user(
         )
 
     try:
-        # Delete user (this will cascade to related records)
+        # Remove role assignments first to avoid FK integrity issues
+        db.query(UserRole).filter(UserRole.user_id ==
+                                  user_id).delete(synchronize_session=False)
+
+        # Remove conversation participations for this user
+        db.query(ConversationParticipant).filter(
+            ConversationParticipant.user_id == user_id
+        ).delete(synchronize_session=False)
+
+        # Remove messaging artifacts for this user (FKs to users)
+        db.query(MessageReadReceipt).filter(
+            MessageReadReceipt.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.query(MessageReaction).filter(
+            MessageReaction.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.query(Message).filter(
+            Message.sender_id == user_id
+        ).delete(synchronize_session=False)
+
+        # Remove notifications and preferences for this user
+        db.query(Notification).filter(
+            Notification.user_id == user_id
+        ).delete(synchronize_session=False)
+        db.query(NotificationPreference).filter(
+            NotificationPreference.user_id == user_id
+        ).delete(synchronize_session=False)
+
+        # Remove file uploads owned by this user
+        db.query(FileUpload).filter(
+            FileUpload.uploaded_by == user_id
+        ).delete(synchronize_session=False)
+
+        # Remove user block relationships
+        db.query(UserBlock).filter(UserBlock.blocker_id ==
+                                   user_id).delete(synchronize_session=False)
+        db.query(UserBlock).filter(UserBlock.blocked_id ==
+                                   user_id).delete(synchronize_session=False)
+
+        # Delete user (this will cascade to related records where configured)
         db.delete(user)
         db.commit()
 
@@ -271,8 +283,3 @@ async def delete_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting user: {str(e)}"
         )
-
-
-
-
-

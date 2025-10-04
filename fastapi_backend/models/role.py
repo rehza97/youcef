@@ -71,6 +71,8 @@ class RoleResponse(RoleBase):
     id: int
     created_at: datetime
     updated_at: Optional[datetime] = None
+    permissions_count: int = 0
+    users_count: int = 0
 
     class Config:
         from_attributes = True

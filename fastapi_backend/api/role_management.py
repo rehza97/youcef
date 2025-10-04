@@ -22,8 +22,27 @@ async def get_roles(
 ):
     """Get all roles"""
     logger.info(f"Roles list requested by user {current_user.id}")
+    # Restrict listing roles to admin or can_manage_rbac
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
     roles = db.query(Role).all()
-    return [RoleResponse.from_orm(role) for role in roles]
+
+    # Build response with counts
+    role_responses = []
+    for role in roles:
+        role_dict = {
+            "id": role.id,
+            "name": role.name,
+            "description": role.description,
+            "created_at": role.created_at,
+            "updated_at": role.updated_at,
+            "permissions_count": len(role.permissions),
+            "users_count": len(role.users)
+        }
+        role_responses.append(RoleResponse(**role_dict))
+
+    return role_responses
 
 
 @role_management_router.get("/roles/{role_id}", response_model=RoleResponse)
@@ -34,6 +53,9 @@ async def get_role(
 ):
     """Get role by ID"""
     logger.info(f"Role {role_id} requested by user {current_user.id}")
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
         raise HTTPException(
@@ -49,8 +71,10 @@ async def create_role(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new role (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Create new role (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
     # Check if role name already exists
     existing_role = db.query(Role).filter(Role.name == role.name).first()
@@ -79,8 +103,10 @@ async def update_role(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update role (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Update role (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
@@ -91,7 +117,8 @@ async def update_role(
 
     # Check if new name conflicts with existing role
     if role_update.name and role_update.name != role.name:
-        existing_role = db.query(Role).filter(Role.name == role_update.name).first()
+        existing_role = db.query(Role).filter(
+            Role.name == role_update.name).first()
         if existing_role:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -116,8 +143,10 @@ async def delete_role(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete role (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Delete role (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
@@ -136,7 +165,8 @@ async def delete_role(
 
     # Check if role is assigned to any users
     from models.role import UserRole
-    user_assignments = db.query(UserRole).filter(UserRole.role_id == role_id).count()
+    user_assignments = db.query(UserRole).filter(
+        UserRole.role_id == role_id).count()
     if user_assignments > 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -156,8 +186,10 @@ async def get_role_users(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all users assigned to a specific role (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Get all users assigned to a specific role (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
@@ -180,7 +212,8 @@ async def get_role_users(
                 'assigned_at': user_role.created_at.isoformat() if user_role.created_at else None
             })
 
-    logger.info(f"Role {role_id} users list requested by admin {current_user.id}")
+    logger.info(
+        f"Role {role_id} users list requested by admin {current_user.id}")
     return {
         'role': RoleResponse.from_orm(role),
         'users': users,

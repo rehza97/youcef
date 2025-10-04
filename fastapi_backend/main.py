@@ -1,3 +1,4 @@
+from api.park_analytics import park_analytics_router
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -88,6 +89,15 @@ file_logger = logging.getLogger("files")
 ws_logger.setLevel(logging.DEBUG)
 file_logger.setLevel(logging.DEBUG)
 
+# Suppress verbose third-party library logs
+logging.getLogger("python_multipart.multipart").setLevel(logging.WARNING)
+logging.getLogger("multipart").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# Suppress verbose application logs during bulk processing
+logging.getLogger("services.dot_service").setLevel(logging.INFO)
+
 # Security
 security = HTTPBearer()
 
@@ -101,6 +111,16 @@ async def lifespan(app: FastAPI):
     from database.connection import engine
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created successfully")
+
+    # Initialize RBAC system (permissions and default roles)
+    try:
+        from core.rbac_init import check_and_init_rbac
+        check_and_init_rbac()
+    except Exception as e:
+        logger.error(f"Failed to initialize RBAC system: {e}")
+        # Don't crash the app, but log the error
+        logger.warning(
+            "⚠️  RBAC system may not be fully initialized. Run migrations manually if needed.")
 
     yield
 
@@ -182,6 +202,14 @@ app.include_router(
     users_management_router,
     prefix="/api/users",
     tags=["User Management"],
+    dependencies=[Depends(get_current_user)]
+)
+
+# User Role Assignments (assign/remove/check roles & permissions)
+app.include_router(
+    user_role_assignments_router,
+    prefix="/api/users",
+    tags=["User Roles"],
     dependencies=[Depends(get_current_user)]
 )
 
@@ -305,6 +333,13 @@ app.include_router(
 app.include_router(
     park_management_router,
     tags=["Park Management"]
+)
+
+# Park Analytics - Real data for dashboard
+app.include_router(
+    park_analytics_router,
+    prefix="/api/park-analytics",
+    tags=["Park Analytics"]
 )
 
 # New Secure Services

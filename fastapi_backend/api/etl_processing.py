@@ -29,10 +29,10 @@ async def process_encaissement_etl(
 ):
     """
     Process encaissement files through ETL pipeline
-    ADMIN only - handles data cleaning, anomaly detection, and KPI calculation
+    Requires can_run_etl permission - handles data cleaning, anomaly detection, and KPI calculation
     """
-    # RBAC: Only ADMIN can run ETL processes
-    PermissionService.require_upload_access(current_user, db)
+    # RBAC: Require can_run_etl permission
+    PermissionService.require_permission(current_user, db, "can_run_etl")
 
     if len(files) > 10:
         raise HTTPException(
@@ -142,10 +142,10 @@ async def process_subscriber_park_etl(
 ):
     """
     Process subscriber park CSV files through ETL pipeline
-    ADMIN only - handles telecom subscriber data cleaning and standardization
+    Requires can_run_etl permission - handles telecom subscriber data cleaning and standardization
     """
-    # RBAC: Only ADMIN can run ETL processes
-    PermissionService.require_upload_access(current_user, db)
+    # RBAC: Require can_run_etl permission
+    PermissionService.require_permission(current_user, db, "can_run_etl")
 
     if len(files) > 5:
         raise HTTPException(
@@ -263,10 +263,10 @@ async def process_parc_corporate_ngbss_etl(
 ):
     """
     Process Parc Corporate NGBSS files through ETL pipeline
-    ADMIN only - handles Algérie Télécom corporate data with business rules
+    Requires can_run_etl permission - handles Algérie Télécom corporate data with business rules
     """
-    # RBAC: Only ADMIN can run ETL processes
-    PermissionService.require_upload_access(current_user, db)
+    # RBAC: Require can_run_etl permission
+    PermissionService.require_permission(current_user, db, "can_run_etl")
 
     if len(files) > 5:
         raise HTTPException(
@@ -391,9 +391,9 @@ async def download_etl_result(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Download ETL result files (ADMIN or SUPER_USER only)"""
-    # RBAC: Only ADMIN and SUPER_USER can download ETL results
-    PermissionService.require_admin_or_super_user(current_user, db)
+    """Download ETL result files (Requires can_view_etl_results permission)"""
+    # RBAC: Require can_view_etl_results permission
+    PermissionService.require_permission(current_user, db, "can_view_etl_results")
 
     # Validate file path is within allowed directories
     allowed_dirs = [
@@ -425,9 +425,9 @@ async def get_etl_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get ETL processing history (ADMIN only)"""
-    # RBAC: Only ADMIN can view ETL history
-    PermissionService.check_admin_permissions(current_user, db)
+    """Get ETL processing history (Requires can_view_etl_results permission)"""
+    # RBAC: Require can_view_etl_results permission
+    PermissionService.require_permission(current_user, db, "can_view_etl_results")
 
     # In a real implementation, this would query a database table
     # For now, return a placeholder response
@@ -456,8 +456,8 @@ async def get_parc_corporate_data_views(
     Get different views of processed Parc Corporate NGBSS data with filtering
     Supports: overview, by_dot, by_telecom_type, by_customer_l2, by_customer_l3, preview_data
     """
-    # RBAC: Only ADMIN and SUPER_USER can view processed data
-    PermissionService.require_admin_or_super_user(current_user, db)
+    # RBAC: Require can_view_etl_results permission
+    PermissionService.require_permission(current_user, db, "can_view_etl_results")
 
     # Validate file path
     allowed_dirs = ["uploads/temp/etl/parc_corporate_ngbss/"]
@@ -661,9 +661,9 @@ async def validate_etl_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Validate files before ETL processing (ADMIN only)"""
-    # RBAC: Only ADMIN can validate ETL files
-    PermissionService.require_upload_access(current_user, db)
+    """Validate files before ETL processing (Requires can_run_etl permission)"""
+    # RBAC: Require can_run_etl permission
+    PermissionService.require_permission(current_user, db, "can_run_etl")
 
     validation_results = []
 

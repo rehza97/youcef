@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect } from "react";
 import { authAPI } from "../services/api";
 import { handleApiError } from "../lib/error-handler";
+import { clearPermissionCache } from "../hooks/usePermission";
 
 const AuthContext = createContext();
 
@@ -294,6 +295,8 @@ export const AuthProvider = ({ children }) => {
       setUser(null);
       setError(null);
       setLoading(false);
+      // Clear permission cache
+      clearPermissionCache();
     }
   };
 

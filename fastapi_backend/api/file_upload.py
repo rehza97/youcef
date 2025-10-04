@@ -19,10 +19,10 @@ file_upload_router = APIRouter()
 file_service = FileService()
 
 
-def check_admin_access(current_user: User, db: Session):
-    """Helper function to check admin access using permission service"""
+def check_upload_access(current_user: User, db: Session):
+    """Helper function to check upload access using permission service"""
     from services.permission_service import PermissionService
-    PermissionService.require_upload_access(current_user, db)
+    PermissionService.require_permission(current_user, db, "can_upload_files")
 
 
 @file_upload_router.post("/upload", response_model=FileUploadResponse)
@@ -31,8 +31,8 @@ async def upload_file(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload a file (Admin only)"""
-    check_admin_access(current_user, db)
+    """Upload a file (Requires can_upload_files permission)"""
+    check_upload_access(current_user, db)
     file_logger.info(
         f"File upload request received from user {current_user.id}")
 
@@ -69,8 +69,8 @@ async def upload_batch_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload multiple files (Admin only)"""
-    check_admin_access(current_user, db)
+    """Upload multiple files (Requires can_upload_files permission)"""
+    check_upload_access(current_user, db)
 
     if len(files) > 10:
         raise HTTPException(

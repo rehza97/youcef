@@ -7,6 +7,9 @@ from database.connection import get_db
 from core.security import get_current_user
 from models.role import Role, UserRole, UserRoleCreate
 from models.user import User
+from models.permission import Permission
+from models.role import RolePermission
+from services.permission_service import PermissionService
 
 user_role_assignments_router = APIRouter()
 
@@ -25,23 +28,8 @@ class UpdateRolePermissionsRequest(BaseModel):
 
 
 def check_admin_permissions(current_user: User, db: Session):
-    admin_role = db.query(Role).filter(Role.name == "admin").first()
-    if not admin_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin role not found"
-        )
-
-    user_role = db.query(UserRole).filter(
-        UserRole.user_id == current_user.id,
-        UserRole.role_id == admin_role.id
-    ).first()
-
-    if not user_role:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
+    # Delegate to centralized permission service
+    PermissionService.check_admin_permissions(current_user, db)
 
 
 @user_role_assignments_router.post("/assign-role")
@@ -102,7 +90,7 @@ async def assign_role_to_user(
         )
 
 
-@user_role_assignments_router.delete("/users/{user_id}/roles/{role_id}")
+@user_role_assignments_router.delete("/{user_id}/roles/{role_id}")
 async def remove_role_from_user(
     user_id: int,
     role_id: int,
@@ -197,6 +185,9 @@ async def get_role_permissions(
     db: Session = Depends(get_db)
 ):
     """Get all permissions for a role"""
+    # Admin only
+    PermissionService.check_admin_permissions(current_user, db)
+
     # Check if role exists
     role = db.query(Role).filter(Role.id == role_id).first()
     if not role:
@@ -205,11 +196,23 @@ async def get_role_permissions(
             detail="Role not found"
         )
 
-    # For now, return basic role info (extend when role-permission mapping is implemented)
+    # Fetch permissions linked to this role
+    permissions = db.query(Permission).join(
+        RolePermission, Permission.id == RolePermission.permission_id
+    ).filter(RolePermission.role_id == role_id).all()
+
     return {
         "role_id": role_id,
         "role_name": role.name,
-        "permissions": []  # TODO: Implement role-permission mapping
+        "permissions": [
+            {
+                "id": p.id,
+                "codename": p.codename,
+                "name": p.name,
+                "description": p.description,
+            }
+            for p in permissions
+        ],
     }
 
 
@@ -231,11 +234,41 @@ async def update_role_permissions(
             detail="Role not found"
         )
 
-    # TODO: Implement role-permission mapping when the relationship is defined
-    return {
-        "message": f"Permissions for role {role.name} updated successfully",
-        "permission_ids": permission_data.permission_ids
-    }
+    # Validate provided permission IDs exist
+    if permission_data.permission_ids:
+        existing_permissions = db.query(Permission).filter(
+            Permission.id.in_(permission_data.permission_ids)
+        ).all()
+        existing_ids = {p.id for p in existing_permissions}
+        invalid_ids = [
+            pid for pid in permission_data.permission_ids if pid not in existing_ids]
+        if invalid_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid permission IDs: {invalid_ids}"
+            )
+
+    try:
+        # Remove current mappings
+        db.query(RolePermission).filter(
+            RolePermission.role_id == role_id).delete()
+
+        # Add new mappings
+        for pid in permission_data.permission_ids:
+            db.add(RolePermission(role_id=role_id, permission_id=pid))
+
+        db.commit()
+
+        return {
+            "message": f"Permissions for role {role.name} updated successfully",
+            "permission_ids": permission_data.permission_ids,
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating role permissions: {str(e)}"
+        )
 
 
 @user_role_assignments_router.get("/check-role/{role_name}")
@@ -270,25 +303,10 @@ async def check_user_has_permission(
     db: Session = Depends(get_db)
 ):
     """Check if current user has a specific permission"""
-    # TODO: Implement permission checking when role-permission mapping is available
-    # For now, check if user is admin
-    admin_role = db.query(Role).filter(Role.name == "admin").first()
-    if admin_role:
-        user_role = db.query(UserRole).filter(
-            UserRole.user_id == current_user.id,
-            UserRole.role_id == admin_role.id
-        ).first()
-        has_permission = user_role is not None
-    else:
-        has_permission = False
-
+    has_permission = PermissionService.has_permission(
+        current_user, db, codename)
     return {
         "has_permission": has_permission,
         "permission_codename": codename,
-        "user_id": current_user.id
+        "user_id": current_user.id,
     }
-
-
-
-
-

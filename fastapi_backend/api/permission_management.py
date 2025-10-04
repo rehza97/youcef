@@ -23,6 +23,10 @@ async def get_permissions(
 ):
     """Get all permissions"""
     logger.info(f"Permissions list requested by user {current_user.id}")
+    # Restrict listing permissions to admin or can_manage_rbac
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
     permissions = db.query(Permission).all()
     return [PermissionResponse.from_orm(permission) for permission in permissions]
 
@@ -34,8 +38,13 @@ async def get_permission(
     db: Session = Depends(get_db)
 ):
     """Get permission by ID"""
-    logger.info(f"Permission {permission_id} requested by user {current_user.id}")
-    permission = db.query(Permission).filter(Permission.id == permission_id).first()
+    logger.info(
+        f"Permission {permission_id} requested by user {current_user.id}")
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -50,8 +59,10 @@ async def create_permission(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new permission (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Create new permission (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
     # Check if permission codename already exists
     existing_permission = db.query(Permission).filter(
@@ -72,7 +83,8 @@ async def create_permission(
     db.commit()
     db.refresh(db_permission)
 
-    logger.info(f"Permission '{permission.codename}' created by admin {current_user.id}")
+    logger.info(
+        f"Permission '{permission.codename}' created by admin {current_user.id}")
     return PermissionResponse.from_orm(db_permission)
 
 
@@ -83,10 +95,13 @@ async def update_permission(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update permission (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Update permission (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
-    permission = db.query(Permission).filter(Permission.id == permission_id).first()
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -112,7 +127,8 @@ async def update_permission(
     db.commit()
     db.refresh(permission)
 
-    logger.info(f"Permission {permission_id} updated by admin {current_user.id}")
+    logger.info(
+        f"Permission {permission_id} updated by admin {current_user.id}")
     return PermissionResponse.from_orm(permission)
 
 
@@ -122,10 +138,13 @@ async def delete_permission(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete permission (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Delete permission (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
-    permission = db.query(Permission).filter(Permission.id == permission_id).first()
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -158,7 +177,8 @@ async def delete_permission(
     db.delete(permission)
     db.commit()
 
-    logger.info(f"Permission {permission_id} deleted by admin {current_user.id}")
+    logger.info(
+        f"Permission {permission_id} deleted by admin {current_user.id}")
     return {"message": "Permission deleted successfully"}
 
 
@@ -168,10 +188,13 @@ async def get_permission_roles(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all roles that have a specific permission (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Get all roles that have a specific permission (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
-    permission = db.query(Permission).filter(Permission.id == permission_id).first()
+    permission = db.query(Permission).filter(
+        Permission.id == permission_id).first()
     if not permission:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -185,7 +208,8 @@ async def get_permission_roles(
 
     roles = []
     for role_permission in role_permissions:
-        role = db.query(Role).filter(Role.id == role_permission.role_id).first()
+        role = db.query(Role).filter(
+            Role.id == role_permission.role_id).first()
         if role:
             roles.append({
                 'role_id': role.id,
@@ -194,7 +218,8 @@ async def get_permission_roles(
                 'assigned_at': role_permission.created_at.isoformat() if role_permission.created_at else None
             })
 
-    logger.info(f"Permission {permission_id} roles list requested by admin {current_user.id}")
+    logger.info(
+        f"Permission {permission_id} roles list requested by admin {current_user.id}")
     return {
         'permission': PermissionResponse.from_orm(permission),
         'roles': roles,
@@ -208,8 +233,10 @@ async def bulk_create_permissions(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create multiple permissions at once (Admin only)"""
-    permission_service.check_admin_permissions(current_user, db)
+    """Create multiple permissions at once (Admin or can_manage_rbac)"""
+    if not (permission_service.is_admin(current_user, db) or permission_service.has_permission(current_user, db, "can_manage_rbac")):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Permission required: can_manage_rbac")
 
     if len(permissions) > 50:
         raise HTTPException(
@@ -241,7 +268,8 @@ async def bulk_create_permissions(
             )
             db.add(db_permission)
             db.flush()  # Get ID without committing
-            created_permissions.append(PermissionResponse.from_orm(db_permission))
+            created_permissions.append(
+                PermissionResponse.from_orm(db_permission))
 
         except Exception as e:
             skipped_permissions.append({
@@ -251,7 +279,8 @@ async def bulk_create_permissions(
 
     db.commit()
 
-    logger.info(f"Bulk permission creation by admin {current_user.id}: {len(created_permissions)} created, {len(skipped_permissions)} skipped")
+    logger.info(
+        f"Bulk permission creation by admin {current_user.id}: {len(created_permissions)} created, {len(skipped_permissions)} skipped")
 
     return {
         'created': created_permissions,

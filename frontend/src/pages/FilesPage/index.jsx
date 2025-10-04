@@ -128,6 +128,7 @@ const FilesPage = () => {
     encaisseRate: "all",
   });
   const [searchTerm, setSearchTerm] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // Handle real-time notifications
   useEffect(() => {
@@ -233,17 +234,24 @@ const FilesPage = () => {
         fileName: file.name,
         fileSize: file.size,
       });
-      return filesAPI.uploadFile(file);
+      setUploadProgress(0); // Reset progress
+      return filesAPI.uploadFile(file, (progress) => {
+        setUploadProgress(progress);
+      });
     },
     onSuccess: (response) => {
       debug.success("File upload successful", response.data);
+      setUploadProgress(100);
       queryClient.invalidateQueries({ queryKey: ["files"] });
       queryClient.invalidateQueries({ queryKey: ["fileStats"] });
       processFileData(response.data.file_id, response.data.file);
       toast.success("Fichier téléchargé avec succès");
+      // Reset progress after a delay
+      setTimeout(() => setUploadProgress(0), 2000);
     },
     onError: (error) => {
       debug.error("File upload failed", error);
+      setUploadProgress(0);
       toast.error("Erreur lors du téléchargement du fichier");
     },
   });
@@ -711,11 +719,15 @@ const FilesPage = () => {
                     </p>
                     {uploadFileMutation.isPending && (
                       <div className="mt-4 space-y-2">
-                        <Progress value={50} className="w-full" />
+                        <Progress value={uploadProgress} className="w-full" />
                         <p className="text-sm text-blue-600">
-                          ⏳ Traitement en cours... Vous recevrez une
-                          notification en temps réel
+                          ⏳ Téléchargement en cours... {uploadProgress}%
                         </p>
+                        {uploadProgress === 100 && (
+                          <p className="text-sm text-green-600">
+                            ✓ Upload terminé, traitement du fichier...
+                          </p>
+                        )}
                       </div>
                     )}
                     {!wsConnected && (

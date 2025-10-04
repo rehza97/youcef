@@ -25,18 +25,37 @@ class ParkDataProcessor:
         self.column_mapping = {}  # Cache for column mappings
 
     def _find_column(self, df: pd.DataFrame, keywords: list) -> str:
-        """Find a column by keywords"""
+        """Find a column by keywords with improved matching"""
         cache_key = '_'.join(keywords)
         if cache_key in self.column_mapping:
             return self.column_mapping[cache_key]
 
+        # First try exact matches
         for col in df.columns:
-            if all(keyword.lower() in col.lower() for keyword in keywords):
+            if col in keywords:
+                logger.info(f"Found exact column match: '{col}'")
+                self.column_mapping[cache_key] = col
+                return col
+
+        # Then try partial matches
+        for col in df.columns:
+            col_lower = col.lower().replace('_', ' ').replace('-', ' ')
+            if all(keyword.lower() in col_lower for keyword in keywords):
                 logger.info(f"Found column for keywords {keywords}: '{col}'")
                 self.column_mapping[cache_key] = col
                 return col
 
+        # Try with individual keyword matching (any keyword matches)
+        for col in df.columns:
+            col_lower = col.lower().replace('_', ' ').replace('-', ' ')
+            if any(keyword.lower() in col_lower for keyword in keywords):
+                logger.info(
+                    f"Found partial column match for keywords {keywords}: '{col}'")
+                self.column_mapping[cache_key] = col
+                return col
+
         logger.warning(f"No column found for keywords: {keywords}")
+        logger.info(f"Available columns: {list(df.columns)}")
         self.column_mapping[cache_key] = None
         return None
 
@@ -185,14 +204,18 @@ class ParkDataProcessor:
                 return dot_siege.id
             return None
 
-        # Apply mapping - handle different column name formats
-        actel_column = self._find_column(df, ['Actel Code', 'actel'])
+        # Apply mapping - handle different column name formats (including real PRK headers)
+        actel_column = self._find_column(
+            df, ['Actel Code', 'actel', 'Actel Code_Code d\'actel', 'actel_code_code_d_actel'])
 
         if actel_column:
             df['dot_id'] = df[actel_column].apply(map_actel_to_dot)
+            logger.info(f"Applied DOT mapping using column: {actel_column}")
         else:
-            logger.warning("No Actel Code column found, skipping DOT mapping")
-            df['dot_id'] = None
+            logger.warning(
+                "No Actel Code column found, assigning default DOT OUARGLA")
+            # Assign default DOT OUARGLA for all records without actel code
+            df['dot_id'] = dot_ouargla.id
 
         return df
 

@@ -23,6 +23,7 @@ from models.park import Park
 from models.dot import DOT
 from services.park_processing import ParkDataProcessor
 from services.dot_service import DOTService
+from prk_column_mapping import map_prk_record_to_park_dict
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -48,8 +49,9 @@ class BackgroundProcessor:
         self.active_tasks: Dict[str, Dict[str, Any]] = {}
         self.batch_size = 10000  # Process in batches of 10k rows
         self.chunk_size = 2500  # Read file in chunks of 2.5k rows for better progress updates
-        self.max_rows_limit = 10000  # Limit processing to 10k rows for testing
+        self.max_rows_limit = None  # No limit - process all rows
         self._shutdown_event = threading.Event()
+        self._last_websocket_update = {}  # Track last update time per task for throttling
 
         # Create high-performance database engine for bulk operations
         self.bulk_engine = create_engine(
@@ -134,90 +136,114 @@ class BackgroundProcessor:
                 "errors_count": 0,
                 "statistics": {
                     "total_rows": total_rows,
+                    "total_records": 0,  # Frontend expects this field
                     "processed_rows": 0,
+                    "filtered_rows": 0,  # Add missing field
+                    "saved_rows": 0,
                     "errors": 0
                 }
             })
 
-            # Process file in chunks, limited to max_rows_limit for testing
+            # Process file in chunks with parallel processing
             chunk_num = 0
             total_processed = 0
+
+            # Collect all chunks first for parallel processing
+            all_chunks = []
             for chunk_df in pd.read_csv(file_path, chunksize=self.chunk_size):
+                all_chunks.append((chunk_num + 1, chunk_df, len(chunk_df)))
+                chunk_num += 1
+
+            logger.info(
+                f"Processing {len(all_chunks)} chunks in parallel batches with {self.max_workers} workers")
+
+            # Process chunks in parallel batches
+            # Use most workers for parallel processing (more aggressive)
+            batch_size = max(1, min(self.max_workers, len(all_chunks)))
+            for i in range(0, len(all_chunks), batch_size):
                 if task["cancelled"] or self._shutdown_event.is_set():
                     task["status"] = ProcessingStatus.CANCELLED
                     return
 
-                # Limit processing to max_rows_limit for testing
-                if total_processed >= self.max_rows_limit:
-                    logger.info(
-                        f"Reached max rows limit ({self.max_rows_limit}) for testing")
-                    break
-
-                # Limit chunk size to remaining rows
-                remaining_rows = self.max_rows_limit - total_processed
-                if len(chunk_df) > remaining_rows:
-                    chunk_df = chunk_df.head(remaining_rows)
-                    logger.info(
-                        f"Limiting chunk to {remaining_rows} rows for testing")
-
-                chunk_num += 1
+                batch = all_chunks[i:i + batch_size]
                 logger.info(
-                    f"Processing chunk {chunk_num} with {len(chunk_df)} rows (Total processed: {total_processed})")
+                    f"Processing parallel batch {i//batch_size + 1} with {len(batch)} chunks")
 
-                # Process chunk
-                chunk_result = self._process_chunk(chunk_df, task_id)
+                # Submit batch to thread pool for parallel processing
+                futures = []
+                for chunk_num, chunk_df, chunk_size in batch:
+                    future = self.thread_pool.submit(
+                        self._process_chunk, chunk_df, task_id)
+                    futures.append((chunk_num, future, chunk_size))
 
-                if chunk_result["success"]:
-                    processed_rows += chunk_result["processed_rows"]
-                    filtered_rows += chunk_result["filtered_rows"]
-                    saved_rows += chunk_result["saved_rows"]
-                    # Update total processed count
-                    total_processed += len(chunk_df)
-                    all_anomalies.extend(chunk_result["anomalies"])
+                # Collect results from parallel batch
+                for chunk_num, future, chunk_size in futures:
+                    try:
+                        # 5 minute timeout per chunk
+                        chunk_result = future.result(timeout=300)
 
-                    # Merge statistics
-                    for key, value in chunk_result["statistics"].items():
-                        if key in all_statistics:
-                            if isinstance(value, dict):
-                                for sub_key, sub_value in value.items():
-                                    all_statistics[key][sub_key] = all_statistics[key].get(
-                                        sub_key, 0) + sub_value
-                            else:
-                                all_statistics[key] += value
+                        if chunk_result["success"]:
+                            processed_rows += chunk_result["processed_rows"]
+                            filtered_rows += chunk_result["filtered_rows"]
+                            saved_rows += chunk_result["saved_rows"]
+                            # Update total processed count
+                            total_processed += chunk_size
+                            all_anomalies.extend(chunk_result["anomalies"])
+
+                            # Merge statistics
+                            for key, value in chunk_result["statistics"].items():
+                                if key in all_statistics:
+                                    if isinstance(value, dict):
+                                        for sub_key, sub_value in value.items():
+                                            all_statistics[key][sub_key] = all_statistics[key].get(
+                                                sub_key, 0) + sub_value
+                                    else:
+                                        all_statistics[key] += value
+                                else:
+                                    all_statistics[key] = value
+
+                            logger.info(
+                                f"Chunk {chunk_num} completed successfully")
                         else:
-                            all_statistics[key] = value
+                            task["errors"].append(
+                                f"Chunk {chunk_num} failed: {chunk_result['error']}")
+                            logger.error(
+                                f"Chunk {chunk_num} processing failed: {chunk_result['error']}")
 
-                    # Update progress
-                    progress = min(
-                        100, (total_processed / min(total_rows, self.max_rows_limit)) * 100)
-                    task["progress"] = progress
-                    task["processed_rows"] = processed_rows
-                    task["filtered_rows"] = filtered_rows
-                    task["saved_rows"] = saved_rows
-                    task["anomalies"] = all_anomalies
-                    task["statistics"] = all_statistics
+                    except Exception as e:
+                        error_msg = f"Chunk {chunk_num} failed with exception: {str(e)}"
+                        task["errors"].append(error_msg)
+                        logger.error(error_msg)
 
-                    logger.info(
-                        f"Chunk {chunk_num} completed. Progress: {progress:.1f}% (Total processed: {total_processed})")
+                # Update progress and send WebSocket update after each batch
+                progress = min(100, (total_processed / total_rows)
+                               * 100) if total_rows > 0 else 0
+                task["progress"] = progress
+                task["processed_rows"] = processed_rows
+                task["filtered_rows"] = filtered_rows
+                task["saved_rows"] = saved_rows
+                task["anomalies"] = all_anomalies
+                task["statistics"] = all_statistics
 
-                    # Send real-time WebSocket update
-                    self._send_websocket_update(task_id, {
-                        "status": "processing",
-                        "progress": progress,
-                        "message": f"Processing... {processed_rows} rows processed, {saved_rows} saved",
-                        "saved_count": saved_rows,
-                        "errors_count": len(task.get("errors", [])),
-                        "statistics": {
-                            "total_rows": total_rows,
-                            "processed_rows": processed_rows,
-                            "errors": len(task.get("errors", []))
-                        }
-                    })
-                else:
-                    task["errors"].append(
-                        f"Chunk {chunk_num} failed: {chunk_result['error']}")
-                    logger.error(
-                        f"Chunk {chunk_num} processing failed: {chunk_result['error']}")
+                logger.info(
+                    f"Parallel batch {i//batch_size + 1} completed. Progress: {progress:.1f}% (Total processed: {total_processed})")
+
+                # Send real-time WebSocket update
+                self._send_websocket_update(task_id, {
+                    "status": "processing",
+                    "progress": progress,
+                    "message": f"Processing... {processed_rows} rows processed, {saved_rows} saved",
+                    "saved_count": saved_rows,
+                    "errors_count": len(task.get("errors", [])),
+                    "statistics": {
+                        "total_rows": total_rows,
+                        "total_records": processed_rows,  # Frontend expects this field
+                        "processed_rows": processed_rows,
+                        "filtered_rows": filtered_rows,  # Add missing field
+                        "saved_rows": saved_rows,
+                        "errors": len(task.get("errors", []))
+                    }
+                })
 
             # Mark as completed
             task["status"] = ProcessingStatus.COMPLETED
@@ -256,17 +282,13 @@ class BackgroundProcessor:
             task["end_time"] = datetime.utcnow()
 
     def _count_file_rows(self, file_path: str) -> int:
-        """Count total rows in file efficiently, limited to max_rows_limit for testing"""
+        """Count total rows in file efficiently"""
         try:
-            # Use pandas to count rows efficiently, but limit to max_rows_limit for testing
+            # Use pandas to count rows efficiently
             chunk_iter = pd.read_csv(file_path, chunksize=10000)
             total_rows = 0
             for chunk in chunk_iter:
                 total_rows += len(chunk)
-                if total_rows >= self.max_rows_limit:
-                    logger.info(
-                        f"Limiting row count to {self.max_rows_limit} for testing")
-                    return self.max_rows_limit
             return total_rows
         except Exception as e:
             logger.error(f"Error counting rows: {e}")
@@ -344,7 +366,7 @@ class BackgroundProcessor:
                     if_exists='append',
                     index=False,
                     method='multi',
-                    chunksize=1000
+                    chunksize=5000  # Increased chunk size for better performance
                 )
 
             logger.info(f"Bulk saved {len(park_data)} park records")
@@ -399,7 +421,49 @@ class BackgroundProcessor:
 
     def _map_to_park_dict(self, record: Dict[str, Any], file_upload_id: int = None) -> Dict[str, Any]:
         """Map Excel record to Park dictionary for bulk insert with DOT auto-creation"""
-        # Handle DOT auto-creation if DOT name is provided instead of ID
+        # First try to use the PRK-specific mapping
+        try:
+            park_dict = map_prk_record_to_park_dict(record, file_upload_id)
+
+            # Get actel code for DOT assignment
+            actel_code = park_dict.get('actel_code')
+
+            # Handle DOT assignment - check for DOT column in original record first
+            dot_id = None
+            if 'dot_id' in record and record.get('dot_id') is not None:
+                dot_id = self._safe_int(record.get('dot_id'))
+            elif 'DOT' in record and record.get('DOT') is not None:
+                # Use DOT column from PRK file
+                dot_name = self._safe_string(record.get('DOT'))
+                if dot_name:
+                    dot_id = self._get_or_create_dot_id(dot_name)
+            elif actel_code:
+                # Auto-assign DOT based on actel code
+                dot_id = self._get_dot_id_from_actel_code(actel_code)
+
+            # Fallback: assign to DOT OUARGLA if no DOT is determined
+            if dot_id is None:
+                dot_id = self._get_or_create_dot_id("DOT OUARGLA")
+
+            park_dict['dot_id'] = dot_id
+            return park_dict
+
+        except Exception as e:
+            logger.warning(
+                f"PRK mapping failed, falling back to generic mapping: {e}")
+            # Fallback to generic mapping for non-PRK files
+            return self._map_to_park_dict_generic(record, file_upload_id)
+
+    def _map_to_park_dict_generic(self, record: Dict[str, Any], file_upload_id: int = None) -> Dict[str, Any]:
+        """Generic mapping for non-PRK files"""
+        # Get actel code from various possible column names
+        actel_code = None
+        for col_name in ['Actel Code', 'Actel Code_Code d\'actel', 'actel_code_code_d_actel', 'actel_code']:
+            if col_name in record and record.get(col_name) is not None:
+                actel_code = self._safe_string(record.get(col_name))
+                break
+
+        # Handle DOT assignment based on actel code
         dot_id = None
         if 'dot_id' in record and record.get('dot_id') is not None:
             dot_id = self._safe_int(record.get('dot_id'))
@@ -408,12 +472,19 @@ class BackgroundProcessor:
             dot_name = self._safe_string(record.get('dot_name'))
             if dot_name:
                 dot_id = self._get_or_create_dot_id(dot_name)
+        elif actel_code:
+            # Auto-assign DOT based on actel code
+            dot_id = self._get_dot_id_from_actel_code(actel_code)
+
+        # Fallback: assign to DOT OUARGLA if no DOT is determined
+        if dot_id is None:
+            dot_id = self._get_or_create_dot_id("DOT OUARGLA")
 
         return {
             'file_upload_id': file_upload_id,
             'extraction_date': self._safe_date(record.get('Extraction Date_Date d \'extraction')),
             'dot_id': dot_id,
-            'actel_code': self._safe_string(record.get('Actel Code_Code d\'actel')),
+            'actel_code': actel_code,
             'customer_l1_code': self._safe_string(record.get('Code Customer L1_Code Catégorie level 1')),
             'customer_l1_description': self._safe_string(record.get('Description Customer L1_Nom du Catégorie level 1')),
             'customer_l2_code': self._safe_string(record.get('Code Customer L2_Code Catégorie level 2')),
@@ -482,6 +553,23 @@ class BackgroundProcessor:
         finally:
             db.close()
 
+    def _ensure_dot_assignments(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Ensure all records have DOT assignments"""
+        # Get default DOT OUARGLA ID
+        default_dot_id = self._get_or_create_dot_id("DOT OUARGLA")
+
+        updated_count = 0
+        for record in records:
+            if record.get('dot_id') is None:
+                record['dot_id'] = default_dot_id
+                updated_count += 1
+
+        if updated_count > 0:
+            logger.info(
+                f"Assigned default DOT to {updated_count} records without DOT assignment")
+
+        return records
+
     def _get_or_create_dot_id(self, dot_name: str) -> Optional[int]:
         """Get or create DOT by name and return its ID"""
         if not dot_name:
@@ -500,6 +588,26 @@ class BackgroundProcessor:
             return None
         finally:
             db.close()
+
+    def _get_dot_id_from_actel_code(self, actel_code: str) -> Optional[int]:
+        """Get DOT ID based on actel code using business rules"""
+        if not actel_code:
+            return None
+
+        actel_str = str(actel_code).upper()
+
+        # Business rules for DOT assignment based on actel code
+        if "2B" in actel_str and "HASSI MESSAOUD" in actel_str:
+            return self._get_or_create_dot_id("DOT OUARGLA")
+        elif "99" in actel_str and "GRAND COMPTE" in actel_str:
+            return self._get_or_create_dot_id("DOT SIEGE")
+        elif "2B" in actel_str:
+            return self._get_or_create_dot_id("DOT OUARGLA")
+        elif "99" in actel_str:
+            return self._get_or_create_dot_id("DOT SIEGE")
+
+        # Default fallback
+        return self._get_or_create_dot_id("DOT OUARGLA")
 
     def _safe_date(self, value) -> Optional[datetime]:
         """Safely convert value to date"""
@@ -553,7 +661,7 @@ class BackgroundProcessor:
         return self.active_tasks.get(task_id)
 
     def _send_websocket_update(self, task_id: str, data: Dict[str, Any]):
-        """Send WebSocket update for task progress"""
+        """Send WebSocket update for task progress with throttling to prevent browser slowdown"""
         try:
             # Update the task data in memory immediately
             if task_id in self.active_tasks:
@@ -565,7 +673,43 @@ class BackgroundProcessor:
                     "errors_count": data.get("errors_count", 0),
                 })
 
-            # For now, log the progress update (the file processing service handles the actual WebSocket sends)
+            # Throttle WebSocket updates to prevent browser slowdown
+            current_time = datetime.utcnow()
+            last_update = self._last_websocket_update.get(task_id)
+
+            # Only send WebSocket update if:
+            # 1. It's the first update for this task
+            # 2. At least 2 seconds have passed since last update
+            # 3. It's a completion/error status
+            should_send = (
+                last_update is None or
+                (current_time - last_update).total_seconds() >= 2.0 or
+                data.get("status") in ["completed", "failed", "cancelled"]
+            )
+
+            if should_send:
+                self._last_websocket_update[task_id] = current_time
+
+                # Send actual WebSocket update
+                import asyncio
+                from services.processing_websocket import processing_ws_manager
+
+                # Run the async WebSocket update in the event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If we're in an async context, schedule the coroutine
+                        asyncio.create_task(
+                            processing_ws_manager.send_task_update(task_id, data))
+                    else:
+                        # If not in async context, run it
+                        loop.run_until_complete(
+                            processing_ws_manager.send_task_update(task_id, data))
+                except RuntimeError:
+                    # If no event loop exists, create one
+                    asyncio.run(
+                        processing_ws_manager.send_task_update(task_id, data))
+
             logger.info(
                 f"📊 Background processor progress for task {task_id}: {data.get('progress', 0)}% - {data.get('message', 'Processing...')}")
 
@@ -633,4 +777,3 @@ class BackgroundProcessor:
 
 # Global processor instance
 background_processor = BackgroundProcessor()
-

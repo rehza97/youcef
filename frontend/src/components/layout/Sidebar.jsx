@@ -5,14 +5,10 @@ import { Button } from "../ui/button";
 import {
   LayoutDashboard,
   Users,
-  Settings,
   Shield,
   User,
   Bell,
   MessageSquare,
-  Activity,
-  Key,
-  Info,
   LogOut,
   Menu,
   X,
@@ -30,14 +26,10 @@ const Sidebar = () => {
     { name: "Encaissement AR DOT", href: "/encaissement", icon: BarChart3 },
     { name: "Utilisateurs", href: "/users", icon: Users },
     { name: "Rôles", href: "/roles", icon: Shield },
-    { name: "Permissions", href: "/permissions", icon: Key },
     { name: "Profil", href: "/profile", icon: User },
     { name: "Notifications", href: "/notifications", icon: Bell },
     { name: "Messagerie", href: "/messaging", icon: MessageSquare },
     { name: "Fichiers", href: "/files", icon: FileText },
-    { name: "État du système", href: "/health", icon: Activity },
-    { name: "Info API", href: "/api-info", icon: Info },
-    { name: "Paramètres", href: "/settings", icon: Settings },
   ];
 
   const handleLogout = () => {

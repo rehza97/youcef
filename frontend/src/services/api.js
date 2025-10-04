@@ -217,22 +217,22 @@ export const usersAPI = {
   updateUser: (userId, userData) => api.put(`/api/users/${userId}`, userData),
   deleteUser: (userId) => api.delete(`/api/users/${userId}`),
 
-  getRoles: () => api.get("/api/users/roles/"),
-  getRole: (roleId) => api.get(`/api/users/roles/${roleId}`),
-  createRole: (roleData) => api.post("/api/users/roles/", roleData),
+  getRoles: () => api.get("/api/roles/roles/"),
+  getRole: (roleId) => api.get(`/api/roles/roles/${roleId}`),
+  createRole: (roleData) => api.post("/api/roles/roles/", roleData),
   updateRole: (roleId, roleData) =>
-    api.put(`/api/users/roles/${roleId}`, roleData),
-  deleteRole: (roleId) => api.delete(`/api/users/roles/${roleId}`),
+    api.put(`/api/roles/roles/${roleId}`, roleData),
+  deleteRole: (roleId) => api.delete(`/api/roles/roles/${roleId}`),
 
-  getPermissions: () => api.get("/api/users/permissions/"),
+  getPermissions: () => api.get("/api/permissions/permissions/"),
   getPermission: (permissionId) =>
-    api.get(`/api/users/permissions/${permissionId}`),
+    api.get(`/api/permissions/permissions/${permissionId}`),
   createPermission: (permissionData) =>
-    api.post("/api/users/permissions/", permissionData),
+    api.post("/api/permissions/permissions/", permissionData),
   updatePermission: (permissionId, permissionData) =>
-    api.put(`/api/users/permissions/${permissionId}`, permissionData),
+    api.put(`/api/permissions/permissions/${permissionId}`, permissionData),
   deletePermission: (permissionId) =>
-    api.delete(`/api/users/permissions/${permissionId}`),
+    api.delete(`/api/permissions/permissions/${permissionId}`),
 
   assignRole: (userData) => {
     if (!userData.user_id || !userData.role_id) {
@@ -502,7 +502,7 @@ export const messagingAPI = {
 
 // File Upload API for FastAPI backend
 export const filesAPI = {
-  uploadFile: (file) => {
+  uploadFile: (file, onUploadProgress = null) => {
     if (!file) return Promise.reject(new Error("File is required"));
 
     const formData = new FormData();
@@ -510,7 +510,15 @@ export const filesAPI = {
 
     return api.post("/api/files/upload", formData, {
       headers: { "Content-Type": "multipart/form-data" },
-      timeout: 60000, // Longer timeout for file uploads
+      timeout: 300000, // 5 minutes timeout for large file uploads
+      onUploadProgress: onUploadProgress
+        ? (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            onUploadProgress(percentCompleted, progressEvent);
+          }
+        : undefined,
     });
   },
 
@@ -598,7 +606,7 @@ export const generalAPI = {
   protected: () => api.get("/api/auth/protected"),
 };
 
-// Encaissement API for FastAPI backend
+// Encaissement API for FastAPI backend (DEPRECATED - Use parkAnalyticsAPI instead)
 export const encaissementAPI = {
   uploadData: (file) => {
     if (!file) return Promise.reject(new Error("File is required"));
@@ -625,6 +633,37 @@ export const encaissementAPI = {
     return api.get(
       `/api/encaissement/chart-data?chart_type=${encodeURIComponent(chartType)}`
     );
+  },
+};
+
+// Park Analytics API - Real data from Parc Corporate NGBSS
+export const parkAnalyticsAPI = {
+  // Overview analytics
+  getOverview: () => api.get("/api/park-analytics/overview"),
+
+  // Distribution analytics
+  getByTelecomType: () => api.get("/api/park-analytics/by-telecom-type"),
+
+  getBySubscriberStatus: () =>
+    api.get("/api/park-analytics/by-subscriber-status"),
+
+  getByCustomerL2: () => api.get("/api/park-analytics/by-customer-l2"),
+
+  getByCustomerL3: () => api.get("/api/park-analytics/by-customer-l3"),
+
+  getByDOT: () => api.get("/api/park-analytics/by-dot"),
+
+  // Filters for dropdowns
+  getAvailableFilters: () => api.get("/api/park-analytics/filters"),
+
+  // Export functionality
+  exportData: (filters = {}, format = "csv") => {
+    const params = new URLSearchParams({
+      format,
+      ...filters,
+    });
+
+    return api.get(`/api/park-analytics/export?${params.toString()}`);
   },
 };
 

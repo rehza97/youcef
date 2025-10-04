@@ -47,6 +47,7 @@ async def list_files(
     db: Session = Depends(get_db)
 ):
     """List files with pagination and filtering"""
+    # Users can list their own files; can_manage_files allows viewing all files
     logger.info(f"File list request from user {current_user.id}")
 
     files_data = file_service.get_files_paginated(
@@ -183,17 +184,17 @@ async def get_user_files(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get files uploaded by specific user (Admin only)"""
-    # RBAC: Only ADMIN can view other users' files
+    """Get files uploaded by specific user (Requires can_manage_files permission)"""
+    # RBAC: require can_manage_files or admin
     from services.permission_service import PermissionService
-    PermissionService.check_admin_permissions(current_user, db)
+    PermissionService.require_permission(current_user, db, "can_manage_files")
 
     files_data = file_service.get_files_by_user(
         db, user_id, page, page_size
     )
 
     logger.info(
-        f"Files for user {user_id} retrieved by admin {current_user.id}")
+        f"Files for user {user_id} retrieved by user {current_user.id}")
     return files_data
 
 

@@ -21,11 +21,9 @@ import {
   LayoutDashboard,
   Users,
   Shield,
-  Settings,
   LogOut,
   UserPlus,
   BarChart3,
-  Cog,
   Bell,
   MessageSquare,
 } from "lucide-react";
@@ -109,23 +107,12 @@ export default function SidebarLayout() {
                 </SidebarGroup>
               )}
 
-              {/* RBAC Management Section */}
+              {/* RBAC Management Section (permissions link removed) */}
               {canManageRBAC && (
                 <SidebarGroup>
                   <SidebarGroupLabel>Gestion RBAC</SidebarGroupLabel>
                   <SidebarGroupContent>
                     <SidebarMenuSub>
-                      <SidebarMenuSubItem>
-                        <SidebarMenuSubButton
-                          asChild
-                          isActive={location.pathname === "/permissions"}
-                        >
-                          <Link to="/permissions">
-                            <Settings className="h-4 w-4" />
-                            <span>Permissions</span>
-                          </Link>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
                       <SidebarMenuSubItem>
                         <SidebarMenuSubButton
                           asChild
@@ -188,20 +175,7 @@ export default function SidebarLayout() {
                 </SidebarGroupContent>
               </SidebarGroup>
 
-              {/* Settings Section */}
-              {canManageSettings && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === "/settings"}
-                  >
-                    <Link to="/settings">
-                      <Cog className="h-4 w-4" />
-                      <span>Paramètres</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
+              {/* Settings Section removed */}
 
               {/* Logout */}
               <SidebarMenuItem>

@@ -17,20 +17,17 @@ import Sidebar from "./components/layout/Sidebar";
 import LoginForm from "./components/auth/LoginForm";
 import RegisterForm from "./components/auth/RegisterForm";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { PermissionRoute } from "./components/auth/PermissionRoute";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
 import UsersPage from "./pages/UsersPage";
-import SettingsPage from "./pages/SettingsPage";
 import RolesPage from "./pages/RolesPage";
 import ProtectedPage from "./pages/ProtectedPage";
 import ProfilePage from "./pages/ProfilePage";
-import PermissionsPage from "./pages/PermissionsPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import MessagingPage from "./pages/MessagingPage";
-import HealthPage from "./pages/HealthPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
-import ApiInfoPage from "./pages/ApiInfoPage";
 import FilesPage from "./pages/FilesPage";
 import FilePreviewPage from "./pages/FilePreviewPage";
 import EncaissementPage from "./pages/EncaissementPage";
@@ -122,23 +119,23 @@ const AppContent = () => {
             path="/users"
             element={
               <ProtectedRoute>
-                <UsersPage />
+                <PermissionRoute permission="can_manage_users">
+                  <UsersPage />
+                </PermissionRoute>
               </ProtectedRoute>
             }
           />
           <Route
             path="/settings"
-            element={
-              <ProtectedRoute>
-                <SettingsPage />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/roles"
             element={
               <ProtectedRoute>
-                <RolesPage />
+                <PermissionRoute permission="can_manage_rbac">
+                  <RolesPage />
+                </PermissionRoute>
               </ProtectedRoute>
             }
           />
@@ -160,11 +157,7 @@ const AppContent = () => {
           />
           <Route
             path="/permissions"
-            element={
-              <ProtectedRoute>
-                <PermissionsPage />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/notifications"
@@ -186,7 +179,9 @@ const AppContent = () => {
             path="/files"
             element={
               <ProtectedRoute>
-                <FilesPage />
+                <PermissionRoute permission="can_upload_files">
+                  <FilesPage />
+                </PermissionRoute>
               </ProtectedRoute>
             }
           />
@@ -194,17 +189,15 @@ const AppContent = () => {
             path="/files/:fileId/preview"
             element={
               <ProtectedRoute>
-                <FilePreviewPage />
+                <PermissionRoute permission="can_upload_files">
+                  <FilePreviewPage />
+                </PermissionRoute>
               </ProtectedRoute>
             }
           />
           <Route
             path="/health"
-            element={
-              <ProtectedRoute>
-                <HealthPage />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/change-password"
@@ -216,17 +209,15 @@ const AppContent = () => {
           />
           <Route
             path="/api-info"
-            element={
-              <ProtectedRoute>
-                <ApiInfoPage />
-              </ProtectedRoute>
-            }
+            element={<Navigate to="/dashboard" replace />}
           />
           <Route
             path="/encaissement"
             element={
               <ProtectedRoute>
-                <EncaissementPage />
+                <PermissionRoute permission="can_view_encaissement_data">
+                  <EncaissementPage />
+                </PermissionRoute>
               </ProtectedRoute>
             }
           />

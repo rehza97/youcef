@@ -73,8 +73,12 @@ class PermissionService:
 
     @staticmethod
     def has_permission(current_user: User, db: Session, permission_codename: str) -> bool:
-        """Check if user has specific permission"""
+        """Check if user has specific permission (admin always returns True)"""
         try:
+            # Admin users have all permissions
+            if PermissionService.is_admin(current_user, db):
+                return True
+
             from models.permission import Permission
             from models.role import RolePermission
 
@@ -110,7 +114,11 @@ class PermissionService:
 
     @staticmethod
     def require_permission(current_user: User, db: Session, permission_codename: str):
-        """Require specific permission or raise HTTPException"""
+        """Require specific permission or raise HTTPException (admin auto-passes)"""
+        # Admin override
+        if PermissionService.is_admin(current_user, db):
+            return True
+
         if not PermissionService.has_permission(current_user, db, permission_codename):
             logger.warning(f"User {current_user.id} lacks required permission: {permission_codename}")
             raise HTTPException(

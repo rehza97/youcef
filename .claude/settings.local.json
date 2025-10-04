@@ -1,12 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find:*)",
-      "Bash(npm run build:*)",
-      "Bash(tree:*)",
-      "Bash(python:*)",
-      "Bash(alembic upgrade:*)",
-      "Bash(alembic revision:*)"
+      "Bash(PGPASSWORD=123456789 psql -h localhost -U postgres -c \"DROP DATABASE youcef_db;\")",
+      "Bash(PGPASSWORD=123456789 psql -h localhost -U postgres -c \"CREATE DATABASE youcef_db;\")",
+      "Bash(PGPASSWORD=123456789 psql:*)",
+      "Bash(PGPASSWORD=123456789 psql -h localhost -U postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ''youcef_db'';\")"
     ],
     "deny": [],
     "ask": []
