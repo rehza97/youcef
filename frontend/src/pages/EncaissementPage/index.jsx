@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MultiSelect } from "@/components/ui/multi-select";
 import {
   EnhancedBarChart,
   EnhancedPieChart,
@@ -118,14 +119,14 @@ const EncaissementPage = () => {
   const [showFilters, setShowFilters] = useState(false);
 
   const [filters, setFilters] = useState({
-    dot_ids: "",
-    actel_codes: "",
-    subscriber_statuses: "",
-    telecom_types: "",
-    offer_names: "",
-    offer_types: "",
-    customer_l2_codes: "",
-    customer_l3_codes: "",
+    dot_ids: [],        // Changed to array for multi-select
+    actel_codes: [],    // Changed to array for multi-select
+    subscriber_statuses: [],  // Changed to array for multi-select
+    telecom_types: [],  // Changed to array for multi-select
+    offer_names: [],    // Changed to array for multi-select
+    offer_types: [],    // Changed to array for multi-select
+    customer_l2_codes: [],  // Changed to array for multi-select
+    customer_l3_codes: [],  // Changed to array for multi-select
     search: "",
     date_from: "",
     date_to: "",
@@ -144,10 +145,13 @@ const EncaissementPage = () => {
         }
         setError(null);
 
-        // Build filter params
+        // Build filter params - convert arrays to comma-separated strings
         const filterParams = {};
         Object.entries(filters).forEach(([key, value]) => {
-          if (value && value.trim() !== "") {
+          if (Array.isArray(value) && value.length > 0) {
+            // Convert array to comma-separated string for API
+            filterParams[key] = value.join(",");
+          } else if (typeof value === "string" && value.trim() !== "") {
             filterParams[key] = value;
           }
         });
@@ -211,9 +215,7 @@ const EncaissementPage = () => {
   }, [debouncedSearch, filters.date_from, filters.date_to]);
 
   const handleFilterChange = (key, value) => {
-    // Convert "all" to empty string for API
-    const finalValue = value === "all" ? "" : value;
-    setFilters((prev) => ({ ...prev, [key]: finalValue }));
+    setFilters((prev) => ({ ...prev, [key]: value }));
   };
 
   const applyFilters = () => {
@@ -223,14 +225,14 @@ const EncaissementPage = () => {
 
   const resetFilters = () => {
     setFilters({
-      dot_ids: "",
-      actel_codes: "",
-      subscriber_statuses: "",
-      telecom_types: "",
-      offer_names: "",
-      offer_types: "",
-      customer_l2_codes: "",
-      customer_l3_codes: "",
+      dot_ids: [],
+      actel_codes: [],
+      subscriber_statuses: [],
+      telecom_types: [],
+      offer_names: [],
+      offer_types: [],
+      customer_l2_codes: [],
+      customer_l3_codes: [],
       search: "",
       date_from: "",
       date_to: "",
@@ -256,7 +258,10 @@ const EncaissementPage = () => {
 
       const exportFilters = {};
       Object.entries(filters).forEach(([key, value]) => {
-        if (value && value.trim() !== "") {
+        if (Array.isArray(value) && value.length > 0) {
+          // Convert array to comma-separated string for API
+          exportFilters[key] = value.join(",");
+        } else if (typeof value === "string" && value.trim() !== "") {
           exportFilters[key] = value;
         }
       });
@@ -319,7 +324,10 @@ const EncaissementPage = () => {
   };
 
   const getActiveFilterCount = () => {
-    return Object.values(filters).filter((v) => v && v.trim() !== "").length;
+    return Object.values(filters).filter((v) => {
+      if (Array.isArray(v)) return v.length > 0;
+      return v && typeof v === "string" && v.trim() !== "";
+    }).length;
   };
 
   if (loading) {
@@ -441,86 +449,54 @@ const EncaissementPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label>DOT</Label>
-                  <Select
-                    value={filters.dot_ids}
-                    onValueChange={(v) => handleFilterChange("dot_ids", v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous les DOTs" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.dots?.map((d) => (
-                        <SelectItem key={d.id} value={d.id.toString()}>
-                          {d.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.dots?.map((d) => ({
+                      label: d.name,
+                      value: d.id.toString(),
+                    })) || []}
+                    selected={filters.dot_ids}
+                    onChange={(values) => handleFilterChange("dot_ids", values)}
+                    placeholder="Tous les DOTs"
+                  />
                 </div>
 
                 <div>
                   <Label>Statut Abonné</Label>
-                  <Select
-                    value={filters.subscriber_statuses}
-                    onValueChange={(v) =>
-                      handleFilterChange("subscriber_statuses", v)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous les statuts" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.subscriber_statuses?.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.subscriber_statuses?.map((s) => ({
+                      label: s,
+                      value: s,
+                    })) || []}
+                    selected={filters.subscriber_statuses}
+                    onChange={(values) => handleFilterChange("subscriber_statuses", values)}
+                    placeholder="Tous les statuts"
+                  />
                 </div>
 
                 <div>
                   <Label>Type Télécom</Label>
-                  <Select
-                    value={filters.telecom_types}
-                    onValueChange={(v) =>
-                      handleFilterChange("telecom_types", v)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous les types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.telecom_types?.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {t}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.telecom_types?.map((t) => ({
+                      label: t,
+                      value: t,
+                    })) || []}
+                    selected={filters.telecom_types}
+                    onChange={(values) => handleFilterChange("telecom_types", values)}
+                    placeholder="Tous les types"
+                  />
                 </div>
 
                 <div>
                   <Label>Code Actel</Label>
-                  <Select
-                    value={filters.actel_codes}
-                    onValueChange={(v) => handleFilterChange("actel_codes", v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous les codes" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.actel_codes?.map((code) => (
-                        <SelectItem key={code} value={code}>
-                          {code}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.actel_codes?.map((code) => ({
+                      label: code,
+                      value: code,
+                    })) || []}
+                    selected={filters.actel_codes}
+                    onChange={(values) => handleFilterChange("actel_codes", values)}
+                    placeholder="Tous les codes"
+                  />
                 </div>
               </div>
 
@@ -528,86 +504,54 @@ const EncaissementPage = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label>Nom d'Offre</Label>
-                  <Select
-                    value={filters.offer_names}
-                    onValueChange={(v) => handleFilterChange("offer_names", v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Toutes les offres" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.offer_names?.map((offer) => (
-                        <SelectItem key={offer} value={offer}>
-                          {offer}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.offer_names?.map((offer) => ({
+                      label: offer,
+                      value: offer,
+                    })) || []}
+                    selected={filters.offer_names}
+                    onChange={(values) => handleFilterChange("offer_names", values)}
+                    placeholder="Toutes les offres"
+                  />
                 </div>
 
                 <div>
                   <Label>Type d'Offre</Label>
-                  <Select
-                    value={filters.offer_types}
-                    onValueChange={(v) => handleFilterChange("offer_types", v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous les types" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.offer_types?.map((type) => (
-                        <SelectItem key={type} value={type}>
-                          {type}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.offer_types?.map((type) => ({
+                      label: type,
+                      value: type,
+                    })) || []}
+                    selected={filters.offer_types}
+                    onChange={(values) => handleFilterChange("offer_types", values)}
+                    placeholder="Tous les types"
+                  />
                 </div>
 
                 <div>
                   <Label>Customer L2</Label>
-                  <Select
-                    value={filters.customer_l2_codes}
-                    onValueChange={(v) =>
-                      handleFilterChange("customer_l2_codes", v)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous L2" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.customer_l2_codes?.map((l2) => (
-                        <SelectItem key={l2.code} value={l2.code}>
-                          {l2.code} - {l2.description}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.customer_l2_codes?.map((l2) => ({
+                      label: `${l2.code} - ${l2.description}`,
+                      value: l2.code,
+                    })) || []}
+                    selected={filters.customer_l2_codes}
+                    onChange={(values) => handleFilterChange("customer_l2_codes", values)}
+                    placeholder="Tous L2"
+                  />
                 </div>
 
                 <div>
                   <Label>Customer L3</Label>
-                  <Select
-                    value={filters.customer_l3_codes}
-                    onValueChange={(v) =>
-                      handleFilterChange("customer_l3_codes", v)
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Tous L3" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Tous</SelectItem>
-                      {availableFilters.customer_l3_codes?.map((l3) => (
-                        <SelectItem key={l3.code} value={l3.code}>
-                          {l3.code} - {l3.description}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <MultiSelect
+                    options={availableFilters.customer_l3_codes?.map((l3) => ({
+                      label: `${l3.code} - ${l3.description}`,
+                      value: l3.code,
+                    })) || []}
+                    selected={filters.customer_l3_codes}
+                    onChange={(values) => handleFilterChange("customer_l3_codes", values)}
+                    placeholder="Tous L3"
+                  />
                 </div>
               </div>
 
@@ -657,7 +601,11 @@ const EncaissementPage = () => {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(filters).map(([key, value]) => {
-                      if (value && value.trim() !== "") {
+                      const isActive = Array.isArray(value) 
+                        ? value.length > 0 
+                        : value && value.trim() !== "";
+                      
+                      if (isActive) {
                         const labels = {
                           dot_ids: "DOT",
                           actel_codes: "Code Actel",
@@ -671,16 +619,21 @@ const EncaissementPage = () => {
                           date_from: "Depuis",
                           date_to: "Jusqu'à",
                         };
+                        
+                        const displayValue = Array.isArray(value) 
+                          ? `${value.length} sélectionné(s)` 
+                          : value;
+                        
                         return (
                           <Badge
                             key={key}
                             variant="secondary"
                             className="text-xs"
                           >
-                            {labels[key]}: {value}
+                            {labels[key]}: {displayValue}
                             <X
                               className="h-3 w-3 ml-1 cursor-pointer"
-                              onClick={() => handleFilterChange(key, "")}
+                              onClick={() => handleFilterChange(key, Array.isArray(value) ? [] : "")}
                             />
                           </Badge>
                         );

@@ -75,8 +75,7 @@ import { toast } from "sonner";
 const FilePreviewPage = () => {
   const { fileId } = useParams();
   const navigate = useNavigate();
-  const { subscribeTask, isConnected, activeTasks, getActiveTask } =
-    useProcessing();
+  const { subscribeTask, isConnected, activeTasks } = useProcessing();
 
   // State for preview data
   const [previewData, setPreviewData] = useState([]);
@@ -124,7 +123,6 @@ const FilePreviewPage = () => {
     data: previewResponse,
     isLoading: previewLoading,
     error: previewError,
-    refetch: refetchPreview,
   } = useQuery({
     queryKey: ["filePreview", fileId],
     queryFn: () => getOrGenerateFilePreview(fileId, 50),
