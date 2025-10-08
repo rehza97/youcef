@@ -119,14 +119,14 @@ const EncaissementPage = () => {
   const [showFilters, setShowFilters] = useState(false);
 
   const [filters, setFilters] = useState({
-    dot_ids: [],        // Changed to array for multi-select
-    actel_codes: [],    // Changed to array for multi-select
-    subscriber_statuses: [],  // Changed to array for multi-select
-    telecom_types: [],  // Changed to array for multi-select
-    offer_names: [],    // Changed to array for multi-select
-    offer_types: [],    // Changed to array for multi-select
-    customer_l2_codes: [],  // Changed to array for multi-select
-    customer_l3_codes: [],  // Changed to array for multi-select
+    dot_ids: [], // Changed to array for multi-select
+    actel_codes: [], // Changed to array for multi-select
+    subscriber_statuses: [], // Changed to array for multi-select
+    telecom_types: [], // Changed to array for multi-select
+    offer_names: [], // Changed to array for multi-select
+    offer_types: [], // Changed to array for multi-select
+    customer_l2_codes: [], // Changed to array for multi-select
+    customer_l3_codes: [], // Changed to array for multi-select
     search: "",
     date_from: "",
     date_to: "",
@@ -450,10 +450,12 @@ const EncaissementPage = () => {
                 <div>
                   <Label>DOT</Label>
                   <MultiSelect
-                    options={availableFilters.dots?.map((d) => ({
-                      label: d.name,
-                      value: d.id.toString(),
-                    })) || []}
+                    options={
+                      availableFilters.dots?.map((d) => ({
+                        label: d.name,
+                        value: d.id.toString(),
+                      })) || []
+                    }
                     selected={filters.dot_ids}
                     onChange={(values) => handleFilterChange("dot_ids", values)}
                     placeholder="Tous les DOTs"
@@ -463,12 +465,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Statut Abonné</Label>
                   <MultiSelect
-                    options={availableFilters.subscriber_statuses?.map((s) => ({
-                      label: s,
-                      value: s,
-                    })) || []}
+                    options={
+                      availableFilters.subscriber_statuses?.map((s) => ({
+                        label: s,
+                        value: s,
+                      })) || []
+                    }
                     selected={filters.subscriber_statuses}
-                    onChange={(values) => handleFilterChange("subscriber_statuses", values)}
+                    onChange={(values) =>
+                      handleFilterChange("subscriber_statuses", values)
+                    }
                     placeholder="Tous les statuts"
                   />
                 </div>
@@ -476,12 +482,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Type Télécom</Label>
                   <MultiSelect
-                    options={availableFilters.telecom_types?.map((t) => ({
-                      label: t,
-                      value: t,
-                    })) || []}
+                    options={
+                      availableFilters.telecom_types?.map((t) => ({
+                        label: t,
+                        value: t,
+                      })) || []
+                    }
                     selected={filters.telecom_types}
-                    onChange={(values) => handleFilterChange("telecom_types", values)}
+                    onChange={(values) =>
+                      handleFilterChange("telecom_types", values)
+                    }
                     placeholder="Tous les types"
                   />
                 </div>
@@ -489,12 +499,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Code Actel</Label>
                   <MultiSelect
-                    options={availableFilters.actel_codes?.map((code) => ({
-                      label: code,
-                      value: code,
-                    })) || []}
+                    options={
+                      availableFilters.actel_codes?.map((code) => ({
+                        label: code,
+                        value: code,
+                      })) || []
+                    }
                     selected={filters.actel_codes}
-                    onChange={(values) => handleFilterChange("actel_codes", values)}
+                    onChange={(values) =>
+                      handleFilterChange("actel_codes", values)
+                    }
                     placeholder="Tous les codes"
                   />
                 </div>
@@ -505,12 +519,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Nom d'Offre</Label>
                   <MultiSelect
-                    options={availableFilters.offer_names?.map((offer) => ({
-                      label: offer,
-                      value: offer,
-                    })) || []}
+                    options={
+                      availableFilters.offer_names?.map((offer) => ({
+                        label: offer,
+                        value: offer,
+                      })) || []
+                    }
                     selected={filters.offer_names}
-                    onChange={(values) => handleFilterChange("offer_names", values)}
+                    onChange={(values) =>
+                      handleFilterChange("offer_names", values)
+                    }
                     placeholder="Toutes les offres"
                   />
                 </div>
@@ -518,12 +536,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Type d'Offre</Label>
                   <MultiSelect
-                    options={availableFilters.offer_types?.map((type) => ({
-                      label: type,
-                      value: type,
-                    })) || []}
+                    options={
+                      availableFilters.offer_types?.map((type) => ({
+                        label: type,
+                        value: type,
+                      })) || []
+                    }
                     selected={filters.offer_types}
-                    onChange={(values) => handleFilterChange("offer_types", values)}
+                    onChange={(values) =>
+                      handleFilterChange("offer_types", values)
+                    }
                     placeholder="Tous les types"
                   />
                 </div>
@@ -531,12 +553,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Customer L2</Label>
                   <MultiSelect
-                    options={availableFilters.customer_l2_codes?.map((l2) => ({
-                      label: `${l2.code} - ${l2.description}`,
-                      value: l2.code,
-                    })) || []}
+                    options={
+                      availableFilters.customer_l2_codes?.map((l2) => ({
+                        label: `${l2.code} - ${l2.description}`,
+                        value: l2.code,
+                      })) || []
+                    }
                     selected={filters.customer_l2_codes}
-                    onChange={(values) => handleFilterChange("customer_l2_codes", values)}
+                    onChange={(values) =>
+                      handleFilterChange("customer_l2_codes", values)
+                    }
                     placeholder="Tous L2"
                   />
                 </div>
@@ -544,12 +570,16 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Customer L3</Label>
                   <MultiSelect
-                    options={availableFilters.customer_l3_codes?.map((l3) => ({
-                      label: `${l3.code} - ${l3.description}`,
-                      value: l3.code,
-                    })) || []}
+                    options={
+                      availableFilters.customer_l3_codes?.map((l3) => ({
+                        label: `${l3.code} - ${l3.description}`,
+                        value: l3.code,
+                      })) || []
+                    }
                     selected={filters.customer_l3_codes}
-                    onChange={(values) => handleFilterChange("customer_l3_codes", values)}
+                    onChange={(values) =>
+                      handleFilterChange("customer_l3_codes", values)
+                    }
                     placeholder="Tous L3"
                   />
                 </div>
@@ -601,10 +631,10 @@ const EncaissementPage = () => {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(filters).map(([key, value]) => {
-                      const isActive = Array.isArray(value) 
-                        ? value.length > 0 
+                      const isActive = Array.isArray(value)
+                        ? value.length > 0
                         : value && value.trim() !== "";
-                      
+
                       if (isActive) {
                         const labels = {
                           dot_ids: "DOT",
@@ -619,11 +649,11 @@ const EncaissementPage = () => {
                           date_from: "Depuis",
                           date_to: "Jusqu'à",
                         };
-                        
-                        const displayValue = Array.isArray(value) 
-                          ? `${value.length} sélectionné(s)` 
+
+                        const displayValue = Array.isArray(value)
+                          ? `${value.length} sélectionné(s)`
                           : value;
-                        
+
                         return (
                           <Badge
                             key={key}
@@ -633,7 +663,12 @@ const EncaissementPage = () => {
                             {labels[key]}: {displayValue}
                             <X
                               className="h-3 w-3 ml-1 cursor-pointer"
-                              onClick={() => handleFilterChange(key, Array.isArray(value) ? [] : "")}
+                              onClick={() =>
+                                handleFilterChange(
+                                  key,
+                                  Array.isArray(value) ? [] : ""
+                                )
+                              }
                             />
                           </Badge>
                         );
