@@ -108,6 +108,28 @@ class FileService:
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
+        # Detect KPI type for CSV and Excel files
+        detected_kpi_type = None
+        detection_confidence = None
+
+        if file_type in ['excel', 'csv']:
+            try:
+                from services.file_detector_service import file_detector_service
+                logger.info(f"🔍 Detecting KPI type for file: {file.filename}")
+
+                kpi_type, detection_info = file_detector_service.detect_file_type(
+                    str(file_path))
+                detected_kpi_type = detection_info.get('detected_type')
+                detection_confidence = int(detection_info.get('confidence', 0))
+
+                logger.info(
+                    f"✅ Detected KPI type: {detected_kpi_type} ({detection_confidence}% confidence)")
+                logger.info(
+                    f"   Matched columns: {detection_info.get('matched_columns', [])}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to detect KPI type: {str(e)}")
+                # Continue without detection - not a critical error
+
         # Create database record
         file_upload = FileUpload(
             filename=unique_filename,
@@ -118,56 +140,46 @@ class FileService:
             mime_type=mime_type or '',
             uploaded_by=user_id,
             is_processed=False,
-            processing_status="pending"
+            processing_status="pending",
+            detected_kpi_type=detected_kpi_type,
+            detection_confidence=detection_confidence
         )
 
         db.add(file_upload)
         db.commit()
         db.refresh(file_upload)
 
-        # Automatically generate preview after file upload
-        try:
-            if file_type in ['excel', 'csv']:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"Generating preview for file {file_upload.id} of type {file_type}")
-
-                # Create a default preview request
-                class DefaultPreviewRequest:
-                    def __init__(self):
-                        self.max_rows = 100  # Show more rows in preview by default
-
-                preview_request = DefaultPreviewRequest()
-                previews = await self.generate_file_preview(db, file_upload, preview_request, user_id)
-                logger.info(
-                    f"Generated {len(previews)} previews for file {file_upload.id}")
-            else:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"Skipping preview generation for file {file_upload.id} of type {file_type}")
-        except Exception as e:
-            # Log error but don't fail the upload
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(
-                f"Failed to generate preview for file {file_upload.id}: {str(e)}")
+        # File upload completed successfully with KPI detection
+        logger.info(f"File upload completed successfully: {file_upload.id}")
+        logger.info(f"  - Original filename: {file_upload.original_filename}")
+        logger.info(f"  - Detected KPI type: {detected_kpi_type}")
+        logger.info(f"  - Detection confidence: {detection_confidence}%")
+        logger.info(f"  - File size: {file_size} bytes")
 
         return file_upload
 
     def process_excel_file(self, file_path: str, max_rows: int = 100) -> List[Dict[str, Any]]:
         """Process Excel file and return preview data"""
         try:
-            # Read Excel file
+            logger.info(f"Reading Excel file: {file_path}")
+
+            # Read Excel file with optimizations
             excel_file = pd.ExcelFile(file_path)
             sheet_names = excel_file.sheet_names
+
+            logger.info(f"Found {len(sheet_names)} sheets: {sheet_names}")
 
             previews = []
 
             for sheet_name in sheet_names:
-                # Read sheet
-                df = pd.read_excel(file_path, sheet_name=sheet_name)
+                logger.info(f"Processing sheet: {sheet_name}")
+
+                # Read sheet with limited rows for preview
+                df = pd.read_excel(
+                    file_path, sheet_name=sheet_name, nrows=max_rows * 2)
+
+                logger.info(
+                    f"Sheet {sheet_name}: {len(df)} rows, {len(df.columns)} columns")
 
                 # Get preview data
                 preview_data = self._get_dataframe_preview(df, max_rows)
@@ -175,14 +187,19 @@ class FileService:
                 previews.append({
                     "sheet_name": sheet_name,
                     "preview_data": preview_data,
-                    "total_rows": len(df),
+                    "total_rows": len(df),  # Note: This is limited by nrows
                     "total_columns": len(df.columns),
                     "preview_rows": min(max_rows, len(df))
                 })
 
+                logger.info(f"Completed processing sheet: {sheet_name}")
+
+            logger.info(
+                f"Excel file processing completed. Generated {len(previews)} previews")
             return previews
 
         except Exception as e:
+            logger.error(f"Error processing Excel file {file_path}: {str(e)}")
             raise HTTPException(
                 status_code=500, detail=f"Error processing Excel file: {str(e)}")
 
@@ -547,54 +564,93 @@ class FileService:
         from models.file_upload import FilePreviewResponse, FilePreviewRequest
 
         try:
+            logger.info(
+                f"Starting preview generation for file {file_upload.id} ({file_upload.file_type})")
+            logger.info(f"File path: {file_upload.file_path}")
+            logger.info(f"Max rows requested: {preview_request.max_rows}")
+
             # Process file based on type
             if file_upload.file_type == "excel":
+                logger.info("Processing Excel file for preview")
                 previews_data = self.process_excel_file(
                     file_upload.file_path, preview_request.max_rows)
             elif file_upload.file_type == "csv":
+                logger.info("Processing CSV file for preview")
                 previews_data = self.process_csv_file(
                     file_upload.file_path, preview_request.max_rows)
             else:
                 raise HTTPException(
                     status_code=400, detail="Unsupported file type for preview")
 
+            logger.info(
+                f"File processing completed. Generated {len(previews_data)} preview data entries")
+
             # Create preview records in database
+            logger.info("Creating preview records in database")
             preview_records = self.create_file_preview_records(
                 db, file_upload.id, previews_data)
+
+            logger.info(f"Created {len(preview_records)} preview records")
 
             # Convert to response models
             preview_responses = [FilePreviewResponse.from_orm(
                 preview) for preview in preview_records]
 
+            logger.info(
+                f"Preview generation completed successfully for file {file_upload.id}")
             return preview_responses
 
         except Exception as e:
+            logger.error(
+                f"Error generating preview for file {file_upload.id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise HTTPException(
                 status_code=500, detail=f"Error generating preview: {str(e)}")
 
     def process_csv_file(self, file_path: str, max_rows: int = 100) -> List[Dict[str, Any]]:
         """Process CSV file and return preview data"""
         try:
-            # Read CSV file
-            df = pd.read_csv(file_path)
+            logger.info(
+                f"Processing CSV file: {file_path} with max_rows: {max_rows}")
+
+            # Read only a limited number of rows for preview to handle large files
+            # Read 2x for better sampling
+            df = pd.read_csv(file_path, nrows=max_rows * 2)
+
+            logger.info(
+                f"CSV file loaded: {len(df)} rows, {len(df.columns)} columns")
 
             # Get preview data
             preview_data = self._get_dataframe_preview(df, max_rows)
 
+            # Count total rows efficiently without loading entire file
+            total_rows = 0
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    total_rows = sum(1 for line in f) - 1  # Subtract header
+            except Exception as e:
+                logger.warning(f"Could not count total rows: {str(e)}")
+                total_rows = len(df)  # Fallback to loaded rows
+
+            logger.info(
+                f"CSV processing completed. Total rows: {total_rows}, Preview rows: {len(preview_data)}")
+
             return [{
                 "sheet_name": None,  # CSV files don't have sheet names
                 "preview_data": preview_data,
-                "total_rows": len(df),
+                "total_rows": total_rows,
                 "total_columns": len(df.columns),
                 "preview_rows": min(max_rows, len(df))
             }]
 
         except Exception as e:
+            logger.error(f"Error processing CSV file {file_path}: {str(e)}")
             raise HTTPException(
                 status_code=500, detail=f"Error processing CSV file: {str(e)}")
 
-    def get_preview_data(self, db: Session, preview_id: int, user_id: int) -> Dict[str, Any]:
-        """Get preview data content for a specific preview"""
+    def get_preview_data(self, db: Session, preview_id: int, user_id: int, page: int = 1, per_page: int = 50) -> Dict[str, Any]:
+        """Get preview data content for a specific preview with pagination"""
         # First check if the preview exists and user has access
         preview = db.query(FilePreview).filter(
             FilePreview.id == preview_id).first()
@@ -616,15 +672,30 @@ class FileService:
         try:
             import json
             parsed_data = json.loads(preview.preview_data)
+
+            # Apply pagination
+            total_items = len(parsed_data)
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            paginated_data = parsed_data[start_idx:end_idx]
+
             return {
                 "preview_id": preview.id,
                 "file_upload_id": preview.file_upload_id,
                 "sheet_name": preview.sheet_name,
-                "data": parsed_data,  # This is the array that frontend expects
+                "data": paginated_data,  # Paginated array that frontend expects
                 "total_rows": preview.total_rows,
                 "total_columns": preview.total_columns,
                 "preview_rows": preview.preview_rows,
-                "created_at": preview.created_at
+                "created_at": preview.created_at,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total_items": total_items,
+                    "total_pages": (total_items + per_page - 1) // per_page,
+                    "has_next": end_idx < total_items,
+                    "has_prev": page > 1
+                }
             }
         except json.JSONDecodeError as e:
             raise HTTPException(

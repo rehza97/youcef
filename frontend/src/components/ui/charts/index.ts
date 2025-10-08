@@ -50,3 +50,10 @@ export { ChartTooltipLabelNone } from "./ChartTooltipLabelNone";
 export { ChartTooltipFormatter } from "./ChartTooltipFormatter";
 export { ChartTooltipIcons } from "./ChartTooltipIcons";
 export { ChartTooltipAdvanced } from "./ChartTooltipAdvanced";
+
+// Enhanced Dynamic Charts
+export {
+  EnhancedBarChart,
+  EnhancedPieChart,
+  EnhancedMultiSeriesBarChart,
+} from "./EnhancedCharts";

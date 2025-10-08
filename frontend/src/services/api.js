@@ -575,6 +575,11 @@ export const getFilePreviews = (fileId) => {
   return api.get(`/api/files/${fileId}/previews`);
 };
 
+export const getOrGenerateFilePreview = (fileId, maxRows = 50) => {
+  if (!fileId) return Promise.reject(new Error("File ID is required"));
+  return api.get(`/api/files/${fileId}/preview?max_rows=${maxRows}`);
+};
+
 export const generateFilePreview = (fileId, previewRequest) => {
   if (!fileId) return Promise.reject(new Error("File ID is required"));
   return api.post(`/api/files/${fileId}/preview`, previewRequest);

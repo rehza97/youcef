@@ -19,6 +19,7 @@ import LoginForm from "./components/auth/LoginForm";
 import RegisterForm from "./components/auth/RegisterForm";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { PermissionRoute } from "./components/auth/PermissionRoute";
+import GlobalProcessingIndicator from "./components/GlobalProcessingIndicator";
 
 // Pages
 import Dashboard from "./pages/Dashboard";
@@ -84,6 +85,8 @@ const AppContent = () => {
     <div className="flex h-screen bg-gray-100">
       {isAuthenticated && <Sidebar />}
       <div className="flex-1 overflow-auto">
+        {/* Global Processing Indicator */}
+        {isAuthenticated && <GlobalProcessingIndicator />}
         <Routes>
           {/* Public Routes */}
           <Route

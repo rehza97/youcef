@@ -57,39 +57,64 @@ class ProcessingWebSocketManager:
 
     async def send_task_update(self, task_id: str, update_data: dict):
         """Send update to all connections monitoring a specific task"""
-        logger.info(f"📡 Attempting to send task update for task_id: {task_id}")
-        logger.info(
-            f"📡 Active processing connections: {list(self.processing_connections.keys())}")
+        # Only log every 10th update to reduce spam
+        if not hasattr(self, '_update_count'):
+            self._update_count = {}
+        self._update_count[task_id] = self._update_count.get(task_id, 0) + 1
 
-        if task_id in self.processing_connections:
-            message = {
-                "type": "processing_update",
-                "task_id": task_id,
-                "data": update_data
-            }
+        # Log every 10th update
+        should_log = self._update_count[task_id] % 10 == 1
 
+        if should_log:
             logger.info(
-                f"📡 Sending message to {len(self.processing_connections[task_id])} connections for task {task_id}")
-            logger.info(f"📡 Message: {message}")
+                f"📡 Sending task update #{self._update_count[task_id]} for task_id: {task_id}")
 
+        message = {
+            "type": "processing_update",
+            "task_id": task_id,
+            "data": update_data
+        }
+
+        # Send to task-specific connections
+        if task_id in self.processing_connections:
             disconnected = set()
             for websocket in self.processing_connections[task_id]:
                 try:
                     await websocket.send_text(json.dumps(message))
-                    logger.info(
-                        f"📡 Message sent successfully to WebSocket for task {task_id}")
                 except Exception as e:
                     logger.warning(
-                        f"⚠️ Failed to send message to WebSocket: {e}")
+                        f"⚠️ Failed to send to task-specific WebSocket: {e}")
                     disconnected.add(websocket)
 
             # Remove disconnected websockets
             for websocket in disconnected:
                 self.processing_connections[task_id].discard(websocket)
 
-            logger.info(f"📡 Task update completed for task_id: {task_id}")
-        else:
-            logger.warning(f"⚠️ No connections found for task_id: {task_id}")
+        # Also send to all active user connections (fallback)
+        total_sent = 0
+        for user_id, connections in self.active_connections.items():
+            disconnected = set()
+            for websocket in connections:
+                try:
+                    await websocket.send_text(json.dumps(message))
+                    total_sent += 1
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ Failed to send to user {user_id} WebSocket: {e}")
+                    disconnected.add(websocket)
+
+            # Remove disconnected websockets
+            for websocket in disconnected:
+                connections.discard(websocket)
+
+        # Only log summary every 10th update
+        if should_log:
+            logger.info(
+                f"📡 Task update #{self._update_count[task_id]} completed - sent to {total_sent} connections")
+
+        if total_sent == 0 and should_log:
+            logger.warning(
+                f"⚠️ No active connections found for task_id: {task_id}")
 
     async def send_user_update(self, user_id: int, update_data: dict):
         """Send update to a specific user"""

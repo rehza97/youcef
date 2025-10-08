@@ -25,6 +25,10 @@ class FileUpload(Base):
     error_message = Column(Text, nullable=True)
     # JSON string for additional metadata
     file_metadata = Column(Text, nullable=True)
+    # Detected KPI type (parc_corporate_ngbss, chiffre_affaires, encaissement, creance_periodique, unknown)
+    detected_kpi_type = Column(String(100), nullable=True)
+    # Detection confidence score (0-100)
+    detection_confidence = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -86,6 +90,8 @@ class FileUploadResponse(FileUploadBase):
     processing_status: str
     error_message: Optional[str] = None
     file_metadata: Optional[str] = None
+    detected_kpi_type: Optional[str] = None
+    detection_confidence: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

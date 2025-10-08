@@ -7,6 +7,7 @@ import {
   downloadFile,
   getParkDataSavedData,
   getParkDataStats,
+  getOrGenerateFilePreview,
 } from "../../services/api";
 import { useProcessing } from "../../contexts/ProcessingContext";
 import {
@@ -74,7 +75,8 @@ import { toast } from "sonner";
 const FilePreviewPage = () => {
   const { fileId } = useParams();
   const navigate = useNavigate();
-  const { subscribeTask, isConnected } = useProcessing();
+  const { subscribeTask, isConnected, activeTasks, getActiveTask } =
+    useProcessing();
 
   // State for preview data
   const [previewData, setPreviewData] = useState([]);
@@ -92,6 +94,9 @@ const FilePreviewPage = () => {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState("");
 
+  // WebSocket connection info
+  const connectionInfo = useProcessing().getConnectionInfo?.() || {};
+
   // Saved data state
   const [savedDataPage, setSavedDataPage] = useState(1);
   const [savedDataPageSize] = useState(50);
@@ -102,7 +107,7 @@ const FilePreviewPage = () => {
     offerType: "all",
   });
 
-  // Fetch file details and previews
+  // Fetch file details
   const {
     data: fileData,
     isLoading: fileLoading,
@@ -114,10 +119,22 @@ const FilePreviewPage = () => {
     enabled: !!fileId,
   });
 
-  // Extract previews from fileData (since the API returns both file data and previews)
+  // Fetch/generate previews separately
+  const {
+    data: previewResponse,
+    isLoading: previewLoading,
+    error: previewError,
+    refetch: refetchPreview,
+  } = useQuery({
+    queryKey: ["filePreview", fileId],
+    queryFn: () => getOrGenerateFilePreview(fileId, 50),
+    enabled: !!fileId,
+  });
+
+  // Extract previews from previewResponse
   const previews = useMemo(
-    () => fileData?.data?.file_previews || [],
-    [fileData?.data?.file_previews]
+    () => previewResponse?.data?.data || [],
+    [previewResponse?.data?.data]
   );
 
   // Fetch saved park data
@@ -216,6 +233,68 @@ const FilePreviewPage = () => {
     setFilteredData(filtered);
     setCurrentPage(1); // Reset to first page when filtering
   }, [previewData, searchTerm, sortColumn, sortDirection]);
+
+  // Auto-subscribe to any existing active task for this file
+  useEffect(() => {
+    if (!fileId || !isConnected) return;
+
+    // Check if there's an active task for this file
+    const activeTask = activeTasks.find(
+      (task) => task.file_id === parseInt(fileId)
+    );
+
+    if (activeTask && !isProcessing) {
+      console.log(
+        `🔄 Auto-subscribing to existing active task: ${activeTask.task_id} for file ${fileId}`
+      );
+      setIsProcessing(true);
+      setProcessingStatus(activeTask.message || "Traitement en cours...");
+      setProcessingProgress(activeTask.progress || 0);
+
+      const unsubscribe = subscribeTask(activeTask.task_id, (message) => {
+        try {
+          if (message?.task_id !== activeTask.task_id) return;
+          if (message.type === "processing_update") {
+            const { data } = message;
+            if (data) {
+              setProcessingProgress(data.progress || 0);
+              setProcessingStatus(data.message || "Traitement en cours...");
+
+              if (data.status === "completed") {
+                setIsProcessing(false);
+                setProcessingProgress(100);
+                setProcessingStatus("Traitement terminé");
+                toast.success("Fichier traité avec succès!");
+                refetchSavedData();
+                unsubscribe();
+              } else if (data.status === "failed") {
+                setIsProcessing(false);
+                setProcessingStatus("Échec du traitement");
+                toast.error(`Erreur: ${data.message || "Traitement échoué"}`);
+                unsubscribe();
+              } else if (data.status === "cancelled") {
+                setIsProcessing(false);
+                setProcessingStatus("Traitement annulé");
+                toast.info("Traitement annulé");
+                unsubscribe();
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error handling processing update:", error);
+        }
+      });
+
+      return unsubscribe;
+    }
+  }, [
+    fileId,
+    isConnected,
+    activeTasks,
+    isProcessing,
+    subscribeTask,
+    refetchSavedData,
+  ]);
 
   // Pagination
   const totalPages = Math.ceil(filteredData.length / rowsPerPage);
@@ -330,7 +409,7 @@ const FilePreviewPage = () => {
 
   // Removed local WebSocket cleanup; global provider manages lifecycle
 
-  if (fileLoading) {
+  if (fileLoading || previewLoading) {
     return (
       <div className="container mx-auto p-6">
         <div className="space-y-6">
@@ -342,13 +421,14 @@ const FilePreviewPage = () => {
     );
   }
 
-  if (fileError) {
+  if (fileError || previewError) {
     return (
       <div className="container mx-auto p-6">
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            Erreur lors du chargement des données: {fileError?.message}
+            Erreur lors du chargement des données:{" "}
+            {fileError?.message || previewError?.message}
           </AlertDescription>
         </Alert>
       </div>
@@ -405,6 +485,19 @@ const FilePreviewPage = () => {
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            {/* WebSocket Connection Status */}
+            <Badge
+              variant={connectionInfo.isConnected ? "default" : "destructive"}
+              className="flex items-center"
+            >
+              <div
+                className={`w-2 h-2 rounded-full mr-1 ${
+                  connectionInfo.isConnected ? "bg-green-400" : "bg-red-400"
+                }`}
+              />
+              {connectionInfo.isConnected ? "Connecté" : "Déconnecté"}
+            </Badge>
+
             <Badge variant="outline">
               <FileText className="h-3 w-3 mr-1" />
               {fileData?.data?.file_type?.toUpperCase() || "UNKNOWN"}

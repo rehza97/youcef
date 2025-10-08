@@ -50,8 +50,14 @@ from api.encaissement_analytics import encaissement_analytics_router
 # ETL Processing
 from api.etl_processing import etl_processing_router
 
+# KPI Processing with Auto-Detection
+from api.kpi_processing import kpi_processing_router
+
 # Park Management
 from api.park_management import router as park_management_router
+
+# DOT Management
+from api.dot_management import router as dot_management_router
 
 # Background Processing
 from services.background_processor import background_processor
@@ -329,10 +335,25 @@ app.include_router(
     dependencies=[Depends(get_current_user)]
 )
 
+# KPI Processing with Auto-Detection
+app.include_router(
+    kpi_processing_router,
+    prefix="/api/kpi",
+    tags=["KPI Processing"],
+    dependencies=[Depends(get_current_user)]
+)
+
 # Park Management
 app.include_router(
     park_management_router,
     tags=["Park Management"]
+)
+
+# DOT Management
+app.include_router(
+    dot_management_router,
+    tags=["DOT Management"],
+    dependencies=[Depends(get_current_user)]
 )
 
 # Park Analytics - Real data for dashboard

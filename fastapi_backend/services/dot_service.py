@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional, Dict, Any
 import logging
 from models.dot import DOT
@@ -58,6 +59,26 @@ class DOTService:
     def list_dots(db: Session, skip: int = 0, limit: int = 100) -> List[DOT]:
         """List all DOTs with pagination"""
         return db.query(DOT).offset(skip).limit(limit).all()
+
+    @staticmethod
+    def list_dots_paginated(db: Session, page: int = 1, page_size: int = 25,
+                            search: Optional[str] = None) -> tuple[List[DOT], int]:
+        """List DOTs with pagination and search support"""
+        query = db.query(DOT)
+
+        # Apply search filter if provided
+        if search:
+            search_filter = DOT.name.ilike(f"%{search}%")
+            query = query.filter(search_filter)
+
+        # Get total count
+        total = query.count()
+
+        # Apply pagination
+        skip = (page - 1) * page_size
+        dots = query.order_by(DOT.name).offset(skip).limit(page_size).all()
+
+        return dots, total
 
     @staticmethod
     def update_dot(db: Session, dot_id: int, name: Optional[str] = None,

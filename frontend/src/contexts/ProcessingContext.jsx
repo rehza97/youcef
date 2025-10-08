@@ -22,6 +22,10 @@ export const ProcessingProvider = ({ children }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
 
+  // Global processing state
+  const [activeTasks, setActiveTasks] = useState(new Map());
+  const [globalProcessingCount, setGlobalProcessingCount] = useState(0);
+
   const notifySubscribers = useCallback((taskId, message) => {
     const set = subscribersRef.current.get(taskId);
     if (set && set.size) {
@@ -35,14 +39,27 @@ export const ProcessingProvider = ({ children }) => {
 
   const sendMessage = useCallback((payload) => {
     if (wsConnectionRef.current) {
-      return wsConnectionRef.current.send(payload);
+      try {
+        const result = wsConnectionRef.current.send(payload);
+        console.log("📤 Message sent via WebSocket:", payload);
+        return result;
+      } catch (error) {
+        console.error("❌ Error sending WebSocket message:", error);
+        return false;
+      }
     }
+    console.warn("⚠️ No WebSocket connection available for sending message");
     return false;
   }, []);
 
   const subscribeTask = useCallback(
     (taskId, handler) => {
-      if (!taskId || typeof handler !== "function") return () => {};
+      if (!taskId || typeof handler !== "function") {
+        console.warn("⚠️ Invalid taskId or handler for subscribeTask");
+        return () => {};
+      }
+
+      console.log(`🔔 Subscribing to task: ${taskId}`);
 
       if (!subscribersRef.current.has(taskId)) {
         subscribersRef.current.set(taskId, new Set());
@@ -50,18 +67,30 @@ export const ProcessingProvider = ({ children }) => {
       subscribersRef.current.get(taskId).add(handler);
 
       // send subscribe over WS
-      sendMessage({ type: "subscribe_task", task_id: taskId });
+      const subscribeMessage = { type: "subscribe_task", task_id: taskId };
+      console.log("📤 Sending subscription message:", subscribeMessage);
+      const sent = sendMessage(subscribeMessage);
+
+      if (!sent) {
+        console.warn(
+          "⚠️ Failed to send subscription message - WebSocket not connected"
+        );
+      }
 
       // deliver last cached message if exists
       const last = lastByTaskRef.current.get(taskId);
       if (last) {
         try {
+          console.log(`📨 Delivering cached message for task ${taskId}:`, last);
           handler(last);
-        } catch {}
+        } catch (e) {
+          console.error("Error delivering cached message:", e);
+        }
       }
 
       // unsubscribe
       return () => {
+        console.log(`🔕 Unsubscribing from task: ${taskId}`);
         const set = subscribersRef.current.get(taskId);
         if (set) {
           set.delete(handler);
@@ -76,15 +105,49 @@ export const ProcessingProvider = ({ children }) => {
   );
 
   const connect = useCallback(() => {
-    if (!user || !token) return;
+    if (!user || !token) {
+      console.log("⚠️ No user or token available for Processing WebSocket");
+      return;
+    }
+
+    console.log("🔄 Connecting to Processing WebSocket...");
 
     // Use centralized WebSocket service from api.js
     const wsConnection = createProcessingWebSocket(
       (message) => {
-        const { type, task_id } = message;
+        console.log("📨 Processing WebSocket message received:", message);
+        const { type, task_id, data } = message;
         if (task_id) {
           lastByTaskRef.current.set(task_id, message);
           notifySubscribers(task_id, message);
+
+          // Update global active tasks tracking
+          setActiveTasks((prev) => {
+            const newTasks = new Map(prev);
+            if (
+              data?.status === "completed" ||
+              data?.status === "failed" ||
+              data?.status === "cancelled"
+            ) {
+              // Remove completed/failed tasks
+              newTasks.delete(task_id);
+            } else if (
+              data?.status === "processing" ||
+              data?.status === "started"
+            ) {
+              // Add/update active tasks
+              newTasks.set(task_id, {
+                task_id,
+                status: data.status,
+                progress: data.progress || 0,
+                message: data.message || "",
+                file_id: data.file_id,
+                filename: data.filename || "Unknown file",
+                timestamp: Date.now(),
+              });
+            }
+            return newTasks;
+          });
         }
       },
       () => {
@@ -119,6 +182,9 @@ export const ProcessingProvider = ({ children }) => {
 
     if (wsConnection) {
       wsConnectionRef.current = wsConnection;
+      console.log("🔗 Processing WebSocket connection established");
+    } else {
+      console.error("❌ Failed to create Processing WebSocket connection");
     }
   }, [user, token, notifySubscribers]);
 
@@ -140,6 +206,7 @@ export const ProcessingProvider = ({ children }) => {
       lastByTask: lastByTaskRef.current,
       sendMessage,
       reconnect: () => {
+        console.log("🔄 Manual reconnection requested");
         if (wsConnectionRef.current) {
           wsConnectionRef.current.reconnect();
         } else if (user && token) {
@@ -147,6 +214,18 @@ export const ProcessingProvider = ({ children }) => {
           connect();
         }
       },
+      getConnectionInfo: () => ({
+        isConnected: user && token ? isConnected : false,
+        connectionStatus: user && token ? connectionStatus : "disconnected",
+        hasUser: !!user,
+        hasToken: !!token,
+        activeSubscriptions: Array.from(subscribersRef.current.keys()),
+      }),
+      // Global processing state
+      activeTasks: Array.from(activeTasks.values()),
+      globalProcessingCount: activeTasks.size,
+      getActiveTask: (taskId) => activeTasks.get(taskId),
+      hasActiveProcessing: activeTasks.size > 0,
     }),
     [
       isConnected,
@@ -156,6 +235,7 @@ export const ProcessingProvider = ({ children }) => {
       user,
       token,
       connect,
+      activeTasks,
     ]
   );
 
