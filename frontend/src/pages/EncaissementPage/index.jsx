@@ -265,8 +265,7 @@ const EncaissementPage = () => {
       console.log("🚀 Exporting with filters:", exportFilters);
 
       const response = await exportParkAnalyticsData(exportFilters);
-      const { data, total_records, total_available, export_limited } =
-        response.data;
+      const { data, total_records } = response.data;
 
       if (!data || data.length === 0) {
         toast.info(
@@ -277,13 +276,10 @@ const EncaissementPage = () => {
 
       downloadExportFile(data, format);
 
-      const message = export_limited
-        ? `Export limité: ${formatNumber(
-            total_records
-          )} enregistrements sur ${formatNumber(total_available)} disponibles`
-        : `Export réussi: ${formatNumber(total_records)} enregistrements`;
-
-      toast.success(message);
+      // Simple success message - no limits!
+      toast.success(
+        `Export réussi: ${formatNumber(total_records)} enregistrements exportés`
+      );
     } catch (err) {
       console.error("❌ Export failed:", err);
       handleApiError(err, {

@@ -656,18 +656,86 @@ export const getEncaissementChartData = (chartType) => {
 };
 
 // Park Analytics API methods - Real data from Parc Corporate NGBSS
-export const getParkAnalyticsOverview = () =>
-  api.get("/api/park-analytics/overview");
-export const getParkAnalyticsByTelecomType = () =>
-  api.get("/api/park-analytics/by-telecom-type");
-export const getParkAnalyticsBySubscriberStatus = () =>
-  api.get("/api/park-analytics/by-subscriber-status");
-export const getParkAnalyticsByCustomerL2 = () =>
-  api.get("/api/park-analytics/by-customer-l2");
-export const getParkAnalyticsByCustomerL3 = () =>
-  api.get("/api/park-analytics/by-customer-l3");
-export const getParkAnalyticsByDOT = () =>
-  api.get("/api/park-analytics/by-dot");
+export const getParkAnalyticsOverview = (filters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value && value.trim() !== "") {
+      params.append(key, value);
+    }
+  });
+  const queryString = params.toString();
+  return api.get(
+    `/api/park-analytics/overview${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getParkAnalyticsByTelecomType = (filters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value && value.trim() !== "") {
+      params.append(key, value);
+    }
+  });
+  const queryString = params.toString();
+  return api.get(
+    `/api/park-analytics/by-telecom-type${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getParkAnalyticsBySubscriberStatus = (filters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value && value.trim() !== "") {
+      params.append(key, value);
+    }
+  });
+  const queryString = params.toString();
+  return api.get(
+    `/api/park-analytics/by-subscriber-status${
+      queryString ? `?${queryString}` : ""
+    }`
+  );
+};
+
+export const getParkAnalyticsByCustomerL2 = (filters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value && value.trim() !== "") {
+      params.append(key, value);
+    }
+  });
+  const queryString = params.toString();
+  return api.get(
+    `/api/park-analytics/by-customer-l2${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getParkAnalyticsByCustomerL3 = (filters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value && value.trim() !== "") {
+      params.append(key, value);
+    }
+  });
+  const queryString = params.toString();
+  return api.get(
+    `/api/park-analytics/by-customer-l3${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getParkAnalyticsByDOT = (filters = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value && value.trim() !== "") {
+      params.append(key, value);
+    }
+  });
+  const queryString = params.toString();
+  return api.get(
+    `/api/park-analytics/by-dot${queryString ? `?${queryString}` : ""}`
+  );
+};
+
 export const getParkAnalyticsAvailableFilters = () =>
   api.get("/api/park-analytics/filters");
 

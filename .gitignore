@@ -23,3 +23,8 @@ test_*.py
 *.log
 fastapi_backend/fastapi_backend.db
 *.pdf
+
+*.md
+*.log
+.cursor/
+.claude/

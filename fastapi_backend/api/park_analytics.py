@@ -24,23 +24,243 @@ logger = logging.getLogger(__name__)
 park_analytics_router = APIRouter()
 
 
+def apply_filters_to_query(
+    query,
+    dot_ids: Optional[str] = None,
+    actel_codes: Optional[str] = None,
+    subscriber_statuses: Optional[str] = None,
+    telecom_types: Optional[str] = None,
+    offer_names: Optional[str] = None,
+    offer_types: Optional[str] = None,
+    customer_l2_codes: Optional[str] = None,
+    customer_l3_codes: Optional[str] = None,
+    search: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None
+):
+    """Helper function to apply filters to a query"""
+
+    # Apply multiple value filters (comma-separated)
+    if dot_ids:
+        dot_id_list = [int(id.strip())
+                       for id in dot_ids.split(',') if id.strip()]
+        query = query.filter(Park.dot_id.in_(dot_id_list))
+
+    if actel_codes:
+        actel_list = [code.strip()
+                      for code in actel_codes.split(',') if code.strip()]
+        query = query.filter(Park.actel_code.in_(actel_list))
+
+    if subscriber_statuses:
+        status_list = [status.strip()
+                       for status in subscriber_statuses.split(',') if status.strip()]
+        query = query.filter(Park.subscriber_status.in_(status_list))
+
+    if telecom_types:
+        telecom_list = [ttype.strip()
+                        for ttype in telecom_types.split(',') if ttype.strip()]
+        query = query.filter(Park.telecom_type.in_(telecom_list))
+
+    if offer_names:
+        offer_list = [offer.strip()
+                      for offer in offer_names.split(',') if offer.strip()]
+        query = query.filter(Park.offer_name.in_(offer_list))
+
+    if offer_types:
+        offer_type_list = [otype.strip()
+                           for otype in offer_types.split(',') if otype.strip()]
+        query = query.filter(Park.offer_type.in_(offer_type_list))
+
+    if customer_l2_codes:
+        l2_list = [code.strip()
+                   for code in customer_l2_codes.split(',') if code.strip()]
+        query = query.filter(Park.customer_l2_code.in_(l2_list))
+
+    if customer_l3_codes:
+        l3_list = [code.strip()
+                   for code in customer_l3_codes.split(',') if code.strip()]
+        query = query.filter(Park.customer_l3_code.in_(l3_list))
+
+    # Apply search filter
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                Park.customer_code.ilike(search_term),
+                Park.service_number.ilike(search_term),
+                Park.customer_full_name.ilike(search_term),
+                Park.username.ilike(search_term)
+            )
+        )
+
+    # Apply date range filters
+    if date_from:
+        try:
+            from_date = datetime.strptime(date_from, "%Y-%m-%d").date()
+            query = query.filter(Park.created_at >= from_date)
+        except ValueError:
+            pass  # Ignore invalid date format
+
+    if date_to:
+        try:
+            to_date = datetime.strptime(date_to, "%Y-%m-%d").date()
+            query = query.filter(Park.created_at <= to_date)
+        except ValueError:
+            pass  # Ignore invalid date format
+
+    return query
+
+
 @park_analytics_router.get("/overview")
 async def get_park_overview(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
-    """✅ OPTIMIZED: Get cached overview analytics for Parc Corporate NGBSS"""
+    """Get overview analytics for Parc Corporate NGBSS with filtering support"""
 
-    # Use cached service for 10× faster response
-    return kpi_cache_service.get_overview_analytics(db, current_user.id)
+    # Check if any filters are applied
+    has_filters = any([
+        dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    ])
+
+    # If no filters, use cached service for 10× faster response
+    if not has_filters:
+        return kpi_cache_service.get_overview_analytics(db, current_user.id)
+
+    # Apply DOT-based permission filtering
+    query = db.query(Park)
+    accessible_dots = DOTService.get_user_accessible_dots(
+        db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        return {
+            "total_active_subscribers": 0,
+            "total_dots": 0,
+            "recent_activity": 0,
+            "last_updated": None,
+            "total_subscribers": 0,
+            "inactive_subscribers": 0,
+            "suspended_subscribers": 0,
+            "total_revenue": 0.0,
+            "filters_applied": True
+        }
+
+    # Apply filters
+    query = apply_filters_to_query(
+        query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    )
+
+    # Calculate metrics
+    total_subscribers = query.count()
+
+    # Check multiple possible active status values (like the cache service does)
+    active_subscribers = query.filter(
+        Park.subscriber_status.in_(
+            ["Active", "ACTIVE", "active", "ACTIF", "actif"])
+    ).count()
+
+    inactive_subscribers = query.filter(
+        Park.subscriber_status.in_(
+            ["Inactive", "INACTIVE", "inactive", "INACTIF", "inactif"])
+    ).count()
+
+    suspended_subscribers = query.filter(
+        Park.subscriber_status.in_(
+            ["Suspended", "SUSPENDED", "suspended", "SUSPENDU", "suspendu"])
+    ).count()
+
+    # Calculate revenue
+    revenue_result = query.with_entities(func.sum(Park.rental_fees)).scalar()
+    total_revenue = float(revenue_result) if revenue_result else 0.0
+
+    # Get last update
+    last_record = query.order_by(Park.created_at.desc()).first()
+    last_update = last_record.created_at.isoformat() if last_record else None
+
+    # Get accessible DOTs count
+    accessible_dots = DOTService.get_user_accessible_dots(
+        db=db, user_id=current_user.id)
+    total_dots = len(accessible_dots) if accessible_dots else 0
+
+    # Get recent activity (last 7 days)
+    from datetime import datetime, timedelta
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    recent_activity = query.filter(Park.created_at >= seven_days_ago).count()
+
+    return {
+        "total_active_subscribers": active_subscribers,  # ✅ Match frontend expectation
+        "total_dots": total_dots,                        # ✅ Match frontend expectation
+        "recent_activity": recent_activity,              # ✅ Match frontend expectation
+        "last_updated": last_update,                     # ✅ Match frontend expectation
+        "total_subscribers": total_subscribers,
+        "inactive_subscribers": inactive_subscribers,
+        "suspended_subscribers": suspended_subscribers,
+        "total_revenue": round(total_revenue, 2),
+        "filters_applied": True
+    }
 
 
 @park_analytics_router.get("/by-telecom-type")
 async def get_by_telecom_type(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
-    """Get distribution by Telecom Type"""
+    """Get distribution by Telecom Type with filtering support"""
 
     # Apply DOT-based permission filtering
     query = db.query(Park)
@@ -50,6 +270,13 @@ async def get_by_telecom_type(
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
         return {"distribution": [], "total": 0}
+
+    # Apply filters
+    query = apply_filters_to_query(
+        query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    )
 
     # Get telecom type distribution
     telecom_distribution = query.filter(
@@ -79,12 +306,85 @@ async def get_by_telecom_type(
 @park_analytics_router.get("/by-subscriber-status")
 async def get_by_subscriber_status(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
-    """✅ OPTIMIZED: Get cached subscriber status distribution"""
+    """Get subscriber status distribution with filtering support"""
 
-    # Use cached service for 10× faster response
-    return kpi_cache_service.get_subscriber_status_distribution(db, current_user.id)
+    # Check if any filters are applied
+    has_filters = any([
+        dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    ])
+
+    # If no filters, use cached service for 10× faster response
+    if not has_filters:
+        return kpi_cache_service.get_subscriber_status_distribution(db, current_user.id)
+
+    # Apply DOT-based permission filtering
+    query = db.query(Park)
+    accessible_dots = DOTService.get_user_accessible_dots(
+        db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        return {"distribution": [], "total": 0}
+
+    # Apply filters
+    query = apply_filters_to_query(
+        query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    )
+
+    # Get subscriber status distribution
+    status_distribution = query.filter(
+        Park.subscriber_status.isnot(None)
+    ).with_entities(
+        Park.subscriber_status,
+        func.count(Park.id).label('count')
+    ).group_by(Park.subscriber_status).order_by(func.count(Park.id).desc()).all()
+
+    total_count = sum([item.count for item in status_distribution])
+
+    distribution = []
+    for item in status_distribution:
+        percentage = (item.count / total_count * 100) if total_count > 0 else 0
+        distribution.append({
+            "status": item.subscriber_status or "UNKNOWN",
+            "count": item.count,
+            "percentage": round(percentage, 2)
+        })
+
+    return {
+        "distribution": distribution,
+        "total": total_count
+    }
 
 
 @park_analytics_router.post("/cache/invalidate")
@@ -114,31 +414,210 @@ async def get_cache_stats(
 @park_analytics_router.get("/by-customer-l2")
 async def get_by_customer_l2(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
-    """✅ OPTIMIZED: Get cached customer L2 distribution"""
+    """Get customer L2 distribution with filtering support"""
 
-    # Use cached service for 10× faster response
-    return kpi_cache_service.get_customer_l2_distribution(db, current_user.id)
+    # Check if any filters are applied
+    has_filters = any([
+        dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    ])
+
+    # If no filters, use cached service for 10× faster response
+    if not has_filters:
+        return kpi_cache_service.get_customer_l2_distribution(db, current_user.id)
+
+    # Apply DOT-based permission filtering
+    query = db.query(Park)
+    accessible_dots = DOTService.get_user_accessible_dots(
+        db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        return {"distribution": [], "total": 0}
+
+    # Apply filters
+    query = apply_filters_to_query(
+        query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    )
+
+    # Get customer L2 distribution
+    l2_distribution = query.filter(
+        Park.customer_l2_code.isnot(None)
+    ).with_entities(
+        Park.customer_l2_code,
+        Park.customer_l2_description,
+        func.count(Park.id).label('count')
+    ).group_by(Park.customer_l2_code, Park.customer_l2_description).order_by(func.count(Park.id).desc()).limit(50).all()
+
+    total_count = sum([item.count for item in l2_distribution])
+
+    distribution = []
+    for item in l2_distribution:
+        percentage = (item.count / total_count * 100) if total_count > 0 else 0
+        distribution.append({
+            # ✅ Match cached service format
+            "code": item.customer_l2_code or "UNKNOWN",
+            # ✅ Match cached service format
+            "description": item.customer_l2_description or "N/A",
+            "count": item.count,
+            "percentage": round(percentage, 2)
+        })
+
+    return {
+        "distribution": distribution,
+        "total": total_count
+    }
 
 
 @park_analytics_router.get("/by-customer-l3")
 async def get_by_customer_l3(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
-    """✅ OPTIMIZED: Get cached customer L3 distribution"""
+    """Get customer L3 distribution with filtering support"""
 
-    # Use cached service for 10× faster response
-    return kpi_cache_service.get_customer_l3_distribution(db, current_user.id)
+    # Check if any filters are applied
+    has_filters = any([
+        dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    ])
+
+    # If no filters, use cached service for 10× faster response
+    if not has_filters:
+        return kpi_cache_service.get_customer_l3_distribution(db, current_user.id)
+
+    # Apply DOT-based permission filtering
+    query = db.query(Park)
+    accessible_dots = DOTService.get_user_accessible_dots(
+        db=db, user_id=current_user.id)
+    if accessible_dots:
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+    else:
+        return {"distribution": [], "total": 0}
+
+    # Apply filters
+    query = apply_filters_to_query(
+        query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    )
+
+    # Get customer L3 distribution
+    l3_distribution = query.filter(
+        Park.customer_l3_code.isnot(None)
+    ).with_entities(
+        Park.customer_l3_code,
+        Park.customer_l3_description,
+        func.count(Park.id).label('count')
+    ).group_by(Park.customer_l3_code, Park.customer_l3_description).order_by(func.count(Park.id).desc()).limit(100).all()
+
+    total_count = sum([item.count for item in l3_distribution])
+
+    distribution = []
+    for item in l3_distribution:
+        percentage = (item.count / total_count * 100) if total_count > 0 else 0
+        distribution.append({
+            # ✅ Match cached service format
+            "code": item.customer_l3_code or "UNKNOWN",
+            # ✅ Match cached service format
+            "description": item.customer_l3_description or "N/A",
+            "count": item.count,
+            "percentage": round(percentage, 2)
+        })
+
+    return {
+        "distribution": distribution,
+        "total": total_count
+    }
 
 
 @park_analytics_router.get("/by-dot")
 async def get_by_dot(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
-    """Get distribution by DOT"""
+    """Get distribution by DOT with filtering support"""
 
     # Apply DOT-based permission filtering
     accessible_dots = DOTService.get_user_accessible_dots(
@@ -146,13 +625,24 @@ async def get_by_dot(
     if not accessible_dots:
         return {"distribution": [], "total": 0}
 
-    # Get DOT distribution
+    # Build base query for filtering
+    park_query = db.query(Park).filter(Park.dot_id.in_(accessible_dots))
+
+    # Apply filters to park query
+    park_query = apply_filters_to_query(
+        park_query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+        offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+        search, date_from, date_to
+    )
+
+    # Get DOT distribution with filtered parks
     dot_distribution = db.query(
         DOT.name,
         DOT.id,
         func.count(Park.id).label('count')
     ).outerjoin(
-        Park, DOT.id == Park.dot_id
+        Park, and_(DOT.id == Park.dot_id, Park.id.in_(
+            park_query.with_entities(Park.id)))
     ).filter(
         DOT.id.in_(accessible_dots)
     ).group_by(
@@ -265,7 +755,7 @@ async def export_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Export park data with comprehensive filtering support"""
+    """Export park data with comprehensive filtering support - NO LIMIT"""
 
     # Apply DOT-based permission filtering
     query = db.query(Park)
@@ -366,46 +856,81 @@ async def export_data(
             detail="No data found with applied filters. Please adjust your filter criteria."
         )
 
-    # Get data (limit to prevent memory issues)
-    parks = query.limit(10000).all()
+    # Get ALL data - no limit
+    parks = query.all()
 
-    if total_count > 10000:
-        logger.warning(
-            f"Export limited to 10,000 records out of {total_count} total records")
+    logger.info(
+        f"Exporting {total_count:,} records for user {current_user.id} (format: {format})"
+    )
 
     # Convert to dict for export with better error handling
     export_data = []
     for park in parks:
         try:
             export_data.append({
+                # Core identifiers
+                "DOT ID": park.dot_id or "",  # ✅ DOT ID
+                "DOT Name": park.dot.name if park.dot else "",  # ✅ DOT Name
                 "Customer Code": park.customer_code or "",
                 "Service Number": park.service_number or "",
+                "Related Service Number": park.related_service_number or "",
                 "Customer Name": park.customer_full_name or "",
                 "Username": park.username or "",
+                "Actel Code": park.actel_code or "",
+
+                # Subscriber and telecom info
                 "Subscriber Status": park.subscriber_status or "",
                 "Telecom Type": park.telecom_type or "",
                 "Offer Name": park.offer_name or "",
                 "Offer Type": park.offer_type or "",
                 "Rental Fees": float(park.rental_fees) if park.rental_fees else 0.0,
+
+                # Customer hierarchy
                 "Customer L1 Code": park.customer_l1_code or "",
                 "Customer L1 Description": park.customer_l1_description or "",
                 "Customer L2 Code": park.customer_l2_code or "",
                 "Customer L2 Description": park.customer_l2_description or "",
                 "Customer L3 Code": park.customer_l3_code or "",
                 "Customer L3 Description": park.customer_l3_description or "",
+
+                # CSR and department
+                "CSR Name": park.csr_name or "",  # ✅ Added missing column
+                "Department Name": park.department_name or "",  # ✅ Added missing column
+
+                # Address information
                 "State": park.state or "",
+                "Province": park.province or "",  # ✅ Added missing column
                 "Area": park.area or "",
+                "District": park.district or "",  # ✅ Added missing column
                 "City": park.city or "",
                 "Town": park.town or "",
+                "Postal Code": park.postal_code or "",  # ✅ Added missing column
                 "Street": park.street or "",
+                "Street Number": park.street_number or "",  # ✅ Added missing column
+                "Building No": park.building_no or "",  # ✅ Added missing column
+                "Unit": park.unit or "",  # ✅ Added missing column
+                "Floor": park.floor or "",  # ✅ Added missing column
+                "House No": park.house_no or "",  # ✅ Added missing column
+                "Grid": park.grid or "",  # ✅ Added missing column
+                "Additional Address Info": park.additional_address_info or "",  # ✅ Added missing column
+
+                # Contact and technical info
                 "Contact Number": park.contact_number or "",
                 "ICCID": park.iccid or "",
                 "IMSI": park.imsi or "",
+
+                # Dates
                 "Status Date": park.status_date.isoformat() if park.status_date else "",
                 "Creation Date": park.creation_date.isoformat() if park.creation_date else "",
                 "Active Date": park.active_date.isoformat() if park.active_date else "",
                 "Expiry Date": park.expiry_date.isoformat() if park.expiry_date else "",
-                "Created At": park.created_at.isoformat() if park.created_at else ""
+                # ✅ Added missing column
+                "Extraction Date": park.extraction_date.isoformat() if park.extraction_date else "",
+
+                # Metadata
+                "Created At": park.created_at.isoformat() if park.created_at else "",
+                # ✅ Added missing column
+                "Updated At": park.updated_at.isoformat() if park.updated_at else ""
             })
         except Exception as e:
             logger.error(f"Error processing park record {park.id}: {e}")
@@ -416,7 +941,7 @@ async def export_data(
         "data": export_data,
         "total_records": len(export_data),
         "total_available": total_count,
-        "export_limited": total_count > 10000,
+        "export_limited": False,  # No limit anymore
         "filters_applied": {
             # Single value filters (backward compatibility)
             "dot_filter": dot_filter,
