@@ -170,7 +170,7 @@ export default function Demo() {
           placeholder="Sélectionner des frameworks..."
         />
         <div className="text-sm text-muted-foreground">
-          Selected: {selected.length > 0 ? selected.join(", ") : "None"}
+          Sélectionné: {selected.length > 0 ? selected.join(", ") : "Aucun"}
         </div>
       </div>
     </div>

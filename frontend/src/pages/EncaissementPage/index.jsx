@@ -350,7 +350,7 @@ const EncaissementPage = () => {
     <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-3xl font-bold">Encaissement AR DOT</h1>
+        <h1 className="text-3xl font-bold">Parc Corporate NGBSS</h1>
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
@@ -551,7 +551,7 @@ const EncaissementPage = () => {
                 </div>
 
                 <div>
-                  <Label>Customer L2</Label>
+                  <Label>Client L2</Label>
                   <MultiSelect
                     options={
                       availableFilters.customer_l2_codes?.map((l2) => ({
@@ -568,7 +568,7 @@ const EncaissementPage = () => {
                 </div>
 
                 <div>
-                  <Label>Customer L3</Label>
+                  <Label>Client L3</Label>
                   <MultiSelect
                     options={
                       availableFilters.customer_l3_codes?.map((l3) => ({
@@ -688,8 +688,8 @@ const EncaissementPage = () => {
         {[
           { id: "overview", label: "Aperçu", icon: BarChart3 },
           { id: "organisation", label: "Par Organisation", icon: Building },
-          { id: "l2", label: "Par Customer L2", icon: FileText },
-          { id: "l3", label: "Par Customer L3", icon: FileText },
+          { id: "l2", label: "Par Client L2", icon: FileText },
+          { id: "l3", label: "Par Client L3", icon: FileText },
         ].map((tab) => (
           <Button
             key={tab.id}
@@ -780,7 +780,7 @@ const EncaissementPage = () => {
         {activeTab === "l2" && (
           <Card>
             <CardHeader>
-              <CardTitle>Distribution par Customer L2</CardTitle>
+              <CardTitle>Distribution par Client L2</CardTitle>
             </CardHeader>
             <CardContent>
               {customerL2Data.length > 0 ? (
@@ -792,7 +792,7 @@ const EncaissementPage = () => {
                   height={550}
                 />
               ) : (
-                <EmptyState message="Aucune donnée Customer L2 disponible" />
+                <EmptyState message="Aucune donnée Client L2 disponible" />
               )}
             </CardContent>
           </Card>
@@ -801,7 +801,7 @@ const EncaissementPage = () => {
         {activeTab === "l3" && (
           <Card width="100%">
             <CardHeader>
-              <CardTitle>Distribution par Customer L3</CardTitle>
+              <CardTitle>Distribution par Client L3</CardTitle>
             </CardHeader>
             <CardContent>
               {customerL3Data.length > 0 ? (
@@ -813,7 +813,7 @@ const EncaissementPage = () => {
                   height={550}
                 />
               ) : (
-                <EmptyState message="Aucune donnée Customer L3 disponible" />
+                <EmptyState message="Aucune donnée Client L3 disponible" />
               )}
             </CardContent>
           </Card>

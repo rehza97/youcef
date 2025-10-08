@@ -66,9 +66,9 @@ const SettingsPage = () => {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="email-notifications">Email Notifications</Label>
+                <Label htmlFor="email-notifications">Notifications Email</Label>
                 <p className="text-sm text-gray-500">
-                  Receive notifications via email
+                  Recevoir les notifications par email
                 </p>
               </div>
               <Switch
@@ -84,9 +84,9 @@ const SettingsPage = () => {
 
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="push-notifications">Push Notifications</Label>
+                <Label htmlFor="push-notifications">Notifications Push</Label>
                 <p className="text-sm text-gray-500">
-                  Receive push notifications in browser
+                  Recevoir les notifications push dans le navigateur
                 </p>
               </div>
               <Switch
@@ -102,9 +102,9 @@ const SettingsPage = () => {
 
             <div className="flex items-center justify-between">
               <div>
-                <Label htmlFor="sms-notifications">SMS Notifications</Label>
+                <Label htmlFor="sms-notifications">Notifications SMS</Label>
                 <p className="text-sm text-gray-500">
-                  Receive notifications via SMS
+                  Recevoir les notifications par SMS
                 </p>
               </div>
               <Switch

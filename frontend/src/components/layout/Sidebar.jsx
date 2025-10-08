@@ -23,7 +23,7 @@ const Sidebar = () => {
 
   const navigation = [
     { name: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
-    { name: "Encaissement AR DOT", href: "/encaissement", icon: BarChart3 },
+    { name: "Parc Corporate NGBSS", href: "/encaissement", icon: BarChart3 },
     { name: "Utilisateurs", href: "/users", icon: Users },
     { name: "Rôles", href: "/roles", icon: Shield },
     { name: "Profil", href: "/profile", icon: User },
@@ -63,7 +63,7 @@ const Sidebar = () => {
           {/* Header */}
           <div className="flex items-center justify-center h-16 px-4 border-b border-gray-200">
             <h1 className="text-xl font-bold text-gray-900">
-              Application Youcef
+              Big Data Automated Analytics
             </h1>
           </div>
 
