@@ -35,55 +35,11 @@ else
     exit 1
 fi
 
-echo "[0/5] Updating from Git repository..."
-echo ""
-
-# Check if git is installed
-if ! command -v git &> /dev/null; then
-    echo "WARNING: Git not found - skipping git update"
-    echo ""
-else
-    # Check if this is a git repository
-    if [ ! -d ".git" ]; then
-        echo "WARNING: Not a git repository - using local files"
-        echo ""
-    else
-        # Get current branch
-        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-        echo "Current branch: $CURRENT_BRANCH"
-        
-        # Switch to fastapi_v1 if not already on it
-        if [ "$CURRENT_BRANCH" != "fastapi_v1" ]; then
-            echo "Switching to fastapi_v1 branch..."
-            git checkout fastapi_v1
-            if [ $? -ne 0 ]; then
-                echo "WARNING: Could not switch to fastapi_v1 branch"
-            fi
-        fi
-        
-        # Fetch and pull latest changes
-        echo "Fetching latest changes from origin/fastapi_v1..."
-        git fetch origin fastapi_v1
-        git pull origin fastapi_v1
-        
-        if [ $? -ne 0 ]; then
-            echo "WARNING: Could not pull latest changes"
-            read -p "Continue with current version? (y/n): " CONTINUE
-            if [ "$CONTINUE" != "y" ]; then
-                exit 1
-            fi
-        else
-            echo "Repository updated successfully"
-        fi
-        echo ""
-    fi
-fi
-
-echo "[1/5] Checking Python installation..."
+echo "[1/4] Checking Python installation..."
 $PYTHON_CMD --version
 echo ""
 
-echo "[2/5] Checking Node.js installation..."
+echo "[2/4] Checking Node.js installation..."
 if ! command -v node &> /dev/null; then
     echo "ERROR: Node.js is not installed or not in PATH"
     exit 1

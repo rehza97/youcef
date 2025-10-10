@@ -25,57 +25,7 @@ if not exist "frontend" (
     exit /b 1
 )
 
-echo [0/5] Updating from Git repository...
-echo.
-
-REM Check if git is installed
-where git >nul 2>&1
-if errorlevel 1 (
-    echo WARNING: Git not found - skipping git update
-    echo.
-    goto :skip_git_update
-)
-
-REM Check if this is a git repository
-if not exist ".git" (
-    echo WARNING: Not a git repository - using local files
-    echo.
-    goto :skip_git_update
-)
-
-REM Get current branch
-for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set CURRENT_BRANCH=%%i
-echo Current branch: %CURRENT_BRANCH%
-
-REM Switch to fastapi_v1 if not already on it
-if not "%CURRENT_BRANCH%"=="fastapi_v1" (
-    echo Switching to fastapi_v1 branch...
-    git checkout fastapi_v1
-    if errorlevel 1 (
-        echo WARNING: Could not switch to fastapi_v1 branch
-        goto :skip_git_update
-    )
-)
-
-REM Fetch and pull latest changes
-echo Fetching latest changes from origin/fastapi_v1...
-git fetch origin fastapi_v1
-git pull origin fastapi_v1
-if errorlevel 1 (
-    echo WARNING: Could not pull latest changes
-    set /p "CONTINUE=Continue with current version? (y/n): "
-    if /i not "!CONTINUE!"=="y" (
-        pause
-        exit /b 1
-    )
-) else (
-    echo Repository updated successfully
-)
-echo.
-
-:skip_git_update
-
-echo [1/5] Checking Python installation...
+echo [1/4] Checking Python installation...
 python --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Python is not installed or not in PATH
@@ -85,7 +35,7 @@ if errorlevel 1 (
 python --version
 echo.
 
-echo [2/5] Checking Node.js installation...
+echo [2/4] Checking Node.js installation...
 node --version >nul 2>&1
 if errorlevel 1 (
     echo ERROR: Node.js is not installed or not in PATH

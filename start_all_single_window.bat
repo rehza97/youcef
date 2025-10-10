@@ -552,7 +552,6 @@ REM ============================================================================
 REM Main Execution Sequence
 REM ============================================================================
 :main_sequence
-call :update_from_git
 call :check_prerequisites
 call :validate_structure
 call :setup_venv
@@ -560,121 +559,6 @@ call :install_backend_deps
 call :install_frontend_deps
 call :check_ports
 call :start_servers
-goto :eof
-
-REM ============================================================================
-REM Step 0: Update from Git Repository
-REM ============================================================================
-:update_from_git
-echo [GIT] Updating from remote repository...
-echo.
-
-REM Check if git is installed
-where git >nul 2>&1
-if errorlevel 1 (
-    echo %COLOR_YELLOW%WARNING: Git not found in PATH%COLOR_RESET%
-    echo   Skipping git update - using local files
-    echo.
-    goto :eof
-)
-echo   - Git found: %COLOR_GREEN%[OK]%COLOR_RESET%
-
-REM Check if this is a git repository
-if not exist ".git" (
-    echo %COLOR_YELLOW%WARNING: Not a git repository%COLOR_RESET%
-    echo   Skipping git update - using local files
-    echo.
-    goto :eof
-)
-echo   - Git repository detected: %COLOR_GREEN%[OK]%COLOR_RESET%
-
-REM Get current branch
-for /f "delims=" %%i in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set CURRENT_BRANCH=%%i
-echo   - Current branch: %COLOR_CYAN%%CURRENT_BRANCH%%COLOR_RESET%
-
-REM Check for uncommitted changes
-git diff --quiet 2>nul
-if errorlevel 1 (
-    echo   - Status: %COLOR_YELLOW%[Uncommitted changes detected]%COLOR_RESET%
-    echo.
-    set /p "STASH_CHANGES=Stash local changes and update? (y/n): "
-    if /i "!STASH_CHANGES!"=="y" (
-        echo   - Stashing local changes...
-        git stash save "Auto-stash before startup - %date% %time%"
-        if errorlevel 1 (
-            echo %COLOR_RED%ERROR: Failed to stash changes%COLOR_RESET%
-            set /p "CONTINUE=Continue without update? (y/n): "
-            if /i not "!CONTINUE!"=="y" goto :error_exit
-            goto :eof
-        )
-        echo     Changes stashed: %COLOR_GREEN%[OK]%COLOR_RESET%
-    ) else (
-        echo   - Skipping git update to preserve local changes
-        echo.
-        goto :eof
-    )
-)
-
-REM Ensure we're on fastapi_v1 branch
-if not "%CURRENT_BRANCH%"=="fastapi_v1" (
-    echo   - Switching to fastapi_v1 branch...
-    git checkout fastapi_v1
-    if errorlevel 1 (
-        echo %COLOR_YELLOW%WARNING: Could not switch to fastapi_v1 branch%COLOR_RESET%
-        echo   Continuing with current branch: %CURRENT_BRANCH%
-        echo.
-        goto :eof
-    )
-    echo     Switched to fastapi_v1: %COLOR_GREEN%[OK]%COLOR_RESET%
-)
-
-REM Fetch latest changes
-echo   - Fetching latest changes from origin...
-git fetch origin fastapi_v1
-if errorlevel 1 (
-    echo %COLOR_YELLOW%WARNING: Could not fetch from remote%COLOR_RESET%
-    echo   Continuing with local files
-    echo.
-    goto :eof
-)
-
-REM Check if there are updates
-for /f %%i in ('git rev-list HEAD..origin/fastapi_v1 --count 2^>nul') do set COMMITS_BEHIND=%%i
-
-if "%COMMITS_BEHIND%"=="0" (
-    echo   - Repository status: %COLOR_GREEN%[Up to date]%COLOR_RESET%
-) else (
-    echo   - Updates available: %COLOR_CYAN%%COMMITS_BEHIND% new commit(s)%COLOR_RESET%
-    echo   - Pulling latest changes...
-    
-    git pull origin fastapi_v1
-    if errorlevel 1 (
-        echo %COLOR_RED%ERROR: Failed to pull changes%COLOR_RESET%
-        echo.
-        set /p "CONTINUE=Continue with current version? (y/n): "
-        if /i not "!CONTINUE!"=="y" goto :error_exit
-    ) else (
-        echo     Repository updated: %COLOR_GREEN%[OK]%COLOR_RESET%
-        
-        REM If dependencies changed, we need to reinstall
-        git diff --name-only HEAD@{1} HEAD | findstr "requirements.txt" >nul
-        if not errorlevel 1 (
-            echo.
-            echo %COLOR_CYAN%NOTE: requirements.txt was updated - dependencies will be reinstalled%COLOR_RESET%
-            if exist "%BACKEND_DIR%\venv" (
-                echo   - Marking venv for refresh...
-                REM Don't delete here, let the install step handle it
-            )
-        )
-        
-        git diff --name-only HEAD@{1} HEAD | findstr "package.json" >nul
-        if not errorlevel 1 (
-            echo %COLOR_CYAN%NOTE: package.json was updated - npm will install new packages%COLOR_RESET%
-        )
-    )
-)
-
-echo.
 goto :eof
 
 REM ============================================================================
