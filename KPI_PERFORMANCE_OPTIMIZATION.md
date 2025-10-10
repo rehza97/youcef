@@ -305,3 +305,4 @@ def warm_kpi_cache():
 **Deployment Time:** ~5 minutes
 
 🚀 **Your dashboard will load 60-120× faster!**
+

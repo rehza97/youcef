@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours for development
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Encryption key for sensitive data (messages, file paths, etc.)
+    # In production, set this via environment variable with a secure Fernet key
+    # Generate a new key with: from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())
+    ENCRYPTION_KEY: str = os.getenv(
+        "ENCRYPTION_KEY", "RtDWPt-l76-kKWG8T7Wa23RDiR64eLS2N2D3rDgE00c=")
+
     # Database
     DATABASE_URL: str = "postgresql://postgres:123456789@localhost:5432/youcef_db"
     DATABASE_ECHO: bool = False

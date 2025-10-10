@@ -1,77 +1,98 @@
-#!/usr/bin/env python3
 """
-Test script to verify all imports work correctly
+Quick diagnostic script to test if all imports work correctly
+Run this before starting the main server to catch import errors
 """
+import sys
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def test_imports():
     """Test all critical imports"""
+    errors = []
+    
+    print("=" * 60)
+    print("Testing imports...")
+    print("=" * 60)
+    
+    # Test 1: Core configuration
     try:
-        print("Testing imports...")
-
-        # Test core imports
+        print("[OK] Testing core.config...")
         from core.config import settings
-        print("✓ Core config imported")
-
-        from core.security import Token, verify_password, get_password_hash
-        print("✓ Core security imported")
-
-        from core.rate_limiter import RateLimiter
-        print("✓ Core rate limiter imported")
-
-        # Test database imports
-        from database.connection import get_db, init_db
-        print("✓ Database connection imported")
-
-        # Test model imports
-        from models.user import User, UserCreate, UserResponse
-        print("✓ User models imported")
-
-        from models.role import Role, RoleResponse
-        print("✓ Role models imported")
-
-        from models.permission import Permission, PermissionResponse
-        print("✓ Permission models imported")
-
-        from models.notification import Notification, NotificationResponse
-        print("✓ Notification models imported")
-
-        from models.conversation import Conversation, ConversationResponse
-        print("✓ Conversation models imported")
-
-        from models.message import Message, MessageResponse
-        print("✓ Message models imported")
-
-        from models.user_block import UserBlock
-        print("✓ UserBlock models imported")
-
-        # Test API imports
-        from api.auth import auth_router
-        print("✓ Auth router imported")
-
-        from api.users import users_router
-        print("✓ Users router imported")
-
-        from api.notifications import notifications_router
-        print("✓ Notifications router imported")
-
-        from api.messaging import messaging_router
-        print("✓ Messaging router imported")
-
-        from api.health import health_router
-        print("✓ Health router imported")
-
-        print("\n🎉 All imports successful!")
-        return True
-
-    except ImportError as e:
-        print(f"❌ Import error: {e}")
-        return False
+        print(f"  Database URL: {settings.DATABASE_URL[:40]}...")
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
+        errors.append(f"core.config: {e}")
+        print(f"[FAIL] core.config failed: {e}")
+    
+    # Test 2: Database connection
+    try:
+        print("[OK] Testing database.connection...")
+        from database.connection import engine, Base
+        print("  SQLAlchemy engine created")
+    except Exception as e:
+        errors.append(f"database.connection: {e}")
+        print(f"[FAIL] database.connection failed: {e}")
+    
+    # Test 3: Database setup (new module)
+    try:
+        print("[OK] Testing core.database_setup...")
+        from core.database_setup import initialize_database, PSYCOPG2_AVAILABLE
+        print(f"  psycopg2 available: {PSYCOPG2_AVAILABLE}")
+    except Exception as e:
+        errors.append(f"core.database_setup: {e}")
+        print(f"[FAIL] core.database_setup failed: {e}")
+    
+    # Test 4: Security and encryption
+    try:
+        print("[OK] Testing core.security...")
+        from core.security import get_current_user
+        print("  Security module loaded")
+    except Exception as e:
+        errors.append(f"core.security: {e}")
+        print(f"[FAIL] core.security failed: {e}")
+    
+    # Test 5: Encryption service
+    try:
+        print("[OK] Testing services.encryption_service...")
+        from services.encryption_service import encryption_service
+        print("  Encryption service loaded")
+    except Exception as e:
+        errors.append(f"services.encryption_service: {e}")
+        print(f"[FAIL] services.encryption_service failed: {e}")
+    
+    # Test 6: Models
+    try:
+        print("[OK] Testing models...")
+        from models.user import User
+        from models.role import Role
+        print("  User and Role models loaded")
+    except Exception as e:
+        errors.append(f"models: {e}")
+        print(f"[FAIL] models failed: {e}")
+    
+    # Test 7: FastAPI app
+    try:
+        print("[OK] Testing main app...")
+        import main
+        print("  Main app module loaded")
+    except Exception as e:
+        errors.append(f"main: {e}")
+        print(f"[FAIL] main failed: {e}")
+    
+    print("=" * 60)
+    
+    if errors:
+        print(f"[ERROR] {len(errors)} import error(s) found:")
+        for error in errors:
+            print(f"  - {error}")
+        print("=" * 60)
         return False
-
+    else:
+        print("[SUCCESS] All imports successful!")
+        print("=" * 60)
+        return True
 
 if __name__ == "__main__":
     success = test_imports()
-    exit(0 if success else 1)
+    sys.exit(0 if success else 1)

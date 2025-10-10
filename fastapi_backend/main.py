@@ -1,79 +1,98 @@
-from api.park_analytics import park_analytics_router
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.security import HTTPBearer
-from contextlib import asynccontextmanager
-import uvicorn
-import os
-from typing import List, Optional, Dict
-import logging
-from datetime import datetime
-import json
-from sqlalchemy.orm import Session
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Youcef Backend API - One-Tool Army
+Automatically handles database creation, migrations, and server startup
+"""
+
+# Print immediately to show script is running (before any imports)
+from websocket_manager import manager
+from core.rate_limiter import RateLimiter
+from core.config import settings
+from core.security import verify_token, get_current_user
+from models.message import Message
+from models.conversation import Conversation, ConversationParticipant
+from models.user import User
+from database.connection import engine, Base, get_db
+from services.processing_websocket import processing_ws_manager
+from services.background_processor import background_processor
+from api.dot_management import router as dot_management_router
+from api.park_management import router as park_management_router
+from api.kpi_processing import kpi_processing_router
+from api.etl_processing import etl_processing_router
+from api.encaissement_analytics import encaissement_analytics_router
+from api.encaissement_upload import encaissement_upload_router
+from api.websocket_messaging import router as websocket_router
+from api.admin_broadcast import router as admin_broadcast_router
+from api.secure_file_management import router as secure_file_router
+from api.secure_messaging import router as secure_messaging_router
+from api.message_reactions import message_reactions_router
+from api.message_attachments import message_attachments_router
+from api.message_crud import message_crud_router
+from api.file_processing import file_processing_router
+from api.file_preview import file_preview_router
+from api.file_management import file_management_router
+from api.file_upload import file_upload_router
+from api.permission_management import permission_management_router
+from api.role_management import role_management_router
+from api.health import health_router
+from api.user_blocks import user_blocks_router
+from api.conversations import conversations_router
+from api.notifications import notifications_router
+from api.user_role_assignments import user_role_assignments_router
+from api.users_management import users_management_router
+from api.auth import auth_router
 import sys
+from sqlalchemy.orm import Session
+import json
+from datetime import datetime
+import logging
+from typing import List, Optional, Dict
+import os
+import uvicorn
+from contextlib import asynccontextmanager
+from fastapi.security import HTTPBearer
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
+from api.park_analytics import park_analytics_router
+print("", flush=True)
+print("=" * 70, flush=True)
+print("  Starting Youcef Backend API...", flush=True)
+print("=" * 70, flush=True)
+print("", flush=True)
+
+
+print("✓ Core imports successful", flush=True)
 
 # Import routers
-from api.auth import auth_router
-from api.users_management import users_management_router
-from api.user_role_assignments import user_role_assignments_router
-from api.notifications import notifications_router
-from api.conversations import conversations_router
-from api.user_blocks import user_blocks_router
-from api.health import health_router
 
 # Role and Permission Management (split from roles_permissions.py)
-from api.role_management import role_management_router
-from api.permission_management import permission_management_router
 
 # File Management (split from files.py)
-from api.file_upload import file_upload_router
-from api.file_management import file_management_router
-from api.file_preview import file_preview_router
-from api.file_processing import file_processing_router
 
 # Message Management (split from messages.py)
-from api.message_crud import message_crud_router
-from api.message_attachments import message_attachments_router
-from api.message_reactions import message_reactions_router
 
 # New Secure Services
-from api.secure_messaging import router as secure_messaging_router
-from api.secure_file_management import router as secure_file_router
-from api.admin_broadcast import router as admin_broadcast_router
-from api.websocket_messaging import router as websocket_router
 
 # Encaissement Management (split from encaissement.py)
-from api.encaissement_upload import encaissement_upload_router
-from api.encaissement_analytics import encaissement_analytics_router
 
 # ETL Processing
-from api.etl_processing import etl_processing_router
 
 # KPI Processing with Auto-Detection
-from api.kpi_processing import kpi_processing_router
 
 # Park Management
-from api.park_management import router as park_management_router
 
 # DOT Management
-from api.dot_management import router as dot_management_router
 
 # Background Processing
-from services.background_processor import background_processor
-from services.processing_websocket import processing_ws_manager
 
 # Import database and models
-from database.connection import engine, Base, get_db
-from models.user import User
-from models.conversation import Conversation, ConversationParticipant
-from models.message import Message
-from core.security import verify_token, get_current_user
-from core.config import settings
-from core.rate_limiter import RateLimiter
 
 # Import WebSocket manager
-from websocket_manager import manager
+
+print("✓ All modules imported successfully", flush=True)
+print("", flush=True)
 
 # Configure detailed logging
 logging.basicConfig(
@@ -111,22 +130,73 @@ security = HTTPBearer()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Starting FastAPI application...")
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("  YOUCEF BACKEND API - AUTOMATIC SETUP & STARTUP")
+    logger.info("=" * 70)
+    logger.info("")
 
-    # Create database tables
-    from database.connection import engine
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created successfully")
-
-    # Initialize RBAC system (permissions and default roles)
+    # Step 1: Initialize database (create DB if needed, run migrations)
     try:
+        logger.info("[1/3] Database Initialization")
+        logger.info("-" * 70)
+        from core.database_setup import initialize_database
+        success = initialize_database(settings.DATABASE_URL)
+        if success:
+            logger.info("Database initialization completed successfully")
+        else:
+            logger.warning(
+                "Database initialization had warnings, but continuing...")
+    except ImportError as e:
+        logger.warning(f"Database setup module not available: {e}")
+        logger.info(
+            "Skipping automatic database creation - will use existing DB")
+    except Exception as e:
+        logger.error(f"Database initialization error: {e}")
+        logger.info("Continuing with manual database configuration...")
+
+    logger.info("")
+
+    # Step 2: Create database tables (for any models not in migrations)
+    try:
+        logger.info("[2/3] Database Tables")
+        logger.info("-" * 70)
+        from database.connection import engine
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables verified/created successfully")
+    except Exception as e:
+        logger.error(f"Failed to create database tables: {e}")
+        logger.error("")
+        logger.error("=" * 70)
+        logger.error(
+            "CRITICAL ERROR: Cannot start without database connection")
+        logger.error("Please ensure:")
+        logger.error("  1. PostgreSQL is running")
+        logger.error("  2. Database 'youcef_db' exists")
+        logger.error("  3. Credentials in config.py are correct")
+        logger.error("=" * 70)
+        raise
+
+    logger.info("")
+
+    # Step 3: Initialize RBAC system (permissions and default roles)
+    try:
+        logger.info("[3/3] RBAC System Initialization")
+        logger.info("-" * 70)
         from core.rbac_init import check_and_init_rbac
         check_and_init_rbac()
+        logger.info("RBAC system initialized successfully")
     except Exception as e:
         logger.error(f"Failed to initialize RBAC system: {e}")
-        # Don't crash the app, but log the error
-        logger.warning(
-            "⚠️  RBAC system may not be fully initialized. Run migrations manually if needed.")
+        logger.warning("RBAC system may not be fully initialized")
+
+    logger.info("")
+    logger.info("=" * 70)
+    logger.info("  SERVER READY")
+    logger.info("  Access API Documentation: http://localhost:8001/docs")
+    logger.info("  Health Check: http://localhost:8001/health")
+    logger.info("=" * 70)
+    logger.info("")
 
     yield
 
@@ -880,10 +950,27 @@ async def send_message_to_conversation(conversation_id: int, message_data: dict)
 
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-        log_level="info"
-    )
+    print("", flush=True)
+    print("=" * 70, flush=True)
+    print("  Launching Uvicorn Server...", flush=True)
+    print(f"  Host: {settings.HOST}", flush=True)
+    print(f"  Port: {settings.PORT}", flush=True)
+    print(f"  Debug: {settings.DEBUG}", flush=True)
+    print("=" * 70, flush=True)
+    print("", flush=True)
+
+    try:
+        uvicorn.run(
+            "main:app",
+            host=settings.HOST,
+            port=settings.PORT,
+            reload=settings.DEBUG,
+            log_level="info"
+        )
+    except KeyboardInterrupt:
+        print("\n\nServer stopped by user", flush=True)
+    except Exception as e:
+        print(f"\n\nERROR: Server failed to start: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

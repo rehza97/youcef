@@ -1,52 +1,108 @@
-# FastAPI and ASGI
+# ============================================================================
+# YOUCEF BACKEND API - Complete Dependencies
+# All libraries required for automatic database setup and full functionality
+# Consolidated from requirements.txt and requirements_security.txt
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Core Framework
+# ----------------------------------------------------------------------------
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
+starlette==0.27.0           # Web framework (comes with FastAPI, pinned for stability)
 
-# Database
+# ----------------------------------------------------------------------------
+# Database & ORM
+# ----------------------------------------------------------------------------
 sqlalchemy==2.0.23
 alembic==1.12.1
-psycopg2-binary==2.9.9
-asyncpg==0.29.0
+psycopg2-binary==2.9.9      # PostgreSQL adapter (required for auto DB creation)
+asyncpg==0.29.0             # Async PostgreSQL support
 
-# Authentication and Security
+# ----------------------------------------------------------------------------
+# Authentication & Security
+# ----------------------------------------------------------------------------
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
+cryptography==41.0.7        # Required for encryption service (Fernet)
+bcrypt==4.1.2               # Password hashing
 
-# Configuration
+# ----------------------------------------------------------------------------
+# Configuration & Settings
+# ----------------------------------------------------------------------------
 pydantic==2.5.0
 pydantic-settings==2.1.0
+python-dotenv==1.0.0
+python-decouple==3.8        # Environment variable management
 
-# CORS
-python-cors==0.0.1
+# ----------------------------------------------------------------------------
+# Caching & Real-time Communication
+# ----------------------------------------------------------------------------
+redis==5.0.1                # Redis client (includes async support)
+websockets==12.0            # WebSocket support
 
-# Redis (for caching and WebSocket)
-redis==5.0.1
-aioredis==2.0.1
+# ----------------------------------------------------------------------------
+# File Handling & Processing
+# ----------------------------------------------------------------------------
+aiofiles==23.2.1
+python-magic==0.4.27        # File type detection
+python-magic-bin==0.4.14    # Windows support for python-magic
+filetype==1.2.0             # Advanced file type detection
+Pillow==10.0.1              # Image processing and validation
+PyPDF2==3.0.1               # PDF file processing
 
-# WebSocket
-websockets==12.0
+# ----------------------------------------------------------------------------
+# Data Processing & Analytics
+# ----------------------------------------------------------------------------
+pandas==2.1.4
+openpyxl==3.1.2             # Excel file support (.xlsx)
+xlrd==2.0.1                 # Excel file support (.xls)
+numpy==1.26.4               # Python 3.12 compatible (upgraded from 1.24.3)
 
-# Development
+# ----------------------------------------------------------------------------
+# Logging & Monitoring
+# ----------------------------------------------------------------------------
+python-json-logger==2.0.7
+structlog==23.2.0           # Advanced structured logging
+psutil==5.9.6               # System and process utilities
+
+# ----------------------------------------------------------------------------
+# Email & Validation
+# ----------------------------------------------------------------------------
+email-validator==2.1.0      # Email validation (required by pydantic)
+jsonschema==4.19.2          # JSON validation
+dnspython==2.4.2            # DNS queries for email validation
+
+# ----------------------------------------------------------------------------
+# Security & Validation
+# ----------------------------------------------------------------------------
+sqlparse==0.4.4             # SQL parsing and validation
+
+# ----------------------------------------------------------------------------
+# Utilities
+# ----------------------------------------------------------------------------
+pytz==2023.3                # Timezone handling
+shortuuid==1.0.11           # Short UUID generation
+
+# ----------------------------------------------------------------------------
+# Testing & Development
+# ----------------------------------------------------------------------------
 pytest==7.4.3
 pytest-asyncio==0.21.1
 httpx==0.25.2
 
-# Logging
-python-json-logger==2.0.7
-
-# Email (optional)
-python-email-validator==2.1.0
-
-# File handling
-aiofiles==23.2.1
-
-# Data processing for Excel and CSV
-pandas==2.1.4
-openpyxl==3.1.2
-xlrd==2.0.1
-numpy==1.24.3
-
-# Environment variables
-python-dotenv==1.0.0 
+# ============================================================================
+# Installation Instructions:
+# 
+# Basic installation:
+#   pip install -r requirements.txt
+#
+# With upgrade:
+#   pip install -r requirements.txt --upgrade
+#
+# Troubleshooting:
+#   If installation fails, try:
+#   pip install -r requirements.txt --no-cache-dir
+#
+# ============================================================================

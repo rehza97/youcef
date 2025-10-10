@@ -28,3 +28,12 @@ fastapi_backend/fastapi_backend.db
 *.log
 .cursor/
 .claude/
+
+# Virtual environments
+fastapi_backend/venv/
+venv/
+env/
+ENV/
+
+# Startup script logs
+logs/

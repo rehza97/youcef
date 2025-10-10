@@ -1,4 +1,3 @@
-import os
 import base64
 import logging
 from typing import Optional
@@ -8,28 +7,36 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 logger = logging.getLogger(__name__)
 
+
 class EncryptionService:
     """Service for encrypting and decrypting sensitive data"""
 
-    def __init__(self):
-        self._initialize_encryption_key()
+    def __init__(self, encryption_key: Optional[str] = None):
+        self._initialize_encryption_key(encryption_key)
 
-    def _initialize_encryption_key(self):
-        """Initialize encryption key from environment or generate new one"""
+    def _initialize_encryption_key(self, encryption_key: Optional[str] = None):
+        """Initialize encryption key from settings or provided key"""
         try:
-            # Try to get key from environment variable
-            key_b64 = os.environ.get('ENCRYPTION_KEY')
+            # Use provided key or get from settings
+            if not encryption_key:
+                from core.config import settings
+                encryption_key = settings.ENCRYPTION_KEY
 
-            if key_b64:
-                self.encryption_key = key_b64.encode()
+            if encryption_key:
+                self.encryption_key = encryption_key.encode()
                 self.fernet = Fernet(self.encryption_key)
+                logger.debug(
+                    "Encryption service initialized with configured key")
             else:
-                # Generate new key for development (should be set in production)
-                logger.warning("No ENCRYPTION_KEY found in environment, generating new key for development")
+                # Fallback: generate new key (should not happen with settings)
+                logger.warning(
+                    "No ENCRYPTION_KEY configured, generating new key")
                 self.encryption_key = Fernet.generate_key()
                 self.fernet = Fernet(self.encryption_key)
-                logger.warning(f"Generated encryption key: {self.encryption_key.decode()}")
-                logger.warning("Please set this key in your environment variables for production!")
+                logger.warning(
+                    f"Generated encryption key: {self.encryption_key.decode()}")
+                logger.warning(
+                    "Please set ENCRYPTION_KEY in config.py or environment!")
 
         except Exception as e:
             logger.error(f"Failed to initialize encryption: {e}")
@@ -193,6 +200,7 @@ class EncryptionService:
         except Exception as e:
             logger.error(f"Error verifying password: {e}")
             return False
+
 
 # Global instance
 encryption_service = EncryptionService()

@@ -144,3 +144,4 @@ def analyze_null_columns():
 
 if __name__ == "__main__":
     analyze_null_columns()
+
