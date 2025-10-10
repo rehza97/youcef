@@ -115,6 +115,24 @@ const tokenStorage = {
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
+    // During HMR, context might be temporarily undefined
+    // Return a safe default instead of throwing
+    if (import.meta.hot) {
+      console.warn("⚠️ AuthContext not available during HMR, using defaults");
+      return {
+        user: null,
+        token: null,
+        loading: false,
+        error: null,
+        login: async () => {},
+        logout: () => {},
+        refreshToken: async () => {},
+        checkAuth: () => {},
+        updateUserProfile: async () => {},
+        hasPermission: () => false,
+        hasRole: () => false,
+      };
+    }
     throw new Error("useAuth must be used within an AuthProvider");
   }
   return context;

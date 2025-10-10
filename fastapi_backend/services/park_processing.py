@@ -348,8 +348,19 @@ class ParkDataProcessor:
 
         for col in date_columns:
             if col in df.columns:
-                df[col] = pd.to_datetime(
-                    df[col], errors='coerce', dayfirst=True)
+                # Try multiple common date formats
+                # First try ISO format (YYYY-MM-DD HH:MM:SS)
+                parsed = pd.to_datetime(
+                    df[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+                # Then try European format (DD.MM.YYYY HH:MM:SS)
+                parsed = parsed.fillna(
+                    pd.to_datetime(
+                        df[col], format='%d.%m.%Y %H:%M:%S', errors='coerce')
+                )
+                # Finally, flexible parsing without dayfirst for remaining values
+                df[col] = parsed.fillna(
+                    pd.to_datetime(df[col], errors='coerce', dayfirst=False)
+                )
 
         # Clean numeric columns
         rental_fees_column = self._find_column(
@@ -621,7 +632,12 @@ class ParkDataProcessor:
             return None
         try:
             if isinstance(value, str):
-                return pd.to_datetime(value, dayfirst=True).date()
+                # Try standard ISO format first
+                try:
+                    return pd.to_datetime(value, format='%Y-%m-%d', errors='raise').date()
+                except:
+                    # Fallback to flexible parsing
+                    return pd.to_datetime(value, dayfirst=False, errors='raise').date()
             elif hasattr(value, 'date'):
                 return value.date()
             return None

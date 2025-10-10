@@ -249,7 +249,14 @@ export const ProcessingProvider = ({ children }) => {
 export const useProcessing = () => {
   const context = useContext(ProcessingContext);
   if (!context) {
-    console.warn("useProcessing must be used within a ProcessingProvider");
+    // During HMR, context might be temporarily undefined
+    if (import.meta.hot) {
+      console.warn(
+        "⚠️ ProcessingContext not available during HMR, using defaults"
+      );
+    } else {
+      console.warn("useProcessing must be used within a ProcessingProvider");
+    }
     // Return default values to prevent crashes
     return {
       isConnected: false,
@@ -258,6 +265,17 @@ export const useProcessing = () => {
       lastByTask: {},
       sendMessage: () => false,
       reconnect: () => {},
+      getConnectionInfo: () => ({
+        isConnected: false,
+        connectionStatus: "disconnected",
+        hasUser: false,
+        hasToken: false,
+        activeSubscriptions: [],
+      }),
+      activeTasks: [],
+      globalProcessingCount: 0,
+      getActiveTask: () => null,
+      hasActiveProcessing: false,
     };
   }
   return context;

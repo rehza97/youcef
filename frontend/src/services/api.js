@@ -1,7 +1,7 @@
 import axios from "axios";
 import { debug } from "../lib/debug.js";
 
-const API_BASE_URL = "http://127.0.0.1:8001"; // FastAPI backend URL
+const API_BASE_URL = "http://localhost:8001"; // FastAPI backend URL
 
 // Create axios instance with base configuration
 const api = axios.create({
@@ -979,13 +979,20 @@ class WebSocketService {
         return;
       }
 
-      // Auto-reconnect if not manually closed and not a clean close
+      // Auto-reconnect if not manually closed
+      // Always attempt reconnection unless manually closed or auth error
       if (
         !this.isManuallyClosed.get(connectionId) &&
-        options.autoReconnect !== false &&
-        event.code !== 1000 // Don't reconnect on clean close
+        options.autoReconnect !== false
       ) {
+        console.log(
+          `🔄 Connection lost for ${endpoint}, scheduling reconnection...`
+        );
         this.scheduleReconnect(connectionId, endpoint, options);
+      } else if (this.isManuallyClosed.get(connectionId)) {
+        console.log(
+          `🔕 Connection manually closed for ${endpoint}, not reconnecting`
+        );
       }
     };
 
