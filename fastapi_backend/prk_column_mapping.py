@@ -173,9 +173,14 @@ def map_prk_record_to_park_dict(record: dict, file_upload_id: int = None) -> dic
         if not t:
             return None
         try:
-            return pd.to_datetime(t, errors="coerce", dayfirst=True).to_pydatetime()
-        except Exception:
-            return None
+            # Try standard ISO format first (most common: YYYY-MM-DD HH:MM:SS)
+            return pd.to_datetime(t, format="%Y-%m-%d %H:%M:%S", errors="coerce").to_pydatetime()
+        except (ValueError, TypeError):
+            try:
+                # Fallback to general parsing without dayfirst (since our data is year-first)
+                return pd.to_datetime(t, errors="coerce", dayfirst=False).to_pydatetime()
+            except Exception:
+                return None
 
     park_dict = {
         "file_upload_id": file_upload_id,

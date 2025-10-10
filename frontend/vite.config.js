@@ -11,4 +11,15 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    host: "0.0.0.0", // Listen on all network interfaces
+    port: 3000,
+    strictPort: true,
+    watch: {
+      usePolling: true, // Needed for Docker on Windows
+    },
+    hmr: {
+      clientPort: 3000,
+    },
+  },
 });

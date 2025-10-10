@@ -33,7 +33,21 @@ def create_default_admin(db: Session):
     # Get credentials from environment or use defaults
     admin_username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
     admin_email = os.getenv("DEFAULT_ADMIN_EMAIL", "admin@example.com")
-    admin_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "Admin123!ChangeMeNow!")
+    admin_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+
+    # Ensure password is not longer than 72 bytes (bcrypt limit)
+    password_bytes = len(admin_password.encode('utf-8'))
+    logger.info(
+        f"Admin password length: {len(admin_password)} characters, {password_bytes} bytes")
+
+    if password_bytes > 72:
+        admin_password = admin_password[:72]
+        logger.warning(f"Admin password truncated to 72 bytes")
+
+    logger.info(
+        f"Final password: '{admin_password}' ({len(admin_password)} chars, {len(admin_password.encode('utf-8'))} bytes)")
+    logger.info(
+        f"Creating admin user: {admin_username} with email: {admin_email}")
 
     # Create admin user
     admin_user = User(
@@ -65,7 +79,8 @@ def create_default_admin(db: Session):
     logger.info(f"   Email:    {admin_email}")
     logger.info(f"   Password: {admin_password}")
     logger.info("=" * 70)
-    logger.warning("⚠️  IMPORTANT: Change the admin password immediately after first login!")
+    logger.warning(
+        "⚠️  IMPORTANT: Change the admin password immediately after first login!")
     logger.info("=" * 70)
 
 
@@ -83,7 +98,8 @@ def check_and_init_rbac():
 
         if perm_count == 0 or role_count == 0:
             logger.info("=" * 70)
-            logger.info("🔧 RBAC system not initialized. Running auto-initialization...")
+            logger.info(
+                "🔧 RBAC system not initialized. Running auto-initialization...")
             logger.info("=" * 70)
 
             # Import and run the init function
@@ -104,7 +120,8 @@ def check_and_init_rbac():
             logger.info("✅ RBAC system initialized successfully!")
             logger.info("=" * 70)
         else:
-            logger.info(f"✓ RBAC system already initialized ({perm_count} permissions, {role_count} roles)")
+            logger.info(
+                f"✓ RBAC system already initialized ({perm_count} permissions, {role_count} roles)")
 
         # Check and create admin account if needed
         create_default_admin(db)

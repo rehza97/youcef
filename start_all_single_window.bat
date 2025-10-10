@@ -7,6 +7,9 @@ REM Launches backend and frontend in separate windows with full setup
 REM Features: Virtual env, dependency install, error handling, health checks
 REM ============================================================================
 
+REM CRITICAL: Change to the script's directory first
+cd /d "%~dp0"
+
 REM Configuration
 set "PROJECT_NAME=YOUCEF PROJECT"
 set "BACKEND_DIR=fastapi_backend"
@@ -18,6 +21,15 @@ set "LOG_DIR=logs"
 set "PYTHON_CMD=python"
 set "MIN_PYTHON_VERSION=3.8"
 set "MIN_NODE_VERSION=16"
+
+REM Log files with timestamp
+set "TIMESTAMP=%date:~-4%%date:~-7,2%%date:~-10,2%_%time:~0,2%%time:~3,2%%time:~6,2%"
+set "TIMESTAMP=%TIMESTAMP: =0%"
+set "STARTUP_LOG=%LOG_DIR%\startup_%TIMESTAMP%.log"
+set "BACKEND_INSTALL_LOG=%LOG_DIR%\backend_install_%TIMESTAMP%.log"
+set "FRONTEND_INSTALL_LOG=%LOG_DIR%\frontend_install_%TIMESTAMP%.log"
+set "BACKEND_SERVER_LOG=%LOG_DIR%\backend_server_%TIMESTAMP%.log"
+set "FRONTEND_SERVER_LOG=%LOG_DIR%\frontend_server_%TIMESTAMP%.log"
 
 REM Colors (Windows 10+ ANSI support)
 set "COLOR_RESET=[0m"
@@ -36,6 +48,9 @@ if "%version%" geq "10.0" (
     )
 )
 
+REM Create logs directory if it doesn't exist
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
+
 REM Header
 cls
 echo.
@@ -44,24 +59,57 @@ echo   %COLOR_CYAN%%PROJECT_NAME% - PRODUCTION STARTUP%COLOR_RESET%
 echo   Started at: %date% %time%
 echo ============================================================================
 echo.
+echo   Logging to: %STARTUP_LOG%
+echo ============================================================================
+echo.
+
+REM Log startup info
+echo ============================================================================ > "%STARTUP_LOG%"
+echo   %PROJECT_NAME% - STARTUP LOG >> "%STARTUP_LOG%"
+echo   Started at: %date% %time% >> "%STARTUP_LOG%"
+echo ============================================================================ >> "%STARTUP_LOG%"
+echo. >> "%STARTUP_LOG%"
 
 REM Execute main startup sequence
-goto :main_sequence
+call :main_sequence
+if errorlevel 1 goto :error_exit
+goto :success_complete
+
+REM ============================================================================
+REM Helper Functions
+REM ============================================================================
+:log_message
+REM Usage: call :log_message "message"
+if "%~1"=="" (
+    echo.
+    echo. >> "%STARTUP_LOG%" 2>nul
+) else (
+    echo %~1
+    echo %~1 >> "%STARTUP_LOG%" 2>nul
+)
+goto :eof
+
+:log_message_no_newline
+REM Usage: call :log_message_no_newline "message"
+echo|set /p=%~1
+echo %~1 >> "%STARTUP_LOG%" 2>nul
+goto :eof
 
 REM ============================================================================
 REM Function: Check Prerequisites
 REM ============================================================================
 :check_prerequisites
-echo [PREREQ] Checking prerequisites...
-echo.
+call :log_message "[PREREQ] Checking prerequisites..."
+call :log_message " "
 
 REM Check Python
 where python >nul 2>&1
 if errorlevel 1 (
-    echo %COLOR_RED%ERROR: Python not found in PATH%COLOR_RESET%
-    echo Please install Python 3.8+ from https://www.python.org/
+    call :log_message "ERROR: Python not found in PATH"
+    call :log_message "Please install Python 3.8+ from https://www.python.org/"
     goto :error_exit
 )
+echo Python check... >> "%STARTUP_LOG%"
 
 REM Check Python version
 for /f "tokens=2 delims= " %%i in ('python --version 2^>^&1') do (
@@ -72,15 +120,25 @@ for /f "tokens=2 delims= " %%i in ('python --version 2^>^&1') do (
     )
 )
 
-echo   - Python: %PYTHON_VERSION%
+call :log_message "  - Python: %PYTHON_VERSION%"
 if !PY_MAJOR! LSS 3 (
-    echo %COLOR_RED%ERROR: Python 3.8+ required, found !PY_MAJOR!.!PY_MINOR!%COLOR_RESET%
+    call :log_message "ERROR: Python 3.8+ required, found !PY_MAJOR!.!PY_MINOR!"
     goto :error_exit
 )
 if !PY_MAJOR! EQU 3 if !PY_MINOR! LSS 8 (
-    echo %COLOR_YELLOW%WARNING: Python 3.8+ recommended, found 3.!PY_MINOR!%COLOR_RESET%
+    call :log_message "ERROR: Python 3.8+ required, found 3.!PY_MINOR!"
+    goto :error_exit
 )
-echo     Status: %COLOR_GREEN%[OK]%COLOR_RESET%
+if !PY_MAJOR! EQU 3 if !PY_MINOR! GEQ 8 if !PY_MINOR! LEQ 14 (
+    echo     Status: %COLOR_GREEN%[OK - Tested with Python 3.8-3.14]%COLOR_RESET%
+    echo     Status: [OK - Tested with Python 3.8-3.14] >> "%STARTUP_LOG%"
+) else if !PY_MAJOR! EQU 3 (
+    echo     Status: %COLOR_CYAN%[OK - Python 3.!PY_MINOR! - May work]%COLOR_RESET%
+    echo     Status: [OK - Python 3.!PY_MINOR! - May work] >> "%STARTUP_LOG%"
+) else (
+    echo     Status: %COLOR_CYAN%[OK - Python !PY_MAJOR!.!PY_MINOR! - Untested]%COLOR_RESET%
+    echo     Status: [OK - Python !PY_MAJOR!.!PY_MINOR! - Untested] >> "%STARTUP_LOG%"
+)
 
 REM Check pip
 python -m pip --version >nul 2>&1
@@ -240,22 +298,23 @@ echo   - Virtual environment activated: %COLOR_GREEN%[OK]%COLOR_RESET%
 echo.
 
 REM Install build dependencies first (critical!)
-echo   - Installing build dependencies...
-python -m pip install --upgrade pip setuptools wheel
+call :log_message "  - Installing build dependencies..."
+python -m pip install --upgrade pip setuptools wheel >> "%STARTUP_LOG%" 2>&1
 if errorlevel 1 (
-    echo %COLOR_RED%ERROR: Failed to install build dependencies%COLOR_RESET%
-    echo.
-    echo This is critical - cannot install other packages without setuptools
-    echo.
-    echo Try manually:
-    echo   cd %BACKEND_DIR%
-    echo   call venv\Scripts\activate.bat
-    echo   python -m pip install --upgrade pip setuptools wheel
+    call :log_message "ERROR: Failed to install build dependencies"
+    call :log_message " "
+    call :log_message "This is critical - cannot install other packages without setuptools"
+    call :log_message " "
+    call :log_message "Try manually:"
+    call :log_message "  cd %BACKEND_DIR%"
+    call :log_message "  call venv\Scripts\activate.bat"
+    call :log_message "  python -m pip install --upgrade pip setuptools wheel"
     cd ..
     goto :error_exit
 )
 echo     Build tools ready: %COLOR_GREEN%[OK]%COLOR_RESET%
-echo.
+echo     Build tools ready: [OK] >> "%STARTUP_LOG%" 2>nul
+call :log_message " "
 
 REM Check if requirements files exist
 if not exist "requirements.txt" (
@@ -264,120 +323,140 @@ if not exist "requirements.txt" (
     goto :error_exit
 )
 
-echo   - Installing Python packages...
-echo     %COLOR_CYAN%This may take a few minutes on first run%COLOR_RESET%
-echo.
+call :log_message "  - Installing Python packages..."
+call :log_message "    This may take a few minutes on first run"
+call :log_message " "
 
 REM Strategy: Try core packages first, then full requirements
-echo   - Step 1: Installing core packages...
+call :log_message "  - Step 1: Installing core packages..."
+echo Installing core packages... >> "%STARTUP_LOG%"
+echo ---------------------------------------- >> "%STARTUP_LOG%"
 
 if exist "requirements_core.txt" (
     REM Try core packages first (more reliable)
-    pip install -r requirements_core.txt
+    pip install -r requirements_core.txt >> "%BACKEND_INSTALL_LOG%" 2>&1
     
     if errorlevel 1 (
-        echo %COLOR_RED%ERROR: Failed to install even core packages%COLOR_RESET%
-        echo.
-        echo Manual installation required:
-        echo   pip install fastapi uvicorn sqlalchemy
+        call :log_message "ERROR: Failed to install even core packages"
+        call :log_message " "
+        call :log_message "Manual installation required:"
+        call :log_message "  pip install fastapi uvicorn sqlalchemy"
+        call :log_message " "
+        echo Check log: %BACKEND_INSTALL_LOG%
+        echo Check log: %BACKEND_INSTALL_LOG% >> "%STARTUP_LOG%" 2>nul
         cd ..
         goto :error_exit
     )
     
     echo     Core packages installed: %COLOR_GREEN%[OK]%COLOR_RESET%
-    echo.
+    echo     Core packages installed: [OK] >> "%STARTUP_LOG%" 2>nul
+    call :log_message " "
     
-    REM Now try full requirements
-    echo   - Step 2: Installing additional packages...
-    pip install -r requirements.txt 2>nul
+    REM Now try full requirements  
+    call :log_message "  - Step 2: Installing additional packages..."
+    echo Installing full requirements... >> "%STARTUP_LOG%"
+    echo ---------------------------------------- >> "%STARTUP_LOG%"
+    pip install -r requirements.txt >> "%BACKEND_INSTALL_LOG%" 2>&1
     
     if errorlevel 1 (
         echo %COLOR_YELLOW%WARNING: Some optional packages failed%COLOR_RESET%
+        echo WARNING: Some optional packages failed >> "%STARTUP_LOG%" 2>nul
         echo %COLOR_CYAN%Continuing with core packages only%COLOR_RESET%
+        echo Continuing with core packages only >> "%STARTUP_LOG%" 2>nul
     ) else (
         echo     All packages installed: %COLOR_GREEN%[OK]%COLOR_RESET%
+        echo     All packages installed: [OK] >> "%STARTUP_LOG%" 2>nul
     )
 ) else (
     REM No core file, try full requirements directly
-    pip install -r requirements.txt
+    pip install -r requirements.txt >> "%BACKEND_INSTALL_LOG%" 2>&1
     
     if errorlevel 1 (
-        echo %COLOR_RED%ERROR: Package installation failed%COLOR_RESET%
-        echo.
-        echo Trying minimal installation...
-        pip install fastapi uvicorn sqlalchemy psycopg2-binary pandas
+        call :log_message "ERROR: Package installation failed"
+        call :log_message " "
+        call :log_message "Trying minimal installation..."
+        pip install fastapi uvicorn sqlalchemy psycopg2-binary pandas >> "%BACKEND_INSTALL_LOG%" 2>&1
         
         if errorlevel 1 (
-            echo %COLOR_RED%ERROR: Cannot install minimal packages%COLOR_RESET%
+            call :log_message "ERROR: Cannot install minimal packages"
+            call :log_message "Check log: %BACKEND_INSTALL_LOG%"
             cd ..
             goto :error_exit
         )
         echo %COLOR_CYAN%Minimal packages installed, continuing...%COLOR_RESET%
+        echo Minimal packages installed, continuing... >> "%STARTUP_LOG%" 2>nul
     )
 )
 
-echo.
-echo   - Verifying critical packages...
-python -c "import fastapi, uvicorn, sqlalchemy" 2>nul
+call :log_message " "
+call :log_message "  - Verifying critical packages..."
+python -c "import fastapi, uvicorn, sqlalchemy" >> "%STARTUP_LOG%" 2>nul
 if errorlevel 1 (
-    echo %COLOR_RED%ERROR: Critical packages missing%COLOR_RESET%
-    echo.
-    echo Required packages not found. Please run:
-    echo   cd %BACKEND_DIR%
-    echo   call venv\Scripts\activate.bat
-    echo   pip install fastapi uvicorn sqlalchemy
+    call :log_message "ERROR: Critical packages missing"
+    call :log_message " "
+    call :log_message "Required packages not found. Please run:"
+    call :log_message "  cd %BACKEND_DIR%"
+    call :log_message "  call venv\Scripts\activate.bat"
+    call :log_message "  pip install fastapi uvicorn sqlalchemy"
     cd ..
     goto :error_exit
 )
 echo     FastAPI, Uvicorn, SQLAlchemy: %COLOR_GREEN%[OK]%COLOR_RESET%
+echo     FastAPI, Uvicorn, SQLAlchemy: [OK] >> "%STARTUP_LOG%" 2>nul
 
-echo.
-echo   - Backend dependencies ready: %COLOR_GREEN%[OK]%COLOR_RESET%
+call :log_message " "
+call :log_message "  - Backend dependencies ready: [OK]"
 
 cd ..
-echo.
+call :log_message " "
 goto :eof
 
 REM ============================================================================
 REM Step 4: Install Frontend Dependencies
 REM ============================================================================
 :install_frontend_deps
-echo [4/6] Installing frontend dependencies...
-echo.
+call :log_message "[4/6] Installing frontend dependencies..."
+call :log_message " "
 cd "%FRONTEND_DIR%"
+
+echo Installing frontend packages... >> "%STARTUP_LOG%"
+echo ---------------------------------------- >> "%STARTUP_LOG%"
 
 REM Check if node_modules exists and is valid
 if exist "node_modules" (
-    echo   - node_modules directory exists
-    echo   - Checking if dependencies are up to date...
-    echo.
+    call :log_message "  - node_modules directory exists"
+    call :log_message "  - Checking if dependencies are up to date..."
+    call :log_message " "
     
     REM Check for package-lock.json changes
-    call npm install --prefer-offline
+    call npm install --prefer-offline >> "%FRONTEND_INSTALL_LOG%" 2>&1
 ) else (
-    echo   - Installing fresh dependencies...
-    echo     %COLOR_CYAN%This may take a few minutes on first run%COLOR_RESET%
-    echo.
-    call npm install
+    call :log_message "  - Installing fresh dependencies..."
+    call :log_message "    This may take a few minutes on first run"
+    call :log_message " "
+    call npm install >> "%FRONTEND_INSTALL_LOG%" 2>&1
 )
 
 if errorlevel 1 (
-    echo.
-    echo %COLOR_RED%ERROR: npm install failed%COLOR_RESET%
-    echo.
-    echo Troubleshooting:
-    echo   1. Check your internet connection
-    echo   2. Delete node_modules and try again
-    echo   3. Run: npm cache clean --force
-    echo   4. Try: npm install --legacy-peer-deps
+    call :log_message " "
+    call :log_message "ERROR: npm install failed"
+    call :log_message " "
+    call :log_message "Troubleshooting:"
+    call :log_message "  1. Check your internet connection"
+    call :log_message "  2. Delete node_modules and try again"
+    call :log_message "  3. Run: npm cache clean --force"
+    call :log_message "  4. Try: npm install --legacy-peer-deps"
+    call :log_message " "
+    echo Check log: %FRONTEND_INSTALL_LOG%
+    echo Check log: %FRONTEND_INSTALL_LOG% >> "%STARTUP_LOG%" 2>nul
     cd ..
     goto :error_exit
 )
 
-echo.
-echo   - Verifying installation...
+call :log_message " "
+call :log_message "  - Verifying installation..."
 if not exist "node_modules" (
-    echo %COLOR_RED%ERROR: node_modules not created%COLOR_RESET%
+    call :log_message "ERROR: node_modules not created"
     cd ..
     goto :error_exit
 )
@@ -385,11 +464,12 @@ if not exist "node_modules" (
 REM Count installed packages
 for /f %%i in ('dir /b /a:d node_modules 2^>nul ^| find /c /v ""') do set PKG_COUNT=%%i
 echo     Packages installed: %PKG_COUNT% %COLOR_GREEN%[OK]%COLOR_RESET%
+echo     Packages installed: %PKG_COUNT% [OK] >> "%STARTUP_LOG%"
 
-echo   - Frontend dependencies ready: %COLOR_GREEN%[OK]%COLOR_RESET%
+call :log_message "  - Frontend dependencies ready: [OK]"
 
 cd ..
-echo.
+call :log_message " "
 goto :eof
 
 REM ============================================================================
@@ -457,9 +537,13 @@ REM ============================================================================
 echo [6/6] Launching servers...
 echo.
 
-REM Start backend in new window
+REM Start backend in new window with logging
 echo   - Starting backend server (FastAPI)...
-start "Youcef Backend (FastAPI) - Port %BACKEND_PORT%" cmd /k "cd /d "%CD%\%BACKEND_DIR%" && call %VENV_DIR%\Scripts\activate.bat && title Youcef Backend - FastAPI && echo. && echo ============================================================================ && echo    YOUCEF BACKEND SERVER - FASTAPI && echo ============================================================================ && echo. && echo   Port: %BACKEND_PORT% && echo   API Documentation: http://localhost:%BACKEND_PORT%/docs && echo   ReDoc: http://localhost:%BACKEND_PORT%/redoc && echo   Health: http://localhost:%BACKEND_PORT%/health && echo. && echo   %COLOR_CYAN%Press Ctrl+C to stop the backend server%COLOR_RESET% && echo. && echo ============================================================================ && echo. && python main.py"
+echo Starting backend server at %date% %time% > "%BACKEND_SERVER_LOG%"
+echo ============================================================================ >> "%BACKEND_SERVER_LOG%"
+echo. >> "%BACKEND_SERVER_LOG%"
+
+start "Youcef Backend (FastAPI) - Port %BACKEND_PORT%" cmd /k "cd /d "%CD%\%BACKEND_DIR%" && call %VENV_DIR%\Scripts\activate.bat && title Youcef Backend - FastAPI && cls && echo. && echo ============================================================================ && echo    YOUCEF BACKEND SERVER - FASTAPI && echo ============================================================================ && echo. && echo   Port: %BACKEND_PORT% && echo   API Documentation: http://localhost:%BACKEND_PORT%/docs && echo   ReDoc: http://localhost:%BACKEND_PORT%/redoc && echo   Health: http://localhost:%BACKEND_PORT%/health && echo. && echo   Server Output Log: ..\%BACKEND_SERVER_LOG% && echo   Press Ctrl+C to stop the backend server && echo. && echo ============================================================================ && echo. && (python main.py 2^>^&1 ^| powershell -Command \"$input ^| Tee-Object -FilePath '..\%BACKEND_SERVER_LOG%' -Append\")"
 
 if errorlevel 1 (
     echo %COLOR_RED%ERROR: Failed to launch backend window%COLOR_RESET%
@@ -470,15 +554,20 @@ echo     Backend window opened: %COLOR_GREEN%[OK]%COLOR_RESET%
 echo     - URL: http://localhost:%BACKEND_PORT%
 echo     - API Docs: http://localhost:%BACKEND_PORT%/docs
 echo     - ReDoc: http://localhost:%BACKEND_PORT%/redoc
+echo     - Server log: "%BACKEND_SERVER_LOG%"
 echo.
 
 REM Wait for backend to initialize
 echo   - Waiting for backend to start (5 seconds)...
 timeout /t 5 /nobreak >nul
 
-REM Start frontend in new window
+REM Start frontend in new window with logging
 echo   - Starting frontend server (Vite)...
-start "Youcef Frontend (Vite) - Port %FRONTEND_PORT%" cmd /k "cd /d "%CD%\%FRONTEND_DIR%" && title Youcef Frontend - Vite && echo. && echo ============================================================================ && echo    YOUCEF FRONTEND SERVER - VITE && echo ============================================================================ && echo. && echo   Port: %FRONTEND_PORT% && echo   Local: http://localhost:%FRONTEND_PORT% && echo   Network: Check output below for network URL && echo. && echo   %COLOR_CYAN%Press Ctrl+C to stop the frontend server%COLOR_RESET% && echo. && echo ============================================================================ && echo. && npm run dev"
+echo Starting frontend server at %date% %time% > "%FRONTEND_SERVER_LOG%"
+echo ============================================================================ >> "%FRONTEND_SERVER_LOG%"
+echo. >> "%FRONTEND_SERVER_LOG%"
+
+start "Youcef Frontend (Vite) - Port %FRONTEND_PORT%" cmd /k "cd /d "%CD%\%FRONTEND_DIR%" && title Youcef Frontend - Vite && cls && echo. && echo ============================================================================ && echo    YOUCEF FRONTEND SERVER - VITE && echo ============================================================================ && echo. && echo   Port: %FRONTEND_PORT% && echo   Local: http://localhost:%FRONTEND_PORT% && echo   Network: Check output below for network URL && echo. && echo   Server Output Log: ..\%FRONTEND_SERVER_LOG% && echo   Press Ctrl+C to stop the frontend server && echo. && echo ============================================================================ && echo. && (npm run dev 2^>^&1 ^| powershell -Command \"$input ^| Tee-Object -FilePath '..\%FRONTEND_SERVER_LOG%' -Append\")"
 
 if errorlevel 1 (
     echo %COLOR_RED%ERROR: Failed to launch frontend window%COLOR_RESET%
@@ -487,11 +576,27 @@ if errorlevel 1 (
 
 echo     Frontend window opened: %COLOR_GREEN%[OK]%COLOR_RESET%
 echo     - URL: http://localhost:%FRONTEND_PORT%
+echo     - Server log: "%FRONTEND_SERVER_LOG%"
 echo.
 
 REM Give servers time to fully start
 timeout /t 3 /nobreak >nul
 
+REM Log server launch
+echo. >> "%STARTUP_LOG%"
+echo ============================================================================ >> "%STARTUP_LOG%"
+echo   SERVERS SUCCESSFULLY LAUNCHED >> "%STARTUP_LOG%"
+echo   Time: %date% %time% >> "%STARTUP_LOG%"
+echo ============================================================================ >> "%STARTUP_LOG%"
+echo. >> "%STARTUP_LOG%"
+
+REM Return to caller (main_sequence)
+goto :eof
+
+REM ============================================================================
+REM Success Screen (called after all steps complete)
+REM ============================================================================
+:success_complete
 REM Final Success Screen
 cls
 echo.
@@ -538,8 +643,30 @@ echo   - Check the server windows for real-time logs
 echo   - Backend API docs provide interactive testing
 echo   - Both servers auto-reload on file changes
 echo.
+echo   %COLOR_CYAN%LOG FILES:%COLOR_RESET%
+echo   - Startup log: "%STARTUP_LOG%"
+echo   - Backend install: "%BACKEND_INSTALL_LOG%"
+echo   - Frontend install: "%FRONTEND_INSTALL_LOG%"
+echo   - Backend server: "%BACKEND_SERVER_LOG%"
+echo   - Frontend server: "%FRONTEND_SERVER_LOG%"
+echo.
 echo ============================================================================
 echo.
+
+REM Log completion
+echo. >> "%STARTUP_LOG%"
+echo Backend: http://localhost:%BACKEND_PORT% >> "%STARTUP_LOG%"
+echo Frontend: http://localhost:%FRONTEND_PORT% >> "%STARTUP_LOG%"
+echo. >> "%STARTUP_LOG%"
+echo Log files: >> "%STARTUP_LOG%"
+echo   - Startup: %STARTUP_LOG% >> "%STARTUP_LOG%"
+echo   - Backend install: %BACKEND_INSTALL_LOG% >> "%STARTUP_LOG%"
+echo   - Frontend install: %FRONTEND_INSTALL_LOG% >> "%STARTUP_LOG%"
+echo   - Backend server: %BACKEND_SERVER_LOG% >> "%STARTUP_LOG%"
+echo   - Frontend server: %FRONTEND_SERVER_LOG% >> "%STARTUP_LOG%"
+echo. >> "%STARTUP_LOG%"
+echo Startup completed successfully at: %date% %time% >> "%STARTUP_LOG%"
+echo ============================================================================ >> "%STARTUP_LOG%"
 
 REM Keep this window open to show information
 echo %COLOR_CYAN%Press any key to close this launcher window...%COLOR_RESET%
@@ -571,6 +698,12 @@ REM ============================================================================
 REM Error Exit Handler
 REM ============================================================================
 :error_exit
+echo. >> "%STARTUP_LOG%"
+echo ============================================================================ >> "%STARTUP_LOG%"
+echo   STARTUP FAILED >> "%STARTUP_LOG%"
+echo   Time: %date% %time% >> "%STARTUP_LOG%"
+echo ============================================================================ >> "%STARTUP_LOG%"
+
 echo.
 echo ============================================================================
 echo   %COLOR_RED%STARTUP FAILED%COLOR_RESET%
@@ -583,6 +716,13 @@ echo   - Ensure Python 3.8+ and Node.js 16+ are installed
 echo   - Check your internet connection
 echo   - Verify all required files exist
 echo   - Try deleting venv and node_modules, then run again
+echo.
+echo   %COLOR_YELLOW%Check logs for details:%COLOR_RESET%
+echo   - Startup: "%STARTUP_LOG%"
+echo   - Backend install: "%BACKEND_INSTALL_LOG%"
+echo   - Frontend install: "%FRONTEND_INSTALL_LOG%"
+echo   - Backend server: "%BACKEND_SERVER_LOG%"
+echo   - Frontend server: "%FRONTEND_SERVER_LOG%"
 echo.
 echo   For support, check the project documentation or contact the team.
 echo.

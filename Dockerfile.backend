@@ -1,0 +1,90 @@
+# ============================================================================
+# Youcef Project - Backend Dockerfile
+# FastAPI + PostgreSQL + Python 3.12
+# ============================================================================
+
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first (for better caching)
+COPY fastapi_backend/requirements.txt .
+COPY fastapi_backend/requirements_core.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements_core.txt || \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy backend code
+COPY fastapi_backend/ /app/
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/uploads
+
+# Create entrypoint script with auto-update
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "============================================================================"\n\
+echo "  YOUCEF BACKEND - STARTING"\n\
+echo "============================================================================"\n\
+echo ""\n\
+\n\
+# Auto-update from git if enabled\n\
+if [ "$AUTO_GIT_UPDATE" = "true" ]; then\n\
+    echo "🔄 Checking for updates from git..."\n\
+    cd /app\n\
+    git fetch origin 2>/dev/null || echo "⚠️  Git fetch failed (repo may not be initialized)"\n\
+    \n\
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")\n\
+    echo "📍 Current branch: $CURRENT_BRANCH"\n\
+    \n\
+    if [ "$CURRENT_BRANCH" != "unknown" ]; then\n\
+        LOCAL_COMMIT=$(git rev-parse HEAD)\n\
+        REMOTE_COMMIT=$(git rev-parse origin/$CURRENT_BRANCH 2>/dev/null || echo "$LOCAL_COMMIT")\n\
+        \n\
+        if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then\n\
+            echo "✅ New updates found! Pulling changes..."\n\
+            git pull origin $CURRENT_BRANCH\n\
+            \n\
+            # Reinstall dependencies if requirements changed\n\
+            if git diff --name-only $LOCAL_COMMIT $REMOTE_COMMIT | grep -q "requirements"; then\n\
+                echo "📦 Requirements changed, reinstalling dependencies..."\n\
+                pip install --no-cache-dir -r requirements.txt\n\
+            fi\n\
+        else\n\
+            echo "✅ Already up to date"\n\
+        fi\n\
+    fi\n\
+    echo ""\n\
+fi\n\
+\n\
+echo "🚀 Starting FastAPI server..."\n\
+echo "   Port: 8001"\n\
+echo "   Docs: http://localhost:8001/docs"\n\
+echo "============================================================================"\n\
+echo ""\n\
+\n\
+# Run the FastAPI application\n\
+exec python main.py\n\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Expose port
+EXPOSE 8001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8001/health || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
+

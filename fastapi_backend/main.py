@@ -94,14 +94,13 @@ print("✓ Core imports successful", flush=True)
 print("✓ All modules imported successfully", flush=True)
 print("", flush=True)
 
-# Configure detailed logging
+# Configure detailed logging - console only for Docker
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,  # Use INFO level for production
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout),
-        # Add UTF-8 encoding
-        logging.FileHandler('debug.log', encoding='utf-8')
+        logging.StreamHandler(sys.stdout)
+        # File logging disabled for Docker read-only filesystem
     ]
 )
 

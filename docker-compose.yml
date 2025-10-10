@@ -1,0 +1,114 @@
+# ============================================================================
+# Youcef Project - Docker Compose Configuration
+# Orchestrates: PostgreSQL, Backend (FastAPI), Frontend (Vite)
+# ============================================================================
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: youcef_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: youcef_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 123456789
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d youcef_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - youcef_network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: youcef_backend
+    restart: unless-stopped
+    environment:
+      # Auto-update settings
+      AUTO_GIT_UPDATE: "false" # Set to "true" to enable auto-update from git
+
+      # Database connection
+      DATABASE_URL: postgresql://postgres:123456789@postgres:5432/youcef_db
+
+      # Application settings
+      SECRET_KEY: your-secret-key-change-this-in-production
+      DEBUG: "true"
+
+      # CORS settings
+      CORS_ORIGINS: "http://localhost:3000,http://localhost:8001"
+
+    ports:
+      - "8001:8001"
+    volumes:
+      # Mount code for hot-reload (comment out for production)
+      - ./fastapi_backend:/app:ro
+
+      # Mount uploads directory (persistent) - create if not exists
+      - uploads_data:/app/uploads
+
+      # Logs will be handled internally by the application
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - youcef_network
+
+  # React/Vite Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: youcef_frontend
+    restart: unless-stopped
+    environment:
+      # Auto-update settings
+      AUTO_GIT_UPDATE: "false" # Set to "true" to enable auto-update from git
+
+      # API URL
+      VITE_API_URL: http://localhost:8001
+
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount code for hot-reload (comment out for production)
+      - ./frontend:/app:ro
+      - /app/node_modules # Prevent overwriting node_modules
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - youcef_network
+
+# Persistent volumes
+volumes:
+  postgres_data:
+    driver: local
+  uploads_data:
+    driver: local
+
+# Network
+networks:
+  youcef_network:
+    driver: bridge

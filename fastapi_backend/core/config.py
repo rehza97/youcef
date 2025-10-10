@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List, Optional
+from typing import List, Optional, Union
 import os
 
 
@@ -49,8 +49,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
     ]
 
-    # Allowed hosts
-    ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1"]
+    # Allowed hosts - flexible to handle different input formats
+    ALLOWED_HOSTS: Union[List[str], str] = ["*"]  # Allow all hosts in Docker environment
 
     # Rate limiting
     RATE_LIMIT_ANON: str = "100/hour"

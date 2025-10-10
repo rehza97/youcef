@@ -15,21 +15,37 @@ class DOTService:
 
     @staticmethod
     def get_or_create_dot(db: Session, name: str, description: Optional[str] = None) -> DOT:
-        """Get existing DOT or create new one if it doesn't exist"""
+        """Get existing DOT or create new one if it doesn't exist
+        
+        Handles race conditions where multiple threads try to create the same DOT simultaneously.
+        """
+        from sqlalchemy.exc import IntegrityError
+        import math
+        
+        # Validate and normalize the name
+        if not name or (isinstance(name, float) and math.isnan(name)):
+            raise ValueError("DOT name cannot be empty or NaN")
+            
+        normalized_name = str(name).strip()
+        
+        # Additional validation
+        if not normalized_name or normalized_name.lower() in ['nan', 'none', 'null', '']:
+            raise ValueError(f"Invalid DOT name: '{name}'")
+        
+        # Try to find existing DOT by name (case-insensitive)
+        existing_dot = db.query(DOT).filter(
+            DOT.name.ilike(normalized_name)
+        ).first()
+
+        if existing_dot:
+            logger.debug(
+                f"Found existing DOT: {existing_dot.name} (ID: {existing_dot.id})")
+            return existing_dot
+
+        # Create new DOT if not found
         try:
-            # Try to find existing DOT by name (case-insensitive)
-            existing_dot = db.query(DOT).filter(
-                DOT.name.ilike(name.strip())
-            ).first()
-
-            if existing_dot:
-                logger.debug(
-                    f"Found existing DOT: {existing_dot.name} (ID: {existing_dot.id})")
-                return existing_dot
-
-            # Create new DOT if not found
             new_dot = DOT(
-                name=name.strip(),
+                name=normalized_name,
                 description=description or f"Auto-created DOT for region: {name}"
             )
             db.add(new_dot)
@@ -39,9 +55,28 @@ class DOTService:
             logger.info(f"Created new DOT: {new_dot.name} (ID: {new_dot.id})")
             return new_dot
 
+        except IntegrityError as e:
+            # Race condition: another thread created the DOT between our check and insert
+            db.rollback()
+            
+            # Retry the query to get the DOT that was created by the other thread
+            existing_dot = db.query(DOT).filter(
+                DOT.name.ilike(normalized_name)
+            ).first()
+            
+            if existing_dot:
+                logger.debug(
+                    f"Race condition resolved: Found DOT created by another thread: {existing_dot.name} (ID: {existing_dot.id})")
+                return existing_dot
+            else:
+                # This should never happen, but log and re-raise if it does
+                logger.error(
+                    f"Race condition error but DOT still not found for '{normalized_name}': {str(e)}")
+                raise
+                
         except Exception as e:
             logger.error(
-                f"Error in get_or_create_dot for name '{name}': {str(e)}")
+                f"Unexpected error in get_or_create_dot for name '{normalized_name}': {str(e)}")
             db.rollback()
             raise
 

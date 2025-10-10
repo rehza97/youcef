@@ -1,0 +1,83 @@
+# ============================================================================
+# Youcef Project - Frontend Dockerfile
+# React + Vite + Node.js 20
+# ============================================================================
+
+FROM node:20-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install git for auto-update
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy package files first (for better caching)
+COPY frontend/package*.json ./
+
+# Install dependencies with legacy-peer-deps to avoid conflicts
+# Use --legacy-peer-deps to handle @swc/core binary issues
+RUN npm ci --legacy-peer-deps --loglevel=error || npm install --legacy-peer-deps --prefer-offline
+
+# Copy frontend code
+COPY frontend/ /app/
+
+# Create entrypoint script with auto-update
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "============================================================================"\n\
+echo "  YOUCEF FRONTEND - STARTING"\n\
+echo "============================================================================"\n\
+echo ""\n\
+\n\
+# Auto-update from git if enabled\n\
+if [ "$AUTO_GIT_UPDATE" = "true" ]; then\n\
+    echo "🔄 Checking for updates from git..."\n\
+    cd /app\n\
+    git fetch origin 2>/dev/null || echo "⚠️  Git fetch failed (repo may not be initialized)"\n\
+    \n\
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")\n\
+    echo "📍 Current branch: $CURRENT_BRANCH"\n\
+    \n\
+    if [ "$CURRENT_BRANCH" != "unknown" ]; then\n\
+        LOCAL_COMMIT=$(git rev-parse HEAD)\n\
+        REMOTE_COMMIT=$(git rev-parse origin/$CURRENT_BRANCH 2>/dev/null || echo "$LOCAL_COMMIT")\n\
+        \n\
+        if [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then\n\
+            echo "✅ New updates found! Pulling changes..."\n\
+            git pull origin $CURRENT_BRANCH\n\
+            \n\
+            # Reinstall dependencies if package.json changed\n\
+            if git diff --name-only $LOCAL_COMMIT $REMOTE_COMMIT | grep -q "package.json"; then\n\
+                echo "📦 package.json changed, reinstalling dependencies..."\n\
+                npm install\n\
+            fi\n\
+        else\n\
+            echo "✅ Already up to date"\n\
+        fi\n\
+    fi\n\
+    echo ""\n\
+fi\n\
+\n\
+echo "🚀 Starting Vite dev server..."\n\
+echo "   Port: 3000"\n\
+echo "   URL: http://localhost:3000"\n\
+echo "============================================================================"\n\
+echo ""\n\
+\n\
+# Run the Vite dev server\n\
+exec npm run dev -- --host 0.0.0.0\n\
+' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:3000 || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/entrypoint.sh"]
+

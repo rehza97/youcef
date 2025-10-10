@@ -37,3 +37,9 @@ ENV/
 
 # Startup script logs
 logs/
+
+# Docker
+.env
+docker-compose.override.yml
+*.pid
+.docker/
