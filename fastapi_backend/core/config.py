@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:123456789@localhost:5432/youcef_db")
+        "DATABASE_URL", "postgresql://postgres:123456789@postgres:5432/youcef_db")
     DATABASE_ECHO: bool = False
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 30

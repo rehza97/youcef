@@ -21,9 +21,9 @@ else:
         settings.DATABASE_URL,
         echo=settings.DATABASE_ECHO,
         poolclass=QueuePool,
-        # ✅ Reduced from 20 to reserve for background
-        pool_size=15,
-        max_overflow=25,                                 # ✅ Reduced from 30
+        # ✅ Reduced to prevent connection exhaustion
+        pool_size=10,
+        max_overflow=15,                                 # ✅ Reduced to prevent exhaustion
         pool_pre_ping=True,
         pool_recycle=settings.DATABASE_POOL_RECYCLE,
         # ✅ Reduced from 30 for faster failures
@@ -39,8 +39,8 @@ else:
         settings.DATABASE_URL,
         echo=False,                                      # Don't log background queries
         poolclass=QueuePool,
-        pool_size=10,                                    # ✅ Smaller pool for background
-        max_overflow=15,                                 # ✅ Limited overflow
+        pool_size=5,                                     # ✅ Smaller pool for background
+        max_overflow=10,                                  # ✅ Limited overflow
         pool_pre_ping=True,
         pool_recycle=settings.DATABASE_POOL_RECYCLE,
         pool_timeout=5,                                  # ✅ Fast timeout for background
@@ -55,8 +55,8 @@ else:
         settings.DATABASE_URL,
         echo=False,
         poolclass=QueuePool,
-        pool_size=5,                                     # ✅ Small pool for WebSocket
-        max_overflow=10,
+        pool_size=3,                                     # ✅ Small pool for WebSocket
+        max_overflow=5,
         pool_pre_ping=True,
         pool_recycle=settings.DATABASE_POOL_RECYCLE,
         pool_timeout=5,
@@ -67,12 +67,12 @@ else:
     )
 
     logger.info(f"✅ Connection pools initialized:")
-    logger.info(f"   API Pool: {15} base + {25} overflow = 40 connections")
+    logger.info(f"   API Pool: {10} base + {15} overflow = 25 connections")
     logger.info(
-        f"   Background Pool: {10} base + {15} overflow = 25 connections")
+        f"   Background Pool: {5} base + {10} overflow = 15 connections")
     logger.info(
-        f"   WebSocket Pool: {5} base + {10} overflow = 15 connections")
-    logger.info(f"   TOTAL: 80 connections (PostgreSQL max: 100)")
+        f"   WebSocket Pool: {3} base + {5} overflow = 8 connections")
+    logger.info(f"   TOTAL: 48 connections (PostgreSQL max: 100)")
 
 # Create SessionLocal class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

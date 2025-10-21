@@ -53,7 +53,7 @@ services:
       - "8001:8001"
     volumes:
       # Mount code for hot-reload (comment out for production)
-      - ./fastapi_backend:/app:ro
+      - ./fastapi_backend:/app
 
       # Mount uploads directory (persistent) - create if not exists
       - uploads_data:/app/uploads
