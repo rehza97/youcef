@@ -225,7 +225,57 @@ def run_alembic_migrations() -> bool:
         try:
             os.chdir(backend_dir)
 
-            # Run alembic upgrade head
+            # First, check if alembic_version table exists and has entries
+            # If not, we need to stamp the database with the current revision
+            from database.connection import engine
+            from sqlalchemy import text
+
+            with engine.connect() as conn:
+                # Check if alembic_version table exists
+                result = conn.execute(text("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_name = 'alembic_version'
+                    );
+                """))
+                alembic_table_exists = result.scalar()
+
+                if not alembic_table_exists:
+                    logger.info(
+                        "Alembic version table not found, stamping database...")
+                    # Stamp the database with the current revision
+                    stamp_result = subprocess.run(
+                        ["alembic", "stamp", "head"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                    if stamp_result.returncode == 0:
+                        logger.info("✅ Database stamped successfully")
+                    else:
+                        logger.warning(
+                            f"⚠️  Database stamping failed: {stamp_result.stderr}")
+                else:
+                    # Check if there are any entries in alembic_version
+                    result = conn.execute(
+                        text("SELECT COUNT(*) FROM alembic_version"))
+                    version_count = result.scalar()
+                    if version_count == 0:
+                        logger.info(
+                            "Alembic version table empty, stamping database...")
+                        stamp_result = subprocess.run(
+                            ["alembic", "stamp", "head"],
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        if stamp_result.returncode == 0:
+                            logger.info("✅ Database stamped successfully")
+                        else:
+                            logger.warning(
+                                f"⚠️  Database stamping failed: {stamp_result.stderr}")
+
+            # Now run alembic upgrade head
             result = subprocess.run(
                 ["alembic", "upgrade", "head"],
                 capture_output=True,

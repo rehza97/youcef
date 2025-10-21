@@ -163,10 +163,25 @@ async def lifespan(app: FastAPI):
         logger.info("[2/3] Database Tables")
         logger.info("-" * 70)
         from database.connection import engine
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables verified/created successfully")
+        from sqlalchemy import text
+
+        # Test database connection first
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        logger.info("Database connection successful")
+
+        # Only create tables if they don't exist (let Alembic handle migrations)
+        # This prevents conflicts with existing tables
+        try:
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables verified/created successfully")
+        except Exception as table_error:
+            logger.warning(
+                f"Table creation had issues (may be due to existing tables): {table_error}")
+            logger.info("Continuing with existing database schema...")
+
     except Exception as e:
-        logger.error(f"Failed to create database tables: {e}")
+        logger.error(f"Failed to connect to database: {e}")
         logger.error("")
         logger.error("=" * 70)
         logger.error(
