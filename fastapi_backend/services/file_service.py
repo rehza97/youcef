@@ -163,8 +163,52 @@ class FileService:
         try:
             logger.info(f"Reading Excel file: {file_path}")
 
-            # Read Excel file with optimizations
-            excel_file = pd.ExcelFile(file_path)
+            # Validate file is actually an Excel file; if it's HTML masquerading as .xls, we'll handle via HTML fallback
+            is_html_fake_xls = False
+            try:
+                self._validate_excel_file(file_path)
+            except HTTPException as ex:
+                # If HTML masquerading as .xls, allow fallback path
+                if ex.status_code == 400 and 'HTML content' in str(ex.detail):
+                    is_html_fake_xls = True
+                else:
+                    raise
+
+            # Determine engine based on file extension
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext == '.xls':
+                engine = 'xlrd'
+            elif file_ext == '.xlsx':
+                engine = 'openpyxl'
+            else:
+                engine = None  # Let pandas auto-detect
+
+            # If HTML masquerading as .xls, parse HTML tables instead of using Excel engines
+            if is_html_fake_xls:
+                logger.info("Parsing HTML tables from .xls file")
+                tables = pd.read_html(file_path, header=0)
+                previews = []
+                # limit to first 5 tables
+                for idx, df in enumerate(tables[:5]):
+                    logger.info(
+                        f"HTML table {idx}: {len(df)} rows, {len(df.columns)} columns")
+                    preview_data = self._get_dataframe_preview(df, max_rows)
+                    previews.append({
+                        "sheet_name": f"table_{idx}",
+                        "preview_data": preview_data,
+                        "total_rows": len(df),
+                        "total_columns": len(df.columns),
+                        "preview_rows": min(max_rows, len(df))
+                    })
+                logger.info(
+                    f"HTML file processing completed. Generated {len(previews)} previews")
+                return previews
+
+            # Read Excel file with appropriate engine
+            if engine:
+                excel_file = pd.ExcelFile(file_path, engine=engine)
+            else:
+                excel_file = pd.ExcelFile(file_path)
             sheet_names = excel_file.sheet_names
 
             logger.info(f"Found {len(sheet_names)} sheets: {sheet_names}")
@@ -175,8 +219,12 @@ class FileService:
                 logger.info(f"Processing sheet: {sheet_name}")
 
                 # Read sheet with limited rows for preview
-                df = pd.read_excel(
-                    file_path, sheet_name=sheet_name, nrows=max_rows * 2)
+                if engine:
+                    df = pd.read_excel(
+                        file_path, sheet_name=sheet_name, nrows=max_rows * 2, engine=engine)
+                else:
+                    df = pd.read_excel(
+                        file_path, sheet_name=sheet_name, nrows=max_rows * 2)
 
                 logger.info(
                     f"Sheet {sheet_name}: {len(df)} rows, {len(df.columns)} columns")
@@ -199,9 +247,62 @@ class FileService:
             return previews
 
         except Exception as e:
-            logger.error(f"Error processing Excel file {file_path}: {str(e)}")
-            raise HTTPException(
-                status_code=500, detail=f"Error processing Excel file: {str(e)}")
+            error_msg = str(e)
+            logger.error(
+                f"Error processing Excel file {file_path}: {error_msg}")
+
+            # Provide more helpful error messages
+            if "Expected BOF record; found" in error_msg and "html" in error_msg.lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="The uploaded file appears to be HTML content, not a valid Excel file. Please ensure you're uploading a proper Excel file (.xls or .xlsx)."
+                )
+            elif "Unsupported format" in error_msg or "corrupt file" in error_msg:
+                raise HTTPException(
+                    status_code=400,
+                    detail="The file appears to be corrupted or in an unsupported format. Please ensure you're uploading a valid Excel file (.xls or .xlsx)."
+                )
+            else:
+                raise HTTPException(
+                    status_code=500, detail=f"Error processing Excel file: {error_msg}"
+                )
+
+    def _validate_excel_file(self, file_path: str) -> None:
+        """Validate that the file is actually an Excel file by checking file header"""
+        try:
+            with open(file_path, 'rb') as f:
+                # Read first 8 bytes to check file signature
+                header = f.read(8)
+
+                # Check for Excel file signatures
+                if header.startswith(b'PK\x03\x04'):  # .xlsx files (ZIP format)
+                    logger.info("✅ Detected .xlsx file (ZIP signature)")
+                    return
+                # .xls files (OLE2 format)
+                elif header.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
+                    logger.info("✅ Detected .xls file (OLE2 signature)")
+                    return
+                elif header.startswith(b'<html>') or header.startswith(b'<!DOCTYPE'):
+                    logger.error("❌ File appears to be HTML, not Excel")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="File appears to be HTML content, not a valid Excel file. Please ensure you're uploading a proper Excel file (.xls or .xlsx)."
+                    )
+                elif header.startswith(b'%PDF'):
+                    logger.error("❌ File appears to be PDF, not Excel")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="File appears to be a PDF, not a valid Excel file. Please upload an Excel file (.xls or .xlsx)."
+                    )
+                else:
+                    logger.warning(f"⚠️ Unknown file signature: {header[:8]}")
+                    # Don't raise error here, let pandas try to handle it
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Could not validate file header: {str(e)}")
+            # Don't raise error here, let pandas try to handle it
 
     def process_csv_file(self, file_path: str, max_rows: int = 100) -> Dict[str, Any]:
         """Process CSV file and return preview data"""

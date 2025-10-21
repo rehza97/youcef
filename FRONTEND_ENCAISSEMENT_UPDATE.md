@@ -466,3 +466,6 @@ Navigate to: `http://localhost:5173/encaissement`
 
 **Recommendation:** The updated encaissement page is production-ready and provides complete filter parity with the backend. Users can now apply any combination of filters and export exactly what they need.
 
+
+
+

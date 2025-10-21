@@ -24,6 +24,7 @@ const Sidebar = () => {
   const navigation = [
     { name: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
     { name: "Parc Corporate NGBSS", href: "/encaissement", icon: BarChart3 },
+    { name: "Chiffre d'Affaires", href: "/revenue", icon: BarChart3 },
     { name: "Utilisateurs", href: "/users", icon: Users },
     { name: "Rôles", href: "/roles", icon: Shield },
     { name: "Profil", href: "/profile", icon: User },

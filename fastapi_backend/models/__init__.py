@@ -8,6 +8,7 @@ from .notification import Notification
 from .file_upload import FileUpload
 from .dot import DOT
 from .park import Park
+from .revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
 
 __all__ = [
     "User",
@@ -19,6 +20,10 @@ __all__ = [
     "Notification",
     "FileUpload",
     "DOT",
-    "Park"
+    "Park",
+    "RevenueJournal",
+    "AccountDescription",
+    "RevenueObjective",
+    "RevenueAnomaly"
 ]
 

@@ -56,4 +56,5 @@ export {
   EnhancedBarChart,
   EnhancedPieChart,
   EnhancedMultiSeriesBarChart,
+  CombinedBarChart,
 } from "./EnhancedCharts";

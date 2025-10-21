@@ -33,6 +33,7 @@ import ChangePasswordPage from "./pages/ChangePasswordPage";
 import FilesPage from "./pages/FilesPage";
 import FilePreviewPage from "./pages/FilePreviewPage";
 import EncaissementPage from "./pages/EncaissementPage";
+import RevenuePage from "./pages/RevenuePage";
 
 // Hooks
 import { useAuth } from "./contexts/AuthContext";
@@ -89,6 +90,16 @@ const AppContent = () => {
         {isAuthenticated && <GlobalProcessingIndicator />}
         <Routes>
           {/* Public Routes */}
+          <Route
+            path="/revenue"
+            element={
+              <ProtectedRoute>
+                <PermissionRoute permission="can_view_analytics">
+                  <RevenuePage />
+                </PermissionRoute>
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/login"
             element={

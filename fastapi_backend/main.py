@@ -56,6 +56,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from api.park_analytics import park_analytics_router
+from api.revenue import router as revenue_router
+from api.revenue_analytics import router as revenue_analytics_router
 print("", flush=True)
 print("=" * 70, flush=True)
 print("  Starting Youcef Backend API...", flush=True)
@@ -430,6 +432,19 @@ app.include_router(
     park_analytics_router,
     prefix="/api/park-analytics",
     tags=["Park Analytics"]
+)
+
+# Revenue Management (Chiffre d'Affaires AR DOT)
+app.include_router(
+    revenue_router,
+    tags=["Revenue"],
+    dependencies=[Depends(get_current_user)]
+)
+
+app.include_router(
+    revenue_analytics_router,
+    tags=["Revenue Analytics"],
+    dependencies=[Depends(get_current_user)]
 )
 
 # New Secure Services

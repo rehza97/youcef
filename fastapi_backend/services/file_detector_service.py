@@ -43,17 +43,19 @@ class FileDetectorService:
             },
             KPIFileType.CHIFFRE_AFFAIRES: {
                 'required': [
-                    'org_name', 'org name', 'organisation',
-                    'date_gl', 'date gl',
-                    'cpt_comptable', 'cpt comptable',
-                    'prix_uni', 'prix uni',
-                    'mnt_ht', 'mnt ht',
-                    'mnt_tax', 'mnt tax',
-                    'mnt_ttc', 'mnt ttc',
-                    'chiffre_aff_exe_dzd', 'chiffre aff exe dzd'
+                    'org_name', 'org name', 'organisation', 'org',
+                    'date_gl', 'date gl', 'date',
+                    'cpt_comptable', 'cpt comptable', 'compte comptable',
+                    'prix_uni', 'prix uni', 'prix unitaire',
+                    'mnt_ht', 'mnt ht', 'montant ht', 'montant_ht',
+                    'mnt_tax', 'mnt tax', 'montant taxe', 'montant_taxe',
+                    'mnt_ttc', 'mnt ttc', 'montant ttc', 'montant_ttc',
+                    'chiffre_aff_exe_dzd', 'chiffre aff exe dzd', 'chiffre d\'affaires',
+                    'type_fact', 'type fact', 'n_fact', 'n fact',
+                    'description', 'desc'
                 ],
-                'min_matches': 5,
-                'keywords': ['chiffre', 'affaires', 'ca', 'comptable', 'objectif']
+                'min_matches': 4,
+                'keywords': ['chiffre', 'affaires', 'ca', 'comptable', 'objectif', 'journal', 'revenue']
             },
             KPIFileType.ENCAISSEMENT: {
                 'required': [
@@ -132,6 +134,7 @@ class FileDetectorService:
                 }
 
             logger.info(f"📋 Found {len(columns)} columns: {columns[:10]}...")
+            logger.info(f"📋 All columns: {columns}")
 
             # Normalize columns for comparison
             normalized_columns = self._normalize_columns(columns)
@@ -232,13 +235,23 @@ class FileDetectorService:
                 except Exception as e:
                     logger.warning(
                         f"⚠️ Failed to read .xls with xlrd: {str(e)}")
-                    # Try openpyxl as fallback
+                    # Some systems export HTML with .xls extension; try parsing HTML tables
+                    try:
+                        html_tables = pd.read_html(file_path, header=0)
+                        if html_tables:
+                            logger.info(
+                                "✅ Parsed HTML table from .xls masquerading as HTML")
+                            return html_tables[0].columns.astype(str).tolist()
+                    except Exception as e2:
+                        logger.warning(f"⚠️ pandas.read_html failed: {e2}")
+                    # As a last resort, try openpyxl (unlikely to work for .xls)
                     try:
                         df = pd.read_excel(
                             file_path, nrows=0, sheet_name=0, engine='openpyxl')
                         return df.columns.tolist()
-                    except:
-                        logger.error(f"❌ Failed to read .xls with any engine")
+                    except Exception as e3:
+                        logger.error(
+                            f"❌ Failed to read .xls with any engine: {e3}")
                         return []
             else:
                 logger.warning(f"⚠️ Unsupported file type: {file_ext}")

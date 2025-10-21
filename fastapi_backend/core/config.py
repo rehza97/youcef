@@ -31,7 +31,8 @@ class Settings(BaseSettings):
         "ENCRYPTION_KEY", "RtDWPt-l76-kKWG8T7Wa23RDiR64eLS2N2D3rDgE00c=")
 
     # Database
-    DATABASE_URL: str = "postgresql://postgres:123456789@localhost:5432/youcef_db"
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL", "postgresql://postgres:123456789@localhost:5432/youcef_db")
     DATABASE_ECHO: bool = False
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 30
@@ -50,7 +51,8 @@ class Settings(BaseSettings):
     ]
 
     # Allowed hosts - flexible to handle different input formats
-    ALLOWED_HOSTS: Union[List[str], str] = ["*"]  # Allow all hosts in Docker environment
+    # Allow all hosts in Docker environment
+    ALLOWED_HOSTS: Union[List[str], str] = ["*"]
 
     # Rate limiting
     RATE_LIMIT_ANON: str = "100/hour"

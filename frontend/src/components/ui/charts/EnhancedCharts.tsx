@@ -6,6 +6,7 @@ import {
   BarChart,
   CartesianGrid,
   XAxis,
+  YAxis,
   Pie,
   PieChart,
   Cell,
@@ -504,6 +505,80 @@ export const EnhancedMultiSeriesBarChart: React.FC<
             </BarChart>
           </ChartContainer>
         </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+// Combined two-series bar chart (e.g., CA vs Objective)
+interface CombinedBarChartProps {
+  data: { label: string; seriesA: number; seriesB: number }[];
+  seriesALabel?: string;
+  seriesBLabel?: string;
+  height?: number;
+}
+
+export const CombinedBarChart: React.FC<CombinedBarChartProps> = ({
+  data,
+  seriesALabel = "Série A",
+  seriesBLabel = "Série B",
+  height = 420,
+}) => {
+  const chartData = React.useMemo(
+    () =>
+      data.map((d) => ({
+        name: d.label,
+        a: d.seriesA,
+        b: d.seriesB,
+      })),
+    [data]
+  );
+
+  const chartConfig = React.useMemo(
+    () =>
+      ({
+        a: { label: seriesALabel, color: AT_COLORS.primary },
+        b: { label: seriesBLabel, color: AT_COLORS.secondary },
+      } satisfies ChartConfig),
+    [seriesALabel, seriesBLabel]
+  );
+
+  const formatValue = React.useCallback(
+    (value: any, name: any, props: any) => [
+      numberFormatter.format(Number(value)),
+      props?.dataKey === "a" ? seriesALabel : seriesBLabel,
+    ],
+    [seriesALabel, seriesBLabel]
+  );
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <ChartContainer config={chartConfig} className={`h-[${height}px]`}>
+          <BarChart
+            data={chartData}
+            margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
+          >
+            <CartesianGrid vertical={false} strokeDasharray="3 3" />
+            <XAxis
+              dataKey="name"
+              tickLine={false}
+              tickMargin={10}
+              axisLine={false}
+            />
+            <YAxis tickFormatter={(v) => numberFormatter.format(Number(v))} />
+            <ChartTooltip
+              cursor={false}
+              content={
+                <ChartTooltipContent hideLabel formatter={formatValue} />
+              }
+            />
+            <Bar dataKey="a" fill={AT_COLORS.primary} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="b" fill={AT_COLORS.secondary} radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ChartContainer>
       </CardContent>
     </Card>
   );

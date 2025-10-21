@@ -748,6 +748,78 @@ export const exportParkAnalyticsData = (filters = {}, format = "csv") => {
   return api.get(`/api/park-analytics/export?${params.toString()}`);
 };
 
+// Revenue Analytics API methods
+export const getRevenueOverview = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  const qs = query.toString();
+  return api.get(`/api/revenue/overview${qs ? `?${qs}` : ""}`);
+};
+
+export const listRevenueJournals = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.page) query.append("page", params.page);
+  if (params.page_size) query.append("page_size", params.page_size);
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.cpt_comptable) query.append("cpt_comptable", params.cpt_comptable);
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  if (params.search) query.append("search", params.search);
+  return api.get(`/api/revenue/list?${query.toString()}`);
+};
+
+export const getRevenueByOrg = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  return api.get(
+    `/api/revenue/by-org${query.toString() ? `?${query.toString()}` : ""}`
+  );
+};
+
+export const getRevenueByAccount = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  return api.get(
+    `/api/revenue/by-account${query.toString() ? `?${query.toString()}` : ""}`
+  );
+};
+
+export const exportRevenueData = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  query.append("format", params.format || "xlsx");
+  return api.get(`/api/revenue/export?${query.toString()}`, {
+    responseType: params.format === "csv" ? undefined : "blob",
+  });
+};
+
 // ETL Processing API methods
 export const processParcCorporateNGBSS = (formData) => {
   if (!formData) return Promise.reject(new Error("Form data is required"));

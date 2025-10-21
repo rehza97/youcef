@@ -310,3 +310,6 @@ SELECT COUNT(*) FROM parks WHERE updated_at IS NOT NULL;        -- 857,656
 **Impact:** **All null columns will be populated!**  
 **Deployment Time:** ~5 minutes
 
+
+
+
