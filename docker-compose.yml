@@ -46,7 +46,7 @@ services:
       DEBUG: "true"
 
       # CORS settings
-      CORS_ORIGINS: "http://localhost:3000,http://localhost:8001"
+      CORS_ORIGINS: "http://localhost:3000,http://194.146.13.22:3000"
 
     ports:
       - "8001:8001"

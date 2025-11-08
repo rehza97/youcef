@@ -1,8 +1,27 @@
 import axios from "axios";
 import { debug } from "../lib/debug.js";
 
-// Use service name 'backend' in Docker, fallback to localhost for local development
-const API_BASE_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? "http://localhost:8001" : "http://backend:8001");
+function resolveApiBaseUrl() {
+  const explicitUrl = import.meta.env.VITE_API_URL;
+  if (explicitUrl) {
+    return explicitUrl.replace(/\/$/, "");
+  }
+
+  if (typeof window === "undefined") {
+    return "http://backend:8001";
+  }
+
+  const { protocol, hostname } = window.location;
+
+  if (hostname === "localhost" || hostname === "127.0.0.1") {
+    return `http://${hostname}:8001`;
+  }
+
+  return `${protocol}//${hostname}:8001`;
+}
+
+// Use service name 'backend' in Docker, fallback to same host in production
+const API_BASE_URL = resolveApiBaseUrl();
 
 // Create axios instance with base configuration
 const api = axios.create({

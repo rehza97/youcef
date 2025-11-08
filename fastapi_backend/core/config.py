@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings
 from typing import List, Optional, Union
 import os
@@ -43,12 +44,14 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
 
     # CORS
-    CORS_ALLOWED_ORIGINS: List[str] = [
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-    ]
+    CORS_ALLOWED_ORIGINS: List[str] = Field(
+        default_factory=lambda: [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+        ]
+    )
 
     # Allowed hosts - flexible to handle different input formats
     # Allow all hosts in Docker environment
@@ -79,15 +82,24 @@ class Settings(BaseSettings):
 # Create settings instance
 settings = Settings()
 
+# Override CORS origins from environment if provided
+cors_origins = os.getenv("CORS_ORIGINS")
+if cors_origins:
+    settings.CORS_ALLOWED_ORIGINS = [
+        origin.strip() for origin in cors_origins.split(",") if origin.strip()
+    ]
+
 # Environment-specific settings
 if settings.DEBUG:
     # Development settings
-    settings.CORS_ALLOWED_ORIGINS.extend([
+    for origin in [
         "http://localhost:5174",
         "http://127.0.0.1:5174",
         "http://localhost:5175",
         "http://127.0.0.1:5175",
-    ])
+    ]:
+        if origin not in settings.CORS_ALLOWED_ORIGINS:
+            settings.CORS_ALLOWED_ORIGINS.append(origin)
 else:
     # Production settings
     settings.DEBUG = False
