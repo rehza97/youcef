@@ -1,7 +1,7 @@
 import axios from "axios";
 import { debug } from "../lib/debug.js";
 
-const API_BASE_URL = "http://localhost:8001"; // FastAPI backend URL
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8001"; // FastAPI backend URL
 
 // Create axios instance with base configuration
 const api = axios.create({
