@@ -81,8 +81,8 @@ services:
       # Auto-update settings
       AUTO_GIT_UPDATE: "false" # Set to "true" to enable auto-update from git
 
-      # API URL
-      VITE_API_URL: http://localhost:8001
+      # API URL - Use service name 'backend' within Docker network, localhost for local development
+      VITE_API_URL: http://backend:8001
 
     ports:
       - "3000:3000"

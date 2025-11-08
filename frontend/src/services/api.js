@@ -1,7 +1,8 @@
 import axios from "axios";
 import { debug } from "../lib/debug.js";
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8001"; // FastAPI backend URL
+// Use service name 'backend' in Docker, fallback to localhost for local development
+const API_BASE_URL = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.hostname === 'localhost' ? "http://localhost:8001" : "http://backend:8001");
 
 // Create axios instance with base configuration
 const api = axios.create({
