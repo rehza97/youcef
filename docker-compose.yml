@@ -51,8 +51,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:-Pr0d-S3cr3tK3y!@#$%X9mN8pQ7rS6tU5vW4xY3zAb2cD1eF0gH}
       DEBUG: ${DEBUG:-false}
 
-      # CORS settings
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # CORS settings - Allow frontend to access backend
+      # Must include both local (localhost) and VPS IP addresses
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://194.146.13.22:3000}
 
     ports:
       - "8001:8001"
