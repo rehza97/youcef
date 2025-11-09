@@ -87,8 +87,10 @@ services:
       # Auto-update settings
       AUTO_GIT_UPDATE: ${AUTO_GIT_UPDATE:-false}
 
-      # API URL
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8001}
+      # API URL - Frontend needs to connect to backend
+      # In production, set via .env: VITE_API_URL=http://194.146.13.22:8001
+      # Default fallback uses window.location to auto-detect host
+      VITE_API_URL: ${VITE_API_URL:-}
 
     ports:
       - "3000:3000"
