@@ -12,7 +12,7 @@ services:
     environment:
       POSTGRES_DB: youcef_db
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_in_production}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN}
       POSTGRES_HOST_AUTH_METHOD: md5
     # ⚠️ SECURITY: Database NOT exposed to external network
     # Only accessible from backend container via Docker network
@@ -43,10 +43,10 @@ services:
       GIT_BRANCH: ${GIT_BRANCH:-fastapi_v1}
 
       # Database connection - Use backend service name for Docker networking
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-change_me_in_production}@postgres:5432/youcef_db
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN}@postgres:5432/youcef_db
 
       # Application settings
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-this-in-production}
+      SECRET_KEY: ${SECRET_KEY:-Pr0d-S3cr3tK3y!@#$%X9mN8pQ7rS6tU5vW4xY3zAb2cD1eF0gH}
       DEBUG: ${DEBUG:-false}
 
       # CORS settings

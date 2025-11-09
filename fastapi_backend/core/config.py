@@ -18,9 +18,9 @@ class Settings(BaseSettings):
 
     # Security
     # Use a fixed SECRET_KEY to prevent token invalidation on server restart
-    # In production, set this via environment variable
+    # Production default key set - can be overridden via environment variable or .env file
     SECRET_KEY: str = os.getenv(
-        "SECRET_KEY", "youcef-dev-secret-key-DO-NOT-USE-IN-PRODUCTION-12345678")
+        "SECRET_KEY", "Pr0d-S3cr3tK3y!@#$%X9mN8pQ7rS6tU5vW4xY3zAb2cD1eF0gH")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 hours for development
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -32,8 +32,10 @@ class Settings(BaseSettings):
         "ENCRYPTION_KEY", "RtDWPt-l76-kKWG8T7Wa23RDiR64eLS2N2D3rDgE00c=")
 
     # Database
+    # Production default password set - can be overridden via environment variable or .env file
+    # The database password must match DB_PASSWORD in docker-compose.yml and PostgreSQL
     DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:123456789@postgres:5432/youcef_db")
+        "DATABASE_URL", "postgresql://postgres:Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN@postgres:5432/youcef_db")
     DATABASE_ECHO: bool = False
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 30
@@ -81,6 +83,25 @@ class Settings(BaseSettings):
 
 # Create settings instance
 settings = Settings()
+
+# ============================================================================
+# VALIDATION: Log current configuration status
+# ============================================================================
+import logging
+logger = logging.getLogger(__name__)
+
+# Check if using production credentials
+if "Pr0d@ctS3cur3P@ssw0rd" in settings.DATABASE_URL:
+    logger.info("✅ Using production DATABASE_URL with secure password")
+else:
+    logger.warning("⚠️  WARNING: DATABASE_URL does not contain expected production password")
+    logger.warning("   Set DB_PASSWORD in .env file to override")
+
+if "Pr0d-S3cr3tK3y" in settings.SECRET_KEY:
+    logger.info("✅ Using production SECRET_KEY")
+else:
+    logger.warning("⚠️  WARNING: SECRET_KEY does not contain expected production key")
+    logger.warning("   Set SECRET_KEY in .env file to override")
 
 # Override CORS origins from environment if provided
 cors_origins = os.getenv("CORS_ORIGINS")
