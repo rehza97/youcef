@@ -43,7 +43,9 @@ services:
       GIT_BRANCH: ${GIT_BRANCH:-fastapi_v1}
 
       # Database connection - Use backend service name for Docker networking
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN}@postgres:5432/youcef_db
+      # NOTE: Password must be URL-encoded if it contains special characters (@, $, #, !, :, etc.)
+      # Encoded password: Pr0d%40ctS3cur3P%40ssw0rd%212024XyZ%239mK%24L5vN
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-Pr0d%40ctS3cur3P%40ssw0rd%212024XyZ%239mK%24L5vN}@postgres:5432/youcef_db
 
       # Application settings
       SECRET_KEY: ${SECRET_KEY:-Pr0d-S3cr3tK3y!@#$%X9mN8pQ7rS6tU5vW4xY3zAb2cD1eF0gH}

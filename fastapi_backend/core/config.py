@@ -34,8 +34,10 @@ class Settings(BaseSettings):
     # Database
     # Production default password set - can be overridden via environment variable or .env file
     # The database password must match DB_PASSWORD in docker-compose.yml and PostgreSQL
+    # NOTE: Password is URL-encoded to handle special characters (@, $, #, !, etc.)
+    # Decoded password: Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN
     DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://postgres:Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN@postgres:5432/youcef_db")
+        "DATABASE_URL", "postgresql://postgres:Pr0d%40ctS3cur3P%40ssw0rd%212024XyZ%239mK%24L5vN@postgres:5432/youcef_db")
     DATABASE_ECHO: bool = False
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 30
