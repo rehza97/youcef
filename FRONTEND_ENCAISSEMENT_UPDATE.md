@@ -470,3 +470,4 @@ Navigate to: `http://localhost:5173/encaissement`
 
 
 
+

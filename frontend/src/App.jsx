@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import {
   BrowserRouter as Router,
   Routes,
@@ -13,7 +13,7 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ProcessingProvider } from "./contexts/ProcessingContext";
 
-// Components
+// Components (not lazy-loaded as they're used globally)
 import Sidebar from "./components/layout/Sidebar";
 import LoginForm from "./components/auth/LoginForm";
 import RegisterForm from "./components/auth/RegisterForm";
@@ -21,19 +21,21 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { PermissionRoute } from "./components/auth/PermissionRoute";
 import GlobalProcessingIndicator from "./components/GlobalProcessingIndicator";
 
-// Pages
-import Dashboard from "./pages/Dashboard";
-import UsersPage from "./pages/UsersPage";
-import RolesPage from "./pages/RolesPage";
-import ProtectedPage from "./pages/ProtectedPage";
-import ProfilePage from "./pages/ProfilePage";
-import NotificationsPage from "./pages/NotificationsPage";
-import MessagingPage from "./pages/MessagingPage";
-import ChangePasswordPage from "./pages/ChangePasswordPage";
-import FilesPage from "./pages/FilesPage";
-import FilePreviewPage from "./pages/FilePreviewPage";
-import EncaissementPage from "./pages/EncaissementPage";
-import RevenuePage from "./pages/RevenuePage";
+// Lazy-loaded Pages for code splitting
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const UsersPage = lazy(() => import("./pages/UsersPage"));
+const RolesPage = lazy(() => import("./pages/RolesPage"));
+const ProtectedPage = lazy(() => import("./pages/ProtectedPage"));
+const ProfilePage = lazy(() => import("./pages/ProfilePage"));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
+const MessagingPage = lazy(() => import("./pages/MessagingPage"));
+const ChangePasswordPage = lazy(() => import("./pages/ChangePasswordPage"));
+const FilesPage = lazy(() => import("./pages/FilesPage"));
+const FilePreviewPage = lazy(() => import("./pages/FilePreviewPage"));
+const EncaissementPage = lazy(() => import("./pages/EncaissementPage"));
+const RevenuePage = lazy(() => import("./pages/RevenuePage"));
+const EncaissementARDotPage = lazy(() => import("./pages/EncaissementARDotPage"));
+const CreancePeriodiqueDotPage = lazy(() => import("./pages/CreancePeriodiqueDotPage"));
 
 // Hooks
 import { useAuth } from "./contexts/AuthContext";
@@ -47,6 +49,16 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+// Loading fallback component for lazy-loaded pages
+const PageLoadingFallback = () => (
+  <div className="flex items-center justify-center min-h-screen">
+    <div className="text-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+      <p className="text-gray-600">Loading...</p>
+    </div>
+  </div>
+);
 
 // Protected Route Component
 const ProtectedRoute = ({ children }) => {
@@ -88,7 +100,8 @@ const AppContent = () => {
       <div className="flex-1 overflow-auto">
         {/* Global Processing Indicator */}
         {isAuthenticated && <GlobalProcessingIndicator />}
-        <Routes>
+        <Suspense fallback={<PageLoadingFallback />}>
+          <Routes>
           {/* Public Routes */}
           <Route
             path="/revenue"
@@ -232,10 +245,31 @@ const AppContent = () => {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/encaissement-ar-dot"
+            element={
+              <ProtectedRoute>
+                <PermissionRoute permission="can_view_kpi_data">
+                  <EncaissementARDotPage />
+                </PermissionRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/creance-periodique-dot"
+            element={
+              <ProtectedRoute>
+                <PermissionRoute permission="can_view_kpi_data">
+                  <CreancePeriodiqueDotPage />
+                </PermissionRoute>
+              </ProtectedRoute>
+            }
+          />
 
           {/* Default redirect */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+          </Routes>
+        </Suspense>
       </div>
     </div>
   );

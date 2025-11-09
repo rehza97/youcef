@@ -393,6 +393,14 @@ async def route_to_processor(
             from services.etl.encaissement_etl import EncaissementETL
             processor = EncaissementETL()
 
+        elif processor_name == 'EncaissementARDotETL':
+            from services.etl.encaissement_ar_dot_etl import EncaissementARDotETL
+            processor = EncaissementARDotETL()
+
+        elif processor_name == 'CreancePeriodiqueDotETL':
+            from services.etl.creance_periodique_dot_etl import CreancePeriodiqueDotETL
+            processor = CreancePeriodiqueDotETL()
+
         elif processor_name == 'SubscriberParkETL':
             from services.etl.subscriber_park_etl import SubscriberParkETL
             processor = SubscriberParkETL()

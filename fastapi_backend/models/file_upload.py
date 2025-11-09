@@ -46,6 +46,16 @@ class FileUpload(Base):
                                       cascade="all, delete-orphan")
     revenue_anomalies = relationship("RevenueAnomaly", back_populates="file_upload",
                                      cascade="all, delete-orphan")
+    encaissement_ar_records = relationship("EncaissementARDot", back_populates="file_upload",
+                                          cascade="all, delete-orphan")
+    encaissement_anomaly_records = relationship("EncaissementAnomaly", back_populates="file_upload",
+                                                cascade="all, delete-orphan")
+    encaissement_aggregate_views = relationship("EncaissementAggregateView", back_populates="file_upload",
+                                                cascade="all, delete-orphan")
+    creance_periodique_records = relationship("CreancePeriodiqueDot", back_populates="file_upload",
+                                              cascade="all, delete-orphan")
+    creance_aggregate_views = relationship("CreanceAggregateView", back_populates="file_upload",
+                                           cascade="all, delete-orphan")
 
 
 class FilePreview(Base):

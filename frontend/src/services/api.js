@@ -1,7 +1,17 @@
 import axios from "axios";
 import { debug } from "../lib/debug.js";
 
-const API_BASE_URL = "http://localhost:8001"; // FastAPI backend URL
+// Use environment variable with fallback
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
+const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || API_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://');
+const IS_DEV = import.meta.env.VITE_ENV === 'development' || import.meta.env.DEV;
+
+// Debug logging utility
+const debugLog = (...args) => {
+  if (IS_DEV && import.meta.env.VITE_ENABLE_DEBUG !== 'false') {
+    console.log(...args);
+  }
+};
 
 // Create axios instance with base configuration
 const api = axios.create({
@@ -915,6 +925,168 @@ export const getParkDataStats = () => {
   return api.get("/api/parks/data/stats");
 };
 
+// ============================================================================
+// Encaissement AR DOT API Methods (COMPLETE - 17 endpoints)
+// ============================================================================
+
+export const getEncaissementRecords = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.page) query.append("page", params.page);
+  if (params.page_size) query.append("page_size", params.page_size);
+  if (params.organisation) query.append("organisation", params.organisation);
+  if (params.mois) query.append("mois", params.mois);
+  if (params.n_fact) query.append("n_fact", params.n_fact);
+  if (params.typ_fact) query.append("typ_fact", params.typ_fact);
+  if (params.date_fact_from) query.append("date_fact_from", params.date_fact_from);
+  if (params.date_fact_to) query.append("date_fact_to", params.date_fact_to);
+  if (params.is_duplicate !== undefined) query.append("is_duplicate", params.is_duplicate);
+  if (params.is_anomaly !== undefined) query.append("is_anomaly", params.is_anomaly);
+  if (params.file_upload_id) query.append("file_upload_id", params.file_upload_id);
+  if (params.sort_by) query.append("sort_by", params.sort_by);
+  if (params.sort_order) query.append("sort_order", params.sort_order);
+  return api.get(`/api/encaissement/records?${query.toString()}`);
+};
+
+export const getEncaissementRecordById = (recordId) => {
+  if (!recordId) return Promise.reject(new Error("Record ID is required"));
+  return api.get(`/api/encaissement/records/${recordId}`);
+};
+
+export const getEncaissementDashboardOverview = () =>
+  api.get("/api/encaissement/dashboard/overview");
+
+export const getEncaissementMonthlyAggregates = (year) => {
+  const params = year ? `?year=${year}` : '';
+  return api.get(`/api/encaissement/dashboard/monthly-aggregates${params}`);
+};
+
+export const getEncaissementMonthlyDistribution = (year) => {
+  const params = year ? `?year=${year}` : '';
+  return api.get(`/api/encaissement/dashboard/monthly-distribution${params}`);
+};
+
+export const getEncaissementDotAggregates = () =>
+  api.get("/api/encaissement/dashboard/dot-aggregates");
+
+export const getEncaissementAnomalies = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.page) query.append("page", params.page);
+  if (params.page_size) query.append("page_size", params.page_size);
+  if (params.organisation) query.append("organisation", params.organisation);
+  if (params.anomaly_type) query.append("anomaly_type", params.anomaly_type);
+  if (params.file_upload_id) query.append("file_upload_id", params.file_upload_id);
+  return api.get(`/api/encaissement/anomalies?${query.toString()}`);
+};
+
+export const getEncaissementAnomalyStatistics = () =>
+  api.get("/api/encaissement/anomalies/statistics");
+
+export const getEncaissementStatisticsByOrganisation = (organisation) => {
+  const params = organisation ? `?organisation=${encodeURIComponent(organisation)}` : '';
+  return api.get(`/api/encaissement/statistics/by-organisation${params}`);
+};
+
+export const getEncaissementAvailableMonths = () =>
+  api.get("/api/encaissement/metadata/available-months");
+
+export const getEncaissementAvailableOrganisations = () =>
+  api.get("/api/encaissement/metadata/available-organisations");
+
+export const exportEncaissementRecords = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.organisation) query.append("organisation", params.organisation);
+  if (params.mois) query.append("mois", params.mois);
+  if (params.date_fact_from) query.append("date_fact_from", params.date_fact_from);
+  if (params.date_fact_to) query.append("date_fact_to", params.date_fact_to);
+  if (params.include_duplicates !== undefined) query.append("include_duplicates", params.include_duplicates);
+  if (params.include_anomalies !== undefined) query.append("include_anomalies", params.include_anomalies);
+  query.append("format", params.format || "json");
+  return api.get(`/api/encaissement/export?${query.toString()}`, {
+    responseType: params.format === "csv" ? "blob" : undefined,
+  });
+};
+
+export const getEncaissementDuplicateGroups = (compositeKey) => {
+  const params = compositeKey ? `?composite_key=${encodeURIComponent(compositeKey)}` : '';
+  return api.get(`/api/encaissement/duplicates/groups${params}`);
+};
+
+// ============================================================================
+// Créance Périodique DOT API Methods (COMPLETE - 17 endpoints)
+// ============================================================================
+
+export const getCreanceRecords = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.page) query.append("page", params.page);
+  if (params.page_size) query.append("page_size", params.page_size);
+  if (params.dot) query.append("dot", params.dot);
+  if (params.actel) query.append("actel", params.actel);
+  if (params.annee) query.append("annee", params.annee);
+  if (params.mois) query.append("mois", params.mois);
+  if (params.period_key) query.append("period_key", params.period_key);
+  if (params.produit) query.append("produit", params.produit);
+  if (params.cust_lev1) query.append("cust_lev1", params.cust_lev1);
+  if (params.cust_lev2) query.append("cust_lev2", params.cust_lev2);
+  if (params.cust_lev3) query.append("cust_lev3", params.cust_lev3);
+  if (params.file_upload_id) query.append("file_upload_id", params.file_upload_id);
+  if (params.sort_by) query.append("sort_by", params.sort_by);
+  if (params.sort_order) query.append("sort_order", params.sort_order);
+  return api.get(`/api/creance/records?${query.toString()}`);
+};
+
+export const getCreanceRecordById = (recordId) => {
+  if (!recordId) return Promise.reject(new Error("Record ID is required"));
+  return api.get(`/api/creance/records/${recordId}`);
+};
+
+export const getCreanceDashboardOverview = () =>
+  api.get("/api/creance/dashboard/overview");
+
+export const getCreanceByDotAggregates = () =>
+  api.get("/api/creance/dashboard/by-dot");
+
+export const getCreanceByAnneeAggregates = () =>
+  api.get("/api/creance/dashboard/by-annee");
+
+export const getCreanceByProduitAggregates = () =>
+  api.get("/api/creance/dashboard/by-produit");
+
+export const getCreanceByCustLev2Aggregates = () =>
+  api.get("/api/creance/dashboard/by-cust-lev2");
+
+export const getCreanceStatisticsByDot = (dot) => {
+  const params = dot ? `?dot=${encodeURIComponent(dot)}` : '';
+  return api.get(`/api/creance/statistics/by-dot${params}`);
+};
+
+export const getCreanceAvailablePeriods = () =>
+  api.get("/api/creance/metadata/available-periods");
+
+export const getCreanceAvailableYears = () =>
+  api.get("/api/creance/metadata/available-years");
+
+export const getCreanceAvailableDots = () =>
+  api.get("/api/creance/metadata/available-dots");
+
+export const getCreanceAvailableProducts = () =>
+  api.get("/api/creance/metadata/available-products");
+
+export const getCreanceAvailableCustLev2 = () =>
+  api.get("/api/creance/metadata/available-cust-lev2");
+
+export const exportCreanceRecords = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.dot) query.append("dot", params.dot);
+  if (params.annee) query.append("annee", params.annee);
+  if (params.period_key) query.append("period_key", params.period_key);
+  if (params.produit) query.append("produit", params.produit);
+  if (params.cust_lev2) query.append("cust_lev2", params.cust_lev2);
+  query.append("format", params.format || "json");
+  return api.get(`/api/creance/export?${query.toString()}`, {
+    responseType: params.format === "csv" ? "blob" : undefined,
+  });
+};
+
 // WebSocket Service
 class WebSocketService {
   constructor() {
@@ -966,10 +1138,7 @@ class WebSocketService {
     }
 
     // Build WebSocket URL with authentication
-    const baseUrl = API_BASE_URL.replace("http://", "ws://").replace(
-      "https://",
-      "wss://"
-    );
+    const baseUrl = WS_BASE_URL;
     let wsUrl = `${baseUrl}${endpoint}`;
 
     // Add query parameters
@@ -1426,6 +1595,9 @@ export const createChatWebSocket = (
     getStatus: () => wsService.getAllConnectionStatuses()[connectionId],
   };
 };
+
+// Export API_BASE_URL for direct fetch usage
+export { API_BASE_URL };
 
 // Default export - the main axios instance
 export default api;

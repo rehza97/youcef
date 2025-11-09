@@ -17,7 +17,9 @@ class KPIFileType(Enum):
     PARC_CORPORATE_NGBSS = "parc_corporate_ngbss"
     CHIFFRE_AFFAIRES = "chiffre_affaires"
     ENCAISSEMENT = "encaissement"
+    ENCAISSEMENT_AR_DOT = "encaissement_ar_dot"  # NEW: Specialized Encaissement AR DOT module
     CREANCE_PERIODIQUE = "creance_periodique"
+    CREANCE_PERIODIQUE_DOT = "creance_periodique_dot"  # NEW: Specialized Créance Périodique DOT module
     ANOMALIE = "anomalie"
     UNKNOWN = "unknown"
 
@@ -71,6 +73,26 @@ class FileDetectorService:
                 'min_matches': 5,
                 'keywords': ['encaissement', 'facture', 'montant', 'fact']
             },
+            KPIFileType.ENCAISSEMENT_AR_DOT: {
+                'required': [
+                    'organisation', 'org_name', 'org name',
+                    'source',
+                    'n_fact', 'n fact',
+                    'typ_fact', 'typ fact', 'type_fact',
+                    'date_fact', 'date fact',
+                    'client',
+                    'n_client', 'n client',
+                    'montant_ht', 'montant ht',
+                    'montant_taxe', 'montant taxe',
+                    'montant_ttc', 'montant ttc',
+                    'chiffre_aff_exe', 'chiffre aff exe',
+                    'encaissement',
+                    'n_rglt', 'n rglt',
+                    'date_rglt', 'date rglt'
+                ],
+                'min_matches': 8,  # More specific matching to avoid confusion with generic encaissement
+                'keywords': ['factures ar', 'etat des factures', 'algerie telecom', 'encaissement', 'rglt']
+            },
             KPIFileType.CREANCE_PERIODIQUE: {
                 'required': [
                     'dot',
@@ -88,6 +110,22 @@ class FileDetectorService:
                 ],
                 'min_matches': 6,
                 'keywords': ['creance', 'créance', 'cust_lev', 'invoice', 'actel']
+            },
+            KPIFileType.CREANCE_PERIODIQUE_DOT: {
+                'required': [
+                    'dot',
+                    'actel',
+                    'annee', 'année',
+                    'mois',
+                    'produit',
+                    'cust_lev1', 'cust lev1',
+                    'cust_lev2', 'cust lev2',
+                    'cust_lev3', 'cust lev3',
+                    'invoice_amt', 'invoice amt',
+                    'creance_net', 'creance net'
+                ],
+                'min_matches': 7,
+                'keywords': ['creance', 'créance', 'periodique', 'cust_lev', 'dot']
             },
             KPIFileType.ANOMALIE: {
                 'required': [
@@ -367,7 +405,9 @@ class FileDetectorService:
             KPIFileType.PARC_CORPORATE_NGBSS: 'ParcCorporateNGBSSETL',
             KPIFileType.CHIFFRE_AFFAIRES: 'ChiffreAffairesETL',
             KPIFileType.ENCAISSEMENT: 'EncaissementETL',
+            KPIFileType.ENCAISSEMENT_AR_DOT: 'EncaissementARDotETL',  # NEW: Specialized module
             KPIFileType.CREANCE_PERIODIQUE: 'CreancePeriodique ETL',
+            KPIFileType.CREANCE_PERIODIQUE_DOT: 'CreancePeriodiqueDotETL',  # NEW: Specialized module
             KPIFileType.ANOMALIE: None,  # Anomalies are output, not processed
             KPIFileType.UNKNOWN: None
         }
@@ -407,6 +447,15 @@ class FileDetectorService:
                 'estimated_processing_time': 'medium',
                 'notes': 'Can process multiple years (current and N-1)'
             },
+            KPIFileType.ENCAISSEMENT_AR_DOT: {
+                'name': 'Encaissement AR DOT (Factures AR)',
+                'description': 'Specialized Encaissement AR with duplicate detection and Taux calculation',
+                'required_columns': ['organisation', 'source', 'n_fact', 'typ_fact', 'montant_ttc', 'encaissement', 'chiffre_aff_exe'],
+                'processor': 'EncaissementARDotETL',
+                'generates_anomalies': True,
+                'estimated_processing_time': 'medium',
+                'notes': 'Processes Algérie Télécom AR invoices. Includes: AT_SIEGE removal, duplicate detection via composite key, Taux d\'encaissement calculation, multi-year support.'
+            },
             KPIFileType.CREANCE_PERIODIQUE: {
                 'name': 'Créance Périodique DOT',
                 'description': 'Periodic debt and credit data',
@@ -414,6 +463,15 @@ class FileDetectorService:
                 'processor': 'CreancePeriodiqueETL',
                 'generates_anomalies': True,
                 'estimated_processing_time': 'medium'
+            },
+            KPIFileType.CREANCE_PERIODIQUE_DOT: {
+                'name': 'Créance Périodique DOT (Specialized)',
+                'description': 'Specialized periodic debt tracking with customer level filtering',
+                'required_columns': ['dot', 'actel', 'annee', 'mois', 'produit', 'cust_lev1', 'cust_lev2', 'cust_lev3', 'creance_net'],
+                'processor': 'CreancePeriodiqueDotETL',
+                'generates_anomalies': False,
+                'estimated_processing_time': 'medium',
+                'notes': 'Applies 10 business rules for filtering and cleaning. Filters: Residential/Startup PME TPE/VIP-AT (CUST_LEV1), Scolaires/Convention/KMS/PME (CUST_LEV2), ADSL/FTTX/PSTN/VOIP/X25/XDSL (PRODUIT). Generates 5 aggregate views for dashboard.'
             },
             KPIFileType.ANOMALIE: {
                 'name': 'Anomalie',
