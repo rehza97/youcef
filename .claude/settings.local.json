@@ -6,7 +6,10 @@
       "Bash(PGPASSWORD=123456789 psql:*)",
       "Bash(PGPASSWORD=123456789 psql -h localhost -U postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ''youcef_db'';\")",
       "Bash(docker network:*)",
-      "Bash(docker inspect:*)"
+      "Bash(docker inspect:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$(cat <<''EOF''\nFix DATABASE_URL password encoding for special characters\n\nThe password ''Pr0d@ctS3cur3P@ssw0rd!2024XyZ#9mK$L5vN'' contains special characters\nthat need URL encoding when used in a PostgreSQL connection string.\n\nChanges:\n- Encode password in DATABASE_URL to: Pr0d%40ctS3cur3P%40ssw0rd%212024XyZ%239mK%24L5vN\n- Update both docker-compose.yml and backend config.py\n- Add comments explaining URL encoding requirement\n- Encoding: @ → %40, $ → %24, # → %23, ! → %21\n\nThis fixes the connection string parsing error where @ in password was\nbeing interpreted as the host:password separator.\n\n🔒 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
