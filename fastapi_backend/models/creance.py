@@ -60,6 +60,14 @@ class CreancePeriodiqueDot(Base):
     creance_net = Column(Numeric(15, 2), nullable=True, index=True)  # Net debt (main KPI)
     creance_ht = Column(Numeric(15, 2), nullable=True)  # Debt excluding tax
 
+    # Credit note (Avoir) amounts
+    avoir_amt = Column(Numeric(15, 2), nullable=True)  # Credit note amount (TTC)
+    avoir_amt_ht = Column(Numeric(15, 2), nullable=True)  # Credit note amount excluding tax
+
+    # Additional créance metrics
+    exigible_mt = Column(Numeric(15, 2), nullable=True)  # Due amount
+    creance_120_mt = Column(Numeric(15, 2), nullable=True)  # Créance over 120 days
+
     # Data quality flags
     is_filtered = Column(Boolean, default=False, index=True)  # Flag for filtered records
     filter_reason = Column(Text, nullable=True)  # Reason for filtering

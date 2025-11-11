@@ -186,12 +186,36 @@ class FileService:
             # If HTML masquerading as .xls, parse HTML tables instead of using Excel engines
             if is_html_fake_xls:
                 logger.info("Parsing HTML tables from .xls file")
-                tables = pd.read_html(file_path, header=0)
+                # Read tables without header first to detect structure
+                tables_raw = pd.read_html(file_path, header=None)
                 previews = []
                 # limit to first 5 tables
-                for idx, df in enumerate(tables[:5]):
+                for idx, table_raw in enumerate(tables_raw[:5]):
                     logger.info(
-                        f"HTML table {idx}: {len(df)} rows, {len(df.columns)} columns")
+                        f"HTML table {idx}: {len(table_raw)} rows, {len(table_raw.columns)} columns")
+
+                    # Search for header row in first 20 rows
+                    header_row = self._find_header_row_in_table(table_raw)
+
+                    if header_row is not None and header_row > 0:
+                        # Skip rows before header and set proper column names
+                        logger.info(f"   Found headers at row {header_row}")
+                        df = table_raw.iloc[header_row+1:].copy()  # Data starts after header
+                        df.columns = table_raw.iloc[header_row].astype(str).tolist()  # Set header names
+                        df.reset_index(drop=True, inplace=True)
+                    elif header_row == 0:
+                        # Header is at row 0
+                        logger.info(f"   Found headers at row 0")
+                        df = table_raw.iloc[1:].copy()  # Data starts after header
+                        df.columns = table_raw.iloc[0].astype(str).tolist()
+                        df.reset_index(drop=True, inplace=True)
+                    else:
+                        # No clear header found, use table as-is
+                        logger.info(f"   No clear header found, using default column names")
+                        df = table_raw
+
+                    logger.info(f"   Processing {len(df)} data rows with {len(df.columns)} columns")
+
                     preview_data = self._get_dataframe_preview(df, max_rows)
                     previews.append({
                         "sheet_name": f"table_{idx}",
@@ -414,28 +438,98 @@ class FileService:
         return files, total
 
     def delete_file(self, db: Session, file_id: int, user_id: int) -> bool:
-        """Delete file upload, physical file, and all related park data"""
+        """Delete file upload, physical file, and all related data"""
         file_upload = self.get_file_upload(db, file_id, user_id)
 
-        # Delete all related park data first (due to foreign key constraint)
+        # Delete all related data first (due to foreign key constraints)
+        # Use direct SQL queries to avoid SQLAlchemy relationship loading issues
+        from sqlalchemy import text
+
+        # Delete related park data
         from models.park import Park
-        park_count = db.query(Park).filter(
-            Park.file_upload_id == file_id).count()
-        if park_count > 0:
-            logger.info(
-                f"Deleting {park_count} park records related to file {file_id}")
-            db.query(Park).filter(Park.file_upload_id == file_id).delete()
+        try:
+            park_count = db.query(Park).filter(
+                Park.file_upload_id == file_id).count()
+            if park_count > 0:
+                logger.info(
+                    f"Deleting {park_count} park records related to file {file_id}")
+                db.query(Park).filter(Park.file_upload_id == file_id).delete()
+        except Exception as e:
+            logger.warning(f"Error deleting park records: {e}")
+
+        # Delete related creance periodique records if table exists
+        try:
+            # Check if table exists first
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'creance_periodique_dot')"
+            )).scalar()
+
+            if result:
+                # Table exists, delete records
+                creance_count = db.execute(text(
+                    "DELETE FROM creance_periodique_dot WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if creance_count > 0:
+                    logger.info(
+                        f"Deleted {creance_count} creance records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting creance records: {e}")
+
+        # Delete related encaissement records if table exists
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'encaissement_ar_dot')"
+            )).scalar()
+
+            if result:
+                encaissement_count = db.execute(text(
+                    "DELETE FROM encaissement_ar_dot WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if encaissement_count > 0:
+                    logger.info(
+                        f"Deleted {encaissement_count} encaissement records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting encaissement records: {e}")
+
+        # Delete related revenue journal records if table exists
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'revenue_journal')"
+            )).scalar()
+
+            if result:
+                revenue_count = db.execute(text(
+                    "DELETE FROM revenue_journal WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if revenue_count > 0:
+                    logger.info(
+                        f"Deleted {revenue_count} revenue records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting revenue records: {e}")
+
+        # Delete file_previews first (foreign key constraint)
+        try:
+            preview_count = db.execute(text(
+                "DELETE FROM file_previews WHERE file_upload_id = :file_id RETURNING id"
+            ), {"file_id": file_id}).rowcount
+            if preview_count > 0:
+                logger.info(
+                    f"Deleted {preview_count} preview records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting file previews: {e}")
 
         # Delete physical file with Windows file locking handling
         if os.path.exists(file_upload.file_path):
             self._safe_delete_file(file_upload.file_path)
 
-        # Delete from database (this will also delete file_previews due to cascade)
-        db.delete(file_upload)
+        # Delete from database
+        # Use expunge to avoid triggering relationship loads
+        db.expunge(file_upload)
+        db.execute(text("DELETE FROM file_uploads WHERE id = :file_id"), {"file_id": file_id})
         db.commit()
 
         logger.info(
-            f"Successfully deleted file {file_id} and {park_count} related park records")
+            f"Successfully deleted file {file_id} and all related records")
         return True
 
     def _safe_delete_file(self, file_path: str) -> bool:
@@ -495,6 +589,98 @@ class FileService:
                 raise e
 
         return False
+
+    def _find_header_row_in_table(self, df_sample: pd.DataFrame) -> Optional[int]:
+        """
+        Search first 20 rows to find the header row containing known file type headers
+
+        Args:
+            df_sample: DataFrame with table data (header=None)
+
+        Returns:
+            Row index (0-based) where headers are found, or None if not found
+        """
+        # Define key headers for different file types
+        # These should be distinctive enough to avoid false positives
+        header_sets = {
+            'revenue_journal': [
+                'org name', 'date gl', 'cpt comptable',
+                'prix uni', 'mnt ht', 'mnt tax', 'mnt ttc',
+                'chiffre aff exe dzd', 'n fact'
+            ],
+            'parc_corporate': [
+                'actel code', 'actel', 'customer level',
+                'telecom type', 'primary offer', 'subscriber status',
+                'offer type', 'price plan', 'activation date'
+            ],
+            'encaissement': [
+                'organisation', 'encaissement', 'montant ht',
+                'montant ttc', 'date fact'
+            ],
+            'creance': [
+                'organisation', 'creance', 'montant', 'date'
+            ]
+        }
+
+        best_row = None
+        best_match_count = 0
+        best_file_type = None
+
+        # Search through first 20 rows
+        for row_idx in range(min(20, len(df_sample))):
+            row_values = df_sample.iloc[row_idx].astype(str).str.lower().str.strip()
+
+            # Log first few rows for debugging
+            if row_idx < 5:
+                logger.debug(f"Row {row_idx}: {list(row_values[:5])}")
+
+            # Try each header set
+            for file_type, key_headers in header_sets.items():
+                # Count how many key headers are present in this row
+                match_count = 0
+                matched_headers = []
+
+                for header in key_headers:
+                    for cell_value in row_values:
+                        # Normalize cell value
+                        cell_normalized = ''.join(c if c.isalnum() or c == ' ' else ' ' for c in cell_value)
+                        cell_normalized = ' '.join(cell_normalized.split())
+
+                        # More strict matching to avoid false positives:
+                        # 1. For multi-word headers, require most words to match
+                        # 2. Avoid matching very short words unless they're exact
+                        header_words = header.split()
+
+                        if len(header_words) == 1:
+                            # Single word: require exact match or cell starts/ends with it
+                            # and cell is not too long (to avoid matching "actel" in "Actel Code_Code d'actel")
+                            if (cell_normalized == header or
+                                (header in cell_normalized and len(cell_normalized) <= len(header) + 10)):
+                                match_count += 1
+                                matched_headers.append(header)
+                                break
+                        else:
+                            # Multi-word: require at least half the words to match
+                            words_matched = sum(1 for word in header_words if word in cell_normalized)
+                            if words_matched >= len(header_words) / 2:
+                                match_count += 1
+                                matched_headers.append(header)
+                                break
+
+                # If this row has more matches, it's likely the header row
+                if match_count > best_match_count:
+                    best_match_count = match_count
+                    best_row = row_idx
+                    best_file_type = file_type
+                    logger.debug(f"  Row {row_idx} - {file_type}: {match_count} matches ({matched_headers[:3]})")
+
+        # Require at least 4 matching headers to consider it valid
+        if best_match_count >= 4:
+            logger.info(f"🎯 Found {best_file_type} header row at index {best_row} with {best_match_count} matching headers")
+            return best_row
+        else:
+            logger.warning(f"⚠️ No clear header row found in first 20 rows (best match: {best_match_count} headers)")
+            return None
 
     def get_file_previews(self, db: Session, file_id: int, user_id: int) -> List[FilePreview]:
         """Get file previews for a specific file"""

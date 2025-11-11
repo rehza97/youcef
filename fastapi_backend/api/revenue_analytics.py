@@ -114,18 +114,21 @@ async def get_revenue_overview(
         # Total records
         total_records = query.count()
 
+        # Create a subquery with explicit select()
+        filtered_ids = query.with_entities(RevenueJournal.id).subquery()
+
         # Total revenue
         total_revenue = db.query(
             func.sum(RevenueJournal.chiffre_aff_exe_dzd)
         ).filter(RevenueJournal.id.in_(
-            query.with_entities(RevenueJournal.id).subquery()
+            db.query(filtered_ids.c.id)
         )).scalar() or 0.0
 
         # Total revenue TTC
         total_revenue_ttc = db.query(
             func.sum(RevenueJournal.chiffre_aff_exe_dzd_ttc)
         ).filter(RevenueJournal.id.in_(
-            query.with_entities(RevenueJournal.id).subquery()
+            db.query(filtered_ids.c.id)
         )).scalar() or 0.0
 
         # By Org Name
@@ -133,7 +136,7 @@ async def get_revenue_overview(
             RevenueJournal.org_name,
             func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total')
         ).filter(RevenueJournal.id.in_(
-            query.with_entities(RevenueJournal.id).subquery()
+            db.query(filtered_ids.c.id)
         )).group_by(RevenueJournal.org_name).all()
 
         by_org_name = {row.org_name or "Unknown": float(
@@ -144,7 +147,7 @@ async def get_revenue_overview(
             func.date_trunc('month', RevenueJournal.date_gl).label('month'),
             func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total')
         ).filter(RevenueJournal.id.in_(
-            query.with_entities(RevenueJournal.id).subquery()
+            db.query(filtered_ids.c.id)
         )).group_by('month').all()
 
         by_month = {str(row.month): float(row.total or 0)

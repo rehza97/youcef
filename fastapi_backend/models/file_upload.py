@@ -29,6 +29,10 @@ class FileUpload(Base):
     detected_kpi_type = Column(String(100), nullable=True)
     # Detection confidence score (0-100)
     detection_confidence = Column(Integer, nullable=True)
+    # Manually selected KPI type (overrides detected_kpi_type if set)
+    manual_kpi_type = Column(String(100), nullable=True)
+    # Whether the KPI type was manually set by user
+    is_manual_classification = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -99,6 +103,10 @@ class FileUploadUpdate(BaseModel):
     is_processed: Optional[bool] = Field(None, description="Processing status")
     processing_status: Optional[str] = Field(
         None, description="Processing status")
+    manual_kpi_type: Optional[str] = Field(
+        None, description="Manually selected KPI type")
+    is_manual_classification: Optional[bool] = Field(
+        None, description="Whether KPI type was manually set")
 
 
 class FileUploadResponse(FileUploadBase):
@@ -110,6 +118,8 @@ class FileUploadResponse(FileUploadBase):
     file_metadata: Optional[str] = None
     detected_kpi_type: Optional[str] = None
     detection_confidence: Optional[int] = None
+    manual_kpi_type: Optional[str] = None
+    is_manual_classification: Optional[bool] = False
     created_at: datetime
     updated_at: Optional[datetime] = None
 

@@ -5,7 +5,10 @@
       "Bash(PGPASSWORD=123456789 psql -h localhost -U postgres -c \"CREATE DATABASE youcef_db;\")",
       "Bash(PGPASSWORD=123456789 psql:*)",
       "Bash(PGPASSWORD=123456789 psql -h localhost -U postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ''youcef_db'';\")",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(docker-compose exec:*)",
+      "Bash(docker-compose ps:*)",
+      "Bash(docker-compose restart:*)"
     ],
     "deny": [],
     "ask": []

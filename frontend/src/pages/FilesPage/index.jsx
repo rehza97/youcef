@@ -8,6 +8,8 @@ import {
   processFile,
   getFileStats,
   downloadFile,
+  getAvailableFileTypes,
+  updateFileClassification,
 } from "../../services/api";
 import { useNotificationsWebSocket } from "../../hooks/useNotificationsWebSocket";
 import { useAuth } from "../../contexts/AuthContext";
@@ -21,9 +23,11 @@ import {
 } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
-import { Separator } from "../../components/ui/separator";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { Alert, AlertDescription } from "../../components/ui/alert";
+import { Progress } from "../../components/ui/progress";
+import { Skeleton } from "../../components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -31,15 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../../components/ui/tabs";
-import { Alert, AlertDescription } from "../../components/ui/alert";
-import { Progress } from "../../components/ui/progress";
-import { Skeleton } from "../../components/ui/skeleton";
 import {
   Table,
   TableBody,
@@ -53,7 +48,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "../../components/ui/dialog";
 import {
   Tooltip,
@@ -62,45 +56,23 @@ import {
   TooltipTrigger,
 } from "../../components/ui/tooltip";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "../../components/ui/hover-card";
-import {
   Upload,
   FileText,
-  BarChart3,
-  PieChart,
-  TrendingUp,
-  Filter,
-  Search,
   Trash2,
   Download,
   Eye,
-  Settings,
-  Database,
   CheckCircle,
   XCircle,
   Clock,
   Info,
   AlertCircle,
-  Plus,
   RefreshCw,
   Wifi,
   WifiOff,
 } from "lucide-react";
 import { toast } from "sonner";
-import axios from "axios";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-// Chart components
-import {
-  SimpleBarChart,
-  SimplePieChart,
-  SimpleLineChart,
-} from "@/components/ui/charts/SimpleChart";
-
-// Chart registration removed - using custom SVG charts
 
 const FilesPage = () => {
   const debug = debugComponent("FilesPage");
@@ -110,6 +82,8 @@ const FilesPage = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [showFileDetails, setShowFileDetails] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [availableFileTypes, setAvailableFileTypes] = useState([]);
+  const [selectedFileType, setSelectedFileType] = useState("");
 
   // Real-time notifications from WebSocket
   const { notifications: liveNotifications, isConnected: wsConnected } =
@@ -135,17 +109,22 @@ const FilesPage = () => {
   // Data processing states
   const [processedData, setProcessedData] = useState({});
   const [processingStatus, setProcessingStatus] = useState({});
-  const [overview, setOverview] = useState(null);
-  const [chartData, setChartData] = useState(null);
   const [liveProcessingData, setLiveProcessingData] = useState({}); // Real-time processing stats
   const [processedRecordsCount, setProcessedRecordsCount] = useState({}); // Progressive record count
-  const [filters, setFilters] = useState({
-    organisation: "all",
-    dateFact: "all",
-    encaisseRate: "all",
-  });
-  const [searchTerm, setSearchTerm] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Fetch available file types on mount
+  useEffect(() => {
+    const fetchFileTypes = async () => {
+      try {
+        const response = await getAvailableFileTypes();
+        setAvailableFileTypes(response.data.file_types || []);
+      } catch (error) {
+        console.error("Error fetching file types:", error);
+      }
+    };
+    fetchFileTypes();
+  }, []);
 
   // Handle real-time notifications
   useEffect(() => {
@@ -178,56 +157,6 @@ const FilesPage = () => {
     }
   }, [liveNotifications, queryClient]);
 
-  // Sample chart data for demonstration
-  const sampleChartData = {
-    histogram_combined: {
-      labels: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-      datasets: [
-        {
-          label: "Encaissement",
-          data: [200000, 240000, 180000, 220000, 260000, 300000],
-          backgroundColor: "rgba(54, 162, 235, 0.5)",
-          borderColor: "rgba(54, 162, 235, 1)",
-          borderWidth: 1,
-        },
-        {
-          label: "Montant TTC",
-          data: [250000, 300000, 225000, 275000, 325000, 375000],
-          backgroundColor: "rgba(255, 99, 132, 0.5)",
-          borderColor: "rgba(255, 99, 132, 1)",
-          borderWidth: 1,
-        },
-      ],
-    },
-    pie_3d: {
-      labels: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-      datasets: [
-        {
-          data: [200000, 240000, 180000, 220000, 260000, 300000],
-          backgroundColor: [
-            "#FF6384",
-            "#36A2EB",
-            "#FFCE56",
-            "#4BC0C0",
-            "#9966FF",
-            "#FF9F40",
-          ],
-        },
-      ],
-    },
-    histogram_dot_rate: {
-      labels: ["DOT ALGER", "DOT ORAN", "DOT CONSTANTINE", "DOT ANNABA"],
-      datasets: [
-        {
-          label: "Taux d'encaissement (%)",
-          data: [80, 90, 75, 85],
-          backgroundColor: "rgba(75, 192, 192, 0.5)",
-          borderColor: "rgba(75, 192, 192, 1)",
-          borderWidth: 1,
-        },
-      ],
-    },
-  };
 
   // React Query hooks
   const {
@@ -354,10 +283,6 @@ const FilesPage = () => {
     event.target.value = "";
   };
 
-  useEffect(() => {
-    setChartData(sampleChartData);
-  }, []);
-
   const processingContext = useProcessing();
   const { subscribeTask, isConnected, connectionStatus, reconnect } =
     processingContext || {};
@@ -455,46 +380,11 @@ const FilesPage = () => {
         }
       });
 
-      updateCombinedOverview();
     } catch (error) {
       console.error("❌ Error processing file:", error);
       setProcessingStatus((prev) => ({ ...prev, [fileId]: "failed" }));
       toast.error("Erreur lors du traitement du fichier");
     }
-  };
-
-  const updateCombinedOverview = () => {
-    const allData = Object.values(processedData);
-    if (allData.length === 0) return;
-
-    const combinedOverview = {
-      total_organisations: 0,
-      total_factures: 0,
-      total_montant_ttc: 0,
-      total_encaissement: 0,
-      avg_encaisse_rate: 0,
-    };
-
-    allData.forEach((data) => {
-      if (data.overview) {
-        combinedOverview.total_organisations +=
-          data.overview.total_organisations || 0;
-        combinedOverview.total_factures += data.overview.total_factures || 0;
-        combinedOverview.total_montant_ttc +=
-          data.overview.total_montant_ttc || 0;
-        combinedOverview.total_encaissement +=
-          data.overview.total_encaissement || 0;
-      }
-    });
-
-    if (allData.length > 0) {
-      combinedOverview.avg_encaisse_rate =
-        (combinedOverview.total_encaissement /
-          combinedOverview.total_montant_ttc) *
-        100;
-    }
-
-    setOverview(combinedOverview);
   };
 
   const handleFileClick = async (file) => {
@@ -529,8 +419,6 @@ const FilesPage = () => {
       delete newStatus[fileId];
       return newStatus;
     });
-
-    updateCombinedOverview();
   };
 
   const handleDownloadFile = async (fileId) => {
@@ -602,82 +490,6 @@ const FilesPage = () => {
     return new Date(dateString).toLocaleDateString("fr-FR");
   };
 
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat("fr-FR", {
-      style: "currency",
-      currency: "DZD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(amount);
-  };
-
-  const formatPercentage = (value) => {
-    return `${value.toFixed(2)}%`;
-  };
-
-  // Chart rendering helper with null checks
-  const renderChart = (chartType, customData) => {
-    if (!chartData || !chartData[chartType]) {
-      return (
-        <div className="flex items-center justify-center h-64 text-gray-500">
-          <div className="text-center">
-            <BarChart3 className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-            <p>Données de graphique non disponibles</p>
-          </div>
-        </div>
-      );
-    }
-
-    const chartDataToRender = customData || chartData[chartType];
-
-    // Transform chart.js data to our simple chart format
-    const transformToSimpleData = (chartData) => {
-      if (!chartData?.labels || !chartData?.datasets?.[0]?.data) return [];
-      return chartData.labels.map((label, index) => ({
-        label: label,
-        value: chartData.datasets[0].data[index] || 0,
-      }));
-    };
-
-    const simpleData = transformToSimpleData(chartDataToRender);
-
-    switch (chartType) {
-      case "histogram_combined":
-        return (
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium text-center">
-              Encaissement vs Montant TTC par mois
-            </h3>
-            <SimpleBarChart data={simpleData} width={500} height={300} />
-          </div>
-        );
-      case "pie_3d":
-        return (
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium text-center">
-              Répartition des encaissements par mois
-            </h3>
-            <SimplePieChart data={simpleData} width={400} height={300} />
-          </div>
-        );
-      case "histogram_dot_rate":
-        return (
-          <div className="space-y-2">
-            <h3 className="text-sm font-medium text-center">
-              Taux d'encaissement par DOT
-            </h3>
-            <SimpleBarChart data={simpleData} width={500} height={300} />
-          </div>
-        );
-      default:
-        return (
-          <div className="flex items-center justify-center h-64 text-gray-500">
-            <p>Type de graphique non reconnu</p>
-          </div>
-        );
-    }
-  };
-
   const files = filesData?.data?.files || [];
   const totalPages = Math.ceil((filesData?.data?.total || 0) / 10);
 
@@ -744,14 +556,7 @@ const FilesPage = () => {
           </Alert>
         )}
 
-        <Tabs defaultValue="files" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="files">Fichiers</TabsTrigger>
-            <TabsTrigger value="data">Données Traitées</TabsTrigger>
-            <TabsTrigger value="analytics">Analyses</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="files" className="space-y-6">
+        <div className="space-y-6">
             {/* Enhanced Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {statsLoading ? (
@@ -841,6 +646,34 @@ const FilesPage = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
+                {/* Optional File Type Selector */}
+                <div className="mb-4">
+                  <Label htmlFor="file-type-select" className="text-sm font-medium text-gray-700">
+                    Type de fichier (optionnel)
+                  </Label>
+                  <Select
+                    value={selectedFileType}
+                    onValueChange={setSelectedFileType}
+                  >
+                    <SelectTrigger id="file-type-select" className="w-full mt-1">
+                      <SelectValue placeholder="Détection automatique (recommandé)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Détection automatique</SelectItem>
+                      {availableFileTypes.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectedFileType && selectedFileType !== "auto" && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {availableFileTypes.find(t => t.value === selectedFileType)?.description}
+                    </p>
+                  )}
+                </div>
+
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                   <input
                     type="file"
@@ -964,6 +797,7 @@ const FilesPage = () => {
                       <TableRow>
                         <TableHead>Fichier</TableHead>
                         <TableHead>Type</TableHead>
+                        <TableHead>Classification</TableHead>
                         <TableHead>Taille</TableHead>
                         <TableHead>Statut</TableHead>
                         <TableHead>Traitement</TableHead>
@@ -992,6 +826,46 @@ const FilesPage = () => {
                             <Badge variant="outline">
                               {file.file_type.toUpperCase()}
                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col space-y-1">
+                              {file.is_manual_classification && file.manual_kpi_type ? (
+                                <>
+                                  <div className="flex items-center space-x-1">
+                                    <span className="text-xs">✋</span>
+                                    <Badge variant="secondary" className="text-xs">
+                                      {availableFileTypes.find(t => t.value === file.manual_kpi_type)?.label || file.manual_kpi_type}
+                                    </Badge>
+                                  </div>
+                                  <span className="text-[10px] text-gray-500">Manuel</span>
+                                </>
+                              ) : file.detected_kpi_type && file.detected_kpi_type !== 'unknown' ? (
+                                <>
+                                  <div className="flex items-center space-x-1">
+                                    <span className="text-xs">🤖</span>
+                                    <Badge
+                                      variant="outline"
+                                      className={`text-xs ${
+                                        file.detection_confidence >= 80
+                                          ? 'border-green-500 text-green-700'
+                                          : file.detection_confidence >= 50
+                                          ? 'border-yellow-500 text-yellow-700'
+                                          : 'border-red-500 text-red-700'
+                                      }`}
+                                    >
+                                      {availableFileTypes.find(t => t.value === file.detected_kpi_type)?.label || file.detected_kpi_type}
+                                    </Badge>
+                                  </div>
+                                  <span className="text-[10px] text-gray-500">
+                                    Auto ({file.detection_confidence || 0}%)
+                                  </span>
+                                </>
+                              ) : (
+                                <Badge variant="outline" className="text-xs border-gray-300 text-gray-500">
+                                  Non classifié
+                                </Badge>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             {formatFileSize(file.file_size)}
@@ -1177,293 +1051,7 @@ const FilesPage = () => {
                 </div>
               </div>
             )}
-          </TabsContent>
-
-          <TabsContent value="data" className="space-y-6">
-            {/* Enhanced Overview Cards */}
-            {overview && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Organisations
-                    </CardTitle>
-                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {overview.total_organisations}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Total des DOT
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Factures
-                    </CardTitle>
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {overview.total_factures}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Total des factures
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Montant TTC
-                    </CardTitle>
-                    <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {formatCurrency(overview.total_montant_ttc)}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Montant total
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <CardTitle className="text-sm font-medium">
-                      Taux d'encaissement
-                    </CardTitle>
-                    <PieChart className="h-4 w-4 text-muted-foreground" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">
-                      {formatPercentage(overview.avg_encaisse_rate)}
-                    </div>
-                    <Progress
-                      value={overview.avg_encaisse_rate}
-                      className="mt-2"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Moyenne générale
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {/* Enhanced Processed Data Summary */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Database className="h-5 w-5" />
-                  Résumé des Données Traitées
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {Object.keys(processedData).length === 0 ? (
-                    <div className="text-center text-gray-500 py-8">
-                      <Database className="h-12 w-12 mx-auto mb-4 text-gray-300" />
-                      <p>Aucune donnée traitée pour le moment</p>
-                      <p className="text-sm">
-                        Téléchargez des fichiers pour commencer le traitement
-                      </p>
-                    </div>
-                  ) : (
-                    Object.entries(processedData).map(([fileId, data]) => {
-                      const file = files.find((f) => f.id === parseInt(fileId));
-                      return (
-                        <div key={fileId} className="border rounded-lg p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="font-semibold">
-                              {file?.original_filename || `Fichier ${fileId}`}
-                            </h4>
-                            <Badge
-                              className={getStatusColor(
-                                processingStatus[fileId] || "completed"
-                              )}
-                            >
-                              {processingStatus[fileId] === "completed"
-                                ? "Traité"
-                                : "En cours"}
-                            </Badge>
-                          </div>
-                          {data.overview && (
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                              <div>
-                                <span className="text-gray-600">
-                                  Organisations:
-                                </span>
-                                <div className="font-semibold">
-                                  {data.overview.total_organisations}
-                                </div>
-                              </div>
-                              <div>
-                                <span className="text-gray-600">Factures:</span>
-                                <div className="font-semibold">
-                                  {data.overview.total_factures}
-                                </div>
-                              </div>
-                              <div>
-                                <span className="text-gray-600">
-                                  Montant TTC:
-                                </span>
-                                <div className="font-semibold">
-                                  {formatCurrency(
-                                    data.overview.total_montant_ttc
-                                  )}
-                                </div>
-                              </div>
-                              <div>
-                                <span className="text-gray-600">Taux:</span>
-                                <div className="font-semibold">
-                                  {formatPercentage(
-                                    data.overview.avg_encaisse_rate
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="analytics" className="space-y-6">
-            {/* Enhanced Filters and Search */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Filter className="h-5 w-5" />
-                  Filtres et recherche
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <Label htmlFor="organisation">DOT (Organisation)</Label>
-                    <Select
-                      value={filters.organisation}
-                      onValueChange={(value) =>
-                        setFilters({ ...filters, organisation: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sélectionner une organisation" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Toutes</SelectItem>
-                        <SelectItem value="DOT_ALGER">DOT ALGER</SelectItem>
-                        <SelectItem value="DOT_ORAN">DOT ORAN</SelectItem>
-                        <SelectItem value="DOT_CONSTANTINE">
-                          DOT CONSTANTINE
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="dateFact">Mois (Date Fact)</Label>
-                    <Select
-                      value={filters.dateFact}
-                      onValueChange={(value) =>
-                        setFilters({ ...filters, dateFact: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sélectionner un mois" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Tous</SelectItem>
-                        <SelectItem value="2024-01">Janvier 2024</SelectItem>
-                        <SelectItem value="2024-02">Février 2024</SelectItem>
-                        <SelectItem value="2024-03">Mars 2024</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="encaisseRate">Taux d'encaissement</Label>
-                    <Select
-                      value={filters.encaisseRate}
-                      onValueChange={(value) =>
-                        setFilters({ ...filters, encaisseRate: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Sélectionner un taux" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Tous</SelectItem>
-                        <SelectItem value="0-25">0-25%</SelectItem>
-                        <SelectItem value="25-50">25-50%</SelectItem>
-                        <SelectItem value="50-75">50-75%</SelectItem>
-                        <SelectItem value="75-100">75-100%</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="search">Recherche</Label>
-                    <div className="relative">
-                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="search"
-                        placeholder="Rechercher..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-8"
-                      />
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Enhanced Charts Section */}
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Histogramme combiné */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>
-                      Histogramme combiné (Encaissement et Montant TTC par mois)
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>{renderChart("histogram_combined")}</CardContent>
-                </Card>
-
-                {/* Secteur 3D */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Secteur 3D (encaissement / mois)</CardTitle>
-                  </CardHeader>
-                  <CardContent>{renderChart("pie_3d")}</CardContent>
-                </Card>
-              </div>
-
-              {/* Histogramme DOT et Taux */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    Histogramme (DOT et Taux d'encaissement)
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>{renderChart("histogram_dot_rate")}</CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-        </Tabs>
+        </div>
 
         {/* Enhanced File Details Dialog */}
         <Dialog open={showFileDetails} onOpenChange={setShowFileDetails}>
@@ -1528,6 +1116,53 @@ const FilesPage = () => {
                     </Label>
                     <p className="text-gray-900">{selectedFile.id}</p>
                   </div>
+                  <div className="col-span-2">
+                    <Label className="block text-sm font-medium text-gray-600 mb-2">
+                      Classification
+                    </Label>
+                    {selectedFile.is_manual_classification && selectedFile.manual_kpi_type ? (
+                      <div className="flex items-center space-x-2">
+                        <span>✋</span>
+                        <Badge variant="secondary">
+                          {availableFileTypes.find(t => t.value === selectedFile.manual_kpi_type)?.label || selectedFile.manual_kpi_type}
+                        </Badge>
+                        <span className="text-xs text-gray-500">(Classification manuelle)</span>
+                      </div>
+                    ) : selectedFile.detected_kpi_type && selectedFile.detected_kpi_type !== 'unknown' ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center space-x-2">
+                          <span>🤖</span>
+                          <Badge
+                            variant="outline"
+                            className={
+                              selectedFile.detection_confidence >= 80
+                                ? 'border-green-500 text-green-700'
+                                : selectedFile.detection_confidence >= 50
+                                ? 'border-yellow-500 text-yellow-700'
+                                : 'border-red-500 text-red-700'
+                            }
+                          >
+                            {availableFileTypes.find(t => t.value === selectedFile.detected_kpi_type)?.label || selectedFile.detected_kpi_type}
+                          </Badge>
+                          <span className="text-xs text-gray-500">
+                            (Détection automatique - {selectedFile.detection_confidence || 0}% de confiance)
+                          </span>
+                        </div>
+                        {selectedFile.detection_confidence < 80 && (
+                          <Alert className="bg-yellow-50 border-yellow-200">
+                            <AlertCircle className="h-4 w-4 text-yellow-600" />
+                            <AlertDescription className="text-sm text-yellow-700">
+                              Confiance faible. Vous pouvez définir manuellement le type de fichier ci-dessous.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </div>
+                    ) : (
+                      <Badge variant="outline" className="border-gray-300 text-gray-500">
+                        Non classifié
+                      </Badge>
+                    )}
+                  </div>
                 </div>
 
                 {/* Data Processing Status */}
@@ -1550,6 +1185,43 @@ const FilesPage = () => {
                     </AlertDescription>
                   </Alert>
                 )}
+
+                {/* Manual Classification Section */}
+                <div className="border-t pt-4">
+                  <Label className="block text-sm font-medium text-gray-700 mb-2">
+                    Modifier la classification
+                  </Label>
+                  <div className="flex items-center space-x-2">
+                    <Select
+                      value={selectedFile.manual_kpi_type || selectedFile.detected_kpi_type || ""}
+                      onValueChange={async (value) => {
+                        try {
+                          await updateFileClassification(selectedFile.id, value);
+                          toast.success("Classification mise à jour avec succès");
+                          queryClient.invalidateQueries({ queryKey: ["files"] });
+                          setShowFileDetails(false);
+                        } catch (error) {
+                          console.error("Error updating classification:", error);
+                          toast.error("Erreur lors de la mise à jour de la classification");
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Sélectionner un type de fichier" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableFileTypes.map((type) => (
+                          <SelectItem key={type.value} value={type.value}>
+                            {type.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sélectionnez un type pour remplacer la classification automatique
+                  </p>
+                </div>
 
                 {selectedFile.error_message && (
                   <Alert variant="destructive">

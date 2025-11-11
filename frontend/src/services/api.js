@@ -619,6 +619,14 @@ export const cancelProcessing = (fileId) => {
 
 export const getFileStats = () => api.get("/api/files/stats/summary");
 
+export const getAvailableFileTypes = () => api.get("/api/files/types/available");
+
+export const updateFileClassification = (fileId, manualKpiType) => {
+  if (!fileId) return Promise.reject(new Error("File ID is required"));
+  if (!manualKpiType) return Promise.reject(new Error("Manual KPI type is required"));
+  return api.patch(`/api/files/${fileId}/classification?manual_kpi_type=${encodeURIComponent(manualKpiType)}`);
+};
+
 // Admin endpoints
 export const getAllFiles = (params = {}) => {
   const queryParams = new URLSearchParams();

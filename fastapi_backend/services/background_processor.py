@@ -164,7 +164,7 @@ class BackgroundProcessor:
                 f"🚀 Starting OPTIMIZED streaming pipeline with {self.max_workers} workers")
 
             # Stream chunks and process immediately
-            for chunk_df in pd.read_csv(file_path, chunksize=self.chunk_size):
+            for chunk_df in self._read_file_chunks(file_path, chunksize=self.chunk_size):
                 if task["cancelled"] or self._shutdown_event.is_set():
                     task["status"] = ProcessingStatus.CANCELLED
                     return
@@ -338,15 +338,80 @@ class BackgroundProcessor:
             task["errors"].append(str(e))
             task["end_time"] = datetime.utcnow()
 
+    def _read_file_chunks(self, file_path: str, chunksize: int = 5000):
+        """Generator that yields chunks of data from any supported file type"""
+        from pathlib import Path
+        file_ext = Path(file_path).suffix.lower()
+
+        if file_ext == '.csv':
+            # CSV file - use chunksize
+            for chunk in pd.read_csv(file_path, chunksize=chunksize):
+                yield chunk
+        elif file_ext in ['.xlsx', '.xls']:
+            # Excel file - read entire file then yield in chunks
+            try:
+                if file_ext == '.xlsx':
+                    df = pd.read_excel(file_path, engine='openpyxl')
+                else:
+                    # .xls - might be HTML masquerading as Excel
+                    try:
+                        df = pd.read_excel(file_path, engine='xlrd')
+                    except:
+                        # Try HTML parsing - use largest table
+                        tables = pd.read_html(file_path)
+                        if tables:
+                            df = max(tables, key=len)
+                        else:
+                            logger.error("No tables found in HTML file")
+                            return
+
+                # Yield in chunks
+                for start in range(0, len(df), chunksize):
+                    yield df.iloc[start:start + chunksize]
+            except Exception as e:
+                logger.error(f"Error reading Excel file: {e}")
+                raise
+        else:
+            logger.error(f"Unsupported file type: {file_ext}")
+            raise ValueError(f"Unsupported file type: {file_ext}")
+
     def _count_file_rows(self, file_path: str) -> int:
         """Count total rows in file efficiently"""
         try:
-            # Use pandas to count rows efficiently
-            chunk_iter = pd.read_csv(file_path, chunksize=10000)
-            total_rows = 0
-            for chunk in chunk_iter:
-                total_rows += len(chunk)
-            return total_rows
+            from pathlib import Path
+            file_ext = Path(file_path).suffix.lower()
+
+            if file_ext == '.csv':
+                # CSV file - use chunksize
+                chunk_iter = pd.read_csv(file_path, chunksize=10000)
+                total_rows = 0
+                for chunk in chunk_iter:
+                    total_rows += len(chunk)
+                return total_rows
+            elif file_ext in ['.xlsx', '.xls']:
+                # Excel file - read with appropriate engine
+                try:
+                    if file_ext == '.xlsx':
+                        df = pd.read_excel(file_path, engine='openpyxl', nrows=None)
+                    else:
+                        # .xls - might be HTML masquerading as Excel
+                        try:
+                            df = pd.read_excel(file_path, engine='xlrd', nrows=None)
+                        except:
+                            # Try HTML parsing
+                            tables = pd.read_html(file_path)
+                            if tables:
+                                # Use largest table
+                                df = max(tables, key=len)
+                            else:
+                                return 0
+                    return len(df)
+                except Exception as e:
+                    logger.error(f"Error reading Excel file: {e}")
+                    return 0
+            else:
+                logger.warning(f"Unsupported file type: {file_ext}")
+                return 0
         except Exception as e:
             logger.error(f"Error counting rows: {e}")
             return 0

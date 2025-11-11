@@ -176,6 +176,61 @@ async def delete_file(
         )
 
 
+@file_management_router.patch("/{file_id}/classification")
+async def update_file_classification(
+    file_id: int,
+    manual_kpi_type: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Manually set the KPI type for a file"""
+    try:
+        file_upload = file_service.get_file_upload(
+            db, file_id, current_user.id)
+        check_admin_or_owner(current_user, db, file_upload.uploaded_by)
+
+        # Update manual classification
+        file_upload.manual_kpi_type = manual_kpi_type
+        file_upload.is_manual_classification = True
+
+        db.commit()
+        db.refresh(file_upload)
+
+        logger.info(
+            f"File {file_id} manually classified as {manual_kpi_type} by user {current_user.id}")
+        return {"message": "File classification updated", "manual_kpi_type": manual_kpi_type}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error updating classification: {str(e)}"
+        )
+
+
+@file_management_router.get("/types/available")
+async def get_available_file_types(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get list of available KPI file types for manual selection"""
+    from services.file_detector_service import file_detector_service, KPIFileType
+
+    file_types = []
+    for kpi_type in KPIFileType:
+        if kpi_type != KPIFileType.UNKNOWN and kpi_type != KPIFileType.ANOMALIE:
+            requirements = file_detector_service.get_processing_requirements(
+                kpi_type)
+            file_types.append({
+                "value": kpi_type.value,
+                "label": requirements['name'],
+                "description": requirements['description'],
+                "notes": requirements.get('notes', '')
+            })
+
+    logger.info(f"Available file types requested by user {current_user.id}")
+    return {"file_types": file_types}
+
+
 @file_management_router.get("/user/{user_id}", response_model=FileListResponse)
 async def get_user_files(
     user_id: int,

@@ -15,7 +15,9 @@ logger = logging.getLogger(__name__)
 class KPIFileType(Enum):
     """Enumeration of supported KPI file types"""
     PARC_CORPORATE_NGBSS = "parc_corporate_ngbss"
-    CHIFFRE_AFFAIRES = "chiffre_affaires"
+    CHIFFRE_AFFAIRES = "chiffre_affaires"  # Main revenue journal file
+    CHIFFRE_AFFAIRES_ACCOUNT_DESC = "chiffre_affaires_account_desc"  # File 2: Description Cpt Comptable
+    CHIFFRE_AFFAIRES_OBJECTIVE = "chiffre_affaires_objective"  # File 1: Objectif C.A
     ENCAISSEMENT = "encaissement"
     ENCAISSEMENT_AR_DOT = "encaissement_ar_dot"  # NEW: Specialized Encaissement AR DOT module
     CREANCE_PERIODIQUE = "creance_periodique"
@@ -56,8 +58,28 @@ class FileDetectorService:
                     'type_fact', 'type fact', 'n_fact', 'n fact',
                     'description', 'desc'
                 ],
-                'min_matches': 4,
-                'keywords': ['chiffre', 'affaires', 'ca', 'comptable', 'objectif', 'journal', 'revenue']
+                'min_matches': 5,  # Increased to avoid confusion with support files
+                'keywords': ['chiffre', 'affaires', 'journal', 'revenue', 'facture']
+            },
+            KPIFileType.CHIFFRE_AFFAIRES_ACCOUNT_DESC: {
+                'required': [
+                    'cpt_comptable', 'cpt comptable', 'compte comptable',
+                    'description_cpt_comptable', 'description cpt comptable', 'description',
+                    'aut_bdg', 'aut bdg',
+                    'aut_imp', 'aut imp',
+                    'type_cpte', 'type cpte',
+                    'auxil', 'let'
+                ],
+                'min_matches': 3,  # Must have cpt_comptable, description, and at least one more
+                'keywords': ['description', 'comptable', 'account', 'cpt', 'aut']
+            },
+            KPIFileType.CHIFFRE_AFFAIRES_OBJECTIVE: {
+                'required': [
+                    'dot',
+                    'objectif', 'objectif_ca', 'objectif ca', 'objective', 'objectif c a', 'objectifca'
+                ],
+                'min_matches': 2,  # Must have both dot and objectif
+                'keywords': ['objectif', 'objective', 'ca']
             },
             KPIFileType.ENCAISSEMENT: {
                 'required': [
@@ -171,8 +193,9 @@ class FileDetectorService:
                     'reason': 'No columns found in file'
                 }
 
-            logger.info(f"📋 Found {len(columns)} columns: {columns[:10]}...")
-            logger.info(f"📋 All columns: {columns}")
+            logger.info(f"📋 Found {len(columns)} columns")
+            logger.info(f"📋 First 10 columns: {columns[:10]}")
+            logger.info(f"📋 ALL COLUMNS: {columns}")
 
             # Normalize columns for comparison
             normalized_columns = self._normalize_columns(columns)
@@ -200,6 +223,11 @@ class FileDetectorService:
             # Determine confidence
             confidence = min(best_score * 10, 100)  # Convert to 0-100 scale
 
+            # Log detection scores for all types
+            logger.info("🎯 Detection Scores:")
+            for kpi_type, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)[:5]:
+                logger.info(f"   {kpi_type.value}: {score:.1f} points ({min(score*10, 100):.0f}% confidence)")
+
             # Require minimum confidence to classify
             if confidence < 40 or best_match == KPIFileType.UNKNOWN:
                 detected_type = KPIFileType.UNKNOWN
@@ -219,7 +247,9 @@ class FileDetectorService:
 
             logger.info(
                 f"✅ Detection complete: {detected_type.value} ({confidence}% confidence)")
-            logger.info(f"   Matched columns: {matched_columns}")
+            logger.info(f"   Matched {len(matched_columns)} signature columns: {matched_columns[:10]}")
+            if len(matched_columns) > 10:
+                logger.info(f"   ... and {len(matched_columns) - 10} more")
 
             return detected_type, detection_info
 
@@ -234,22 +264,32 @@ class FileDetectorService:
             }
 
     def _read_file_headers(self, file_path: Path) -> List[str]:
-        """Read column headers from a file"""
+        """Read column headers from a file, searching first 20 rows for header row"""
         try:
             file_ext = file_path.suffix.lower()
 
             if file_ext == '.csv':
                 # Try different encodings and delimiters for CSV
+                # Search for headers in first 20 rows
                 for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
                     for delimiter in [',', ';', '\t', '|']:
                         try:
-                            df = pd.read_csv(
-                                file_path, nrows=0, encoding=encoding, sep=delimiter)
-                            # Check if we got multiple columns (good delimiter)
-                            if len(df.columns) > 1:
-                                logger.debug(
-                                    f"Successfully read CSV with encoding={encoding}, delimiter={delimiter}")
-                                return df.columns.tolist()
+                            # Read first 20 rows to find headers
+                            df_sample = pd.read_csv(
+                                file_path, nrows=20, encoding=encoding, sep=delimiter, header=None)
+
+                            # Search for header row in first 20 rows
+                            header_row = self._find_header_row(df_sample)
+
+                            if header_row is not None:
+                                # Re-read with correct header row
+                                df = pd.read_csv(
+                                    file_path, nrows=0, encoding=encoding, sep=delimiter, header=header_row)
+                                # Check if we got multiple columns (good delimiter)
+                                if len(df.columns) > 1:
+                                    logger.info(
+                                        f"✅ Found CSV headers at row {header_row} with encoding={encoding}, delimiter={delimiter}")
+                                    return df.columns.tolist()
                         except (UnicodeDecodeError, pd.errors.ParserError):
                             continue
 
@@ -259,27 +299,63 @@ class FileDetectorService:
                 return df.columns.tolist()
 
             elif file_ext == '.xlsx':
-                # Read modern Excel file (first sheet)
-                df = pd.read_excel(file_path, nrows=0,
-                                   sheet_name=0, engine='openpyxl')
-                return df.columns.tolist()
+                # Read modern Excel file - search first 20 rows for headers
+                df_sample = pd.read_excel(file_path, nrows=20, sheet_name=0, engine='openpyxl', header=None)
+                header_row = self._find_header_row(df_sample)
+
+                if header_row is not None:
+                    df = pd.read_excel(file_path, nrows=0, sheet_name=0, engine='openpyxl', header=header_row)
+                    logger.info(f"✅ Found Excel headers at row {header_row}")
+                    return df.columns.tolist()
+                else:
+                    # Fallback to first row
+                    df = pd.read_excel(file_path, nrows=0, sheet_name=0, engine='openpyxl')
+                    return df.columns.tolist()
 
             elif file_ext == '.xls':
                 # Read old Excel file (first sheet) - needs xlrd engine
                 try:
-                    df = pd.read_excel(file_path, nrows=0,
-                                       sheet_name=0, engine='xlrd')
-                    return df.columns.tolist()
+                    # Try reading first 20 rows to find headers
+                    df_sample = pd.read_excel(file_path, nrows=20, sheet_name=0, engine='xlrd', header=None)
+                    header_row = self._find_header_row(df_sample)
+
+                    if header_row is not None:
+                        df = pd.read_excel(file_path, nrows=0, sheet_name=0, engine='xlrd', header=header_row)
+                        logger.info(f"✅ Found .xls headers at row {header_row}")
+                        return df.columns.tolist()
+                    else:
+                        df = pd.read_excel(file_path, nrows=0, sheet_name=0, engine='xlrd')
+                        return df.columns.tolist()
                 except Exception as e:
                     logger.warning(
                         f"⚠️ Failed to read .xls with xlrd: {str(e)}")
                     # Some systems export HTML with .xls extension; try parsing HTML tables
                     try:
-                        html_tables = pd.read_html(file_path, header=0)
-                        if html_tables:
+                        # First read without header to detect structure
+                        html_tables_raw = pd.read_html(file_path, header=None)
+                        if html_tables_raw:
                             logger.info(
                                 "✅ Parsed HTML table from .xls masquerading as HTML")
-                            return html_tables[0].columns.astype(str).tolist()
+                            # Search through tables for best header match
+                            for idx, table in enumerate(html_tables_raw):
+                                if len(table.columns) > 10:  # Likely the data table
+                                    logger.info(f"   Using table {idx} with {len(table.columns)} columns")
+                                    # Search first 20 rows for header row
+                                    header_row = self._find_header_row(table.head(20).reset_index(drop=True))
+
+                                    if header_row is not None:
+                                        # Extract headers from the detected row
+                                        headers = table.iloc[header_row].astype(str).tolist()
+                                        logger.info(f"✅ Found HTML table headers at row {header_row}")
+                                        logger.info(f"   Headers: {headers[:5]}... (showing first 5)")
+                                        return headers
+                                    else:
+                                        # If no header row found, assume first row is header
+                                        logger.info(f"   No clear header row found, using row 0")
+                                        headers = table.iloc[0].astype(str).tolist()
+                                        return headers
+                            # Fallback to first table, first row as headers
+                            return html_tables_raw[0].iloc[0].astype(str).tolist()
                     except Exception as e2:
                         logger.warning(f"⚠️ pandas.read_html failed: {e2}")
                     # As a last resort, try openpyxl (unlikely to work for .xls)
@@ -298,6 +374,91 @@ class FileDetectorService:
         except Exception as e:
             logger.error(f"❌ Error reading file headers: {str(e)}")
             return []
+
+    def _find_header_row(self, df_sample: pd.DataFrame) -> Optional[int]:
+        """
+        Search first 20 rows to find the header row containing known file type headers
+
+        Args:
+            df_sample: DataFrame with first 20 rows (header=None)
+
+        Returns:
+            Row index (0-based) where headers are found, or None if not found
+        """
+        # Define key headers for different file types
+        # These should be distinctive enough to avoid false positives
+        header_sets = {
+            'revenue_journal': [
+                'org name', 'date fact', 'cpt comptable',
+                'date gl', 'mnt ht', 'mnt ttc', 'chiffre aff exe dzd',
+                'typ fact', 'delai paie'
+            ],
+            'parc_corporate': [
+                'actel code', 'actel', 'customer level',
+                'telecom type', 'primary offer', 'subscriber status',
+                'offer type', 'price plan', 'activation date'
+            ]
+        }
+
+        best_row = None
+        best_match_count = 0
+        best_file_type = None
+
+        # Search through first 20 rows
+        for row_idx in range(min(20, len(df_sample))):
+            row_values = df_sample.iloc[row_idx].astype(str).str.lower().str.strip()
+
+            # Log first few rows for debugging
+            if row_idx < 5:
+                logger.debug(f"Row {row_idx}: {list(row_values[:5])}")
+
+            # Try each header set
+            for file_type, key_headers in header_sets.items():
+                # Count how many key headers are present in this row
+                match_count = 0
+                matched_headers = []
+
+                for header in key_headers:
+                    for cell_value in row_values:
+                        # Normalize cell value
+                        cell_normalized = ''.join(c if c.isalnum() or c == ' ' else ' ' for c in cell_value)
+                        cell_normalized = ' '.join(cell_normalized.split())
+
+                        # More strict matching to avoid false positives:
+                        # 1. For multi-word headers, require most words to match
+                        # 2. Avoid matching very short words unless they're exact
+                        header_words = header.split()
+
+                        if len(header_words) == 1:
+                            # Single word: require exact match or cell starts/ends with it
+                            # and cell is not too long (to avoid matching "actel" in "Actel Code_Code d'actel")
+                            if (cell_normalized == header or
+                                (header in cell_normalized and len(cell_normalized) <= len(header) + 10)):
+                                match_count += 1
+                                matched_headers.append(header)
+                                break
+                        else:
+                            # Multi-word: require at least half the words to match
+                            words_matched = sum(1 for word in header_words if word in cell_normalized)
+                            if words_matched >= len(header_words) / 2:
+                                match_count += 1
+                                matched_headers.append(header)
+                                break
+
+                # If this row has more matches, it's likely the header row
+                if match_count > best_match_count:
+                    best_match_count = match_count
+                    best_row = row_idx
+                    best_file_type = file_type
+                    logger.debug(f"  Row {row_idx} - {file_type}: {match_count} matches ({matched_headers[:3]})")
+
+        # Require at least 4 matching headers to consider it valid
+        if best_match_count >= 4:
+            logger.info(f"🎯 Found {best_file_type} header row at index {best_row} with {best_match_count} matching headers")
+            return best_row
+        else:
+            logger.warning(f"⚠️ No clear header row found in first 20 rows (best match: {best_match_count} headers)")
+            return None
 
     def _normalize_columns(self, columns: List[str]) -> Set[str]:
         """
@@ -404,6 +565,8 @@ class FileDetectorService:
         processor_mapping = {
             KPIFileType.PARC_CORPORATE_NGBSS: 'ParcCorporateNGBSSETL',
             KPIFileType.CHIFFRE_AFFAIRES: 'ChiffreAffairesETL',
+            KPIFileType.CHIFFRE_AFFAIRES_ACCOUNT_DESC: 'ChiffreAffairesAccountDescETL',
+            KPIFileType.CHIFFRE_AFFAIRES_OBJECTIVE: 'ChiffreAffairesObjectiveETL',
             KPIFileType.ENCAISSEMENT: 'EncaissementETL',
             KPIFileType.ENCAISSEMENT_AR_DOT: 'EncaissementARDotETL',  # NEW: Specialized module
             KPIFileType.CREANCE_PERIODIQUE: 'CreancePeriodique ETL',
@@ -431,12 +594,31 @@ class FileDetectorService:
                 'estimated_processing_time': 'medium'
             },
             KPIFileType.CHIFFRE_AFFAIRES: {
-                'name': 'Chiffre d\'Affaires AR DOT',
-                'description': 'Revenue data with objectives',
+                'name': 'Chiffre d\'Affaires AR DOT - Journal (File 3/3)',
+                'description': 'Main revenue journal file (requires 3 files total)',
                 'required_columns': ['org_name', 'date_gl', 'cpt_comptable', 'chiffre_aff_exe_dzd'],
                 'processor': 'ChiffreAffairesETL',
                 'generates_anomalies': True,
-                'estimated_processing_time': 'medium'
+                'estimated_processing_time': 'medium',
+                'notes': 'Main file of 3-file set. Process with: 1) Objectif C.A, 2) Description Cpt Comptable, 3) Journal (this file)'
+            },
+            KPIFileType.CHIFFRE_AFFAIRES_ACCOUNT_DESC: {
+                'name': 'Chiffre d\'Affaires AR DOT - Description Cpt Comptable (File 2/3)',
+                'description': 'Account code descriptions for revenue module',
+                'required_columns': ['cpt_comptable', 'description_cpt_comptable', 'aut_bdg', 'type_cpte'],
+                'processor': 'ChiffreAffairesAccountDescETL',
+                'generates_anomalies': False,
+                'estimated_processing_time': 'fast',
+                'notes': 'Part of Chiffre d\'Affaires 3-file set. Upload File 1 (Objectif) first, then this file, then File 3 (Journal)'
+            },
+            KPIFileType.CHIFFRE_AFFAIRES_OBJECTIVE: {
+                'name': 'Chiffre d\'Affaires AR DOT - Objectif C.A (File 1/3)',
+                'description': 'Revenue objectives by DOT for revenue module',
+                'required_columns': ['dot', 'objectif_ca'],
+                'processor': 'ChiffreAffairesObjectiveETL',
+                'generates_anomalies': False,
+                'estimated_processing_time': 'fast',
+                'notes': 'Part of Chiffre d\'Affaires 3-file set. Upload this file FIRST, then File 2 (Description), then File 3 (Journal)'
             },
             KPIFileType.ENCAISSEMENT: {
                 'name': 'Encaissement AR DOT',
