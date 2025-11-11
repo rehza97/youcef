@@ -147,31 +147,62 @@ class EncaissementARDotETL(BaseETLProcessor):
                     if file_ext == '.xls':
                         # Try HTML parsing first for .xls files
                         try:
-                            html_tables = pd.read_html(str(file_path), header=0)
-                            if html_tables:
-                                df = html_tables[0]
-                                logger.info(f"✅ Parsed HTML table from {file_path.name}")
-                        except:
+                            # Read HTML tables without header first to find the right table
+                            html_tables_raw = pd.read_html(str(file_path), header=None)
+                            if html_tables_raw:
+                                # Find the table with most columns (likely the data table)
+                                best_table = None
+                                max_columns = 0
+                                best_table_idx = -1
+                                for idx, table in enumerate(html_tables_raw):
+                                    if len(table.columns) > max_columns:
+                                        max_columns = len(table.columns)
+                                        best_table = table
+                                        best_table_idx = idx
+                                
+                                if best_table is not None and max_columns >= 15:  # Encaissement files have 20 columns
+                                    logger.info(f"✅ Found HTML table {best_table_idx} with {max_columns} columns and {len(best_table)} rows")
+                                    
+                                    # Find header row (should contain "Organisation")
+                                    header_row = None
+                                    for idx in range(min(5, len(best_table))):
+                                        row_values = [str(val).lower() for val in best_table.iloc[idx].values if pd.notna(val)]
+                                        if any('organisation' in val or ('org' in val and 'name' not in val) for val in row_values):
+                                            header_row = idx
+                                            logger.info(f"✅ Found header row at index {idx}")
+                                            break
+                                    
+                                    if header_row is not None:
+                                        df = best_table.iloc[header_row + 1:].copy()
+                                        df.columns = best_table.iloc[header_row].astype(str).tolist()
+                                        df.reset_index(drop=True, inplace=True)
+                                        logger.info(f"✅ Parsed HTML table: {len(df)} data rows with {len(df.columns)} columns")
+                                    else:
+                                        # Use first row as header
+                                        logger.warning("⚠️ No clear header row found, using row 0 as header")
+                                        df = best_table.iloc[1:].copy()
+                                        df.columns = best_table.iloc[0].astype(str).tolist()
+                                        df.reset_index(drop=True, inplace=True)
+                                        logger.info(f"✅ Parsed HTML table: {len(df)} data rows")
+                                else:
+                                    raise ValueError(f"No suitable HTML table found (max columns: {max_columns})")
+                            else:
+                                raise ValueError("No HTML tables found")
+                        except Exception as html_error:
+                            logger.warning(f"⚠️ HTML parsing failed: {html_error}, trying Excel...")
                             # Fall back to regular Excel reading
-                            df = pd.read_excel(file_path)
+                            try:
+                                df = pd.read_excel(file_path, engine='xlrd')
+                            except Exception as excel_error:
+                                raise ValueError(f"Failed to read as HTML or Excel: HTML error: {html_error}, Excel error: {excel_error}")
                     else:
                         df = ETLUtils.ingest_file(file_path)
-
-                    # Skip header rows (Algérie Télécom info, etc.)
-                    # Find the row with column headers (contains "Organisation")
-                    header_row = None
-                    for idx, row in df.iterrows():
-                        if any('organisation' in str(val).lower() for val in row if pd.notna(val)):
-                            header_row = idx
-                            break
-
-                    if header_row is not None:
-                        # Use found row as header
-                        df.columns = df.iloc[header_row]
-                        df = df.iloc[header_row + 1:].reset_index(drop=True)
-
-                    # Normalize column names
+                    
+                    # Normalize column names to snake_case
                     df = ETLUtils.normalize_headers_to_snake_case(df)
+                    
+                    # Log normalized columns for debugging
+                    logger.info(f"📋 Normalized columns: {list(df.columns)}")
 
                     # Remove empty rows
                     df = df.dropna(how='all')
@@ -217,11 +248,25 @@ class EncaissementARDotETL(BaseETLProcessor):
             step.records_processed = len(cleaned_df)
             original_count = len(cleaned_df)
 
-            # Map column name variations to standard names
-            column_mapping = self._map_column_names(cleaned_df.columns)
-            cleaned_df = cleaned_df.rename(columns=column_mapping)
-
-            logger.info(f"📋 Mapped columns: {column_mapping}")
+            # Columns are already normalized to snake_case in _ingest_step
+            # But we may need to map some variations to ensure exact match
+            # Check if we have the required columns, if not try mapping
+            column_mapping = {}
+            required_cols_lower = [col.lower() for col in self.required_columns]
+            existing_cols_lower = [col.lower() for col in cleaned_df.columns]
+            
+            # Only map if we're missing required columns
+            missing_cols = [col for col in self.required_columns if col.lower() not in existing_cols_lower]
+            if missing_cols:
+                logger.warning(f"⚠️ Some required columns missing after normalization: {missing_cols}")
+                logger.info(f"   Existing columns: {list(cleaned_df.columns)}")
+                # Try to map variations
+                column_mapping = self._map_column_names(cleaned_df.columns)
+                if column_mapping:
+                    cleaned_df = cleaned_df.rename(columns=column_mapping)
+                    logger.info(f"📋 Applied column mapping: {column_mapping}")
+            else:
+                logger.info(f"✅ All required columns present after normalization")
 
             # RULE 1: Remove AT_SIEGE entries
             if 'organisation' in cleaned_df.columns:
@@ -254,19 +299,73 @@ class EncaissementARDotETL(BaseETLProcessor):
                     cleaned_df[col] = cleaned_df[col].astype(str).str.replace(r'[^\d\.\-]', '', regex=True)
                     cleaned_df[col] = pd.to_numeric(cleaned_df[col], errors='coerce').fillna(0)
 
-            # Parse date_fact column
+            # Parse date_fact column with dayfirst=True for French date format (dd/mm/yyyy)
             if 'date_fact' in cleaned_df.columns:
-                cleaned_df['date_fact'] = pd.to_datetime(cleaned_df['date_fact'], errors='coerce')
+                cleaned_df['date_fact'] = pd.to_datetime(cleaned_df['date_fact'], errors='coerce', dayfirst=True)
                 # Extract month for aggregation
                 cleaned_df['mois'] = cleaned_df['date_fact'].dt.to_period('M').astype(str)
                 logger.info("✅ Parsed date_fact and extracted month")
+
+            # Parse date_rglt column - handle French month names (e.g., "12 mars 25", "30 oct. 24")
+            if 'date_rglt' in cleaned_df.columns:
+                # French month mapping
+                french_months = {
+                    'janv': '01', 'janvier': '01',
+                    'févr': '02', 'février': '02', 'fev': '02', 'fevr': '02',
+                    'mars': '03',
+                    'avr': '04', 'avril': '04',
+                    'mai': '05',
+                    'juin': '06',
+                    'juil': '07', 'juillet': '07',
+                    'août': '08', 'aout': '08',
+                    'sept': '09', 'septembre': '09',
+                    'oct': '10', 'octobre': '10',
+                    'nov': '11', 'novembre': '11',
+                    'déc': '12', 'décembre': '12', 'dec': '12'
+                }
+
+                def parse_french_date(date_str):
+                    """Parse French date strings like '12 mars 25' or '30 oct. 24'"""
+                    if pd.isna(date_str):
+                        return pd.NaT
+
+                    date_str = str(date_str).strip().lower()
+
+                    # Try standard parsing first
+                    try:
+                        parsed = pd.to_datetime(date_str, errors='coerce', dayfirst=True)
+                        if pd.notna(parsed):
+                            return parsed
+                    except:
+                        pass
+
+                    # Try French month replacement
+                    for french, numeric in french_months.items():
+                        if french in date_str:
+                            # Replace French month with numeric
+                            date_str = date_str.replace(french, numeric)
+                            # Remove dots and extra spaces
+                            date_str = date_str.replace('.', '').replace('  ', ' ')
+                            try:
+                                # Try parsing as dd mm yy
+                                parsed = pd.to_datetime(date_str, errors='coerce', dayfirst=True)
+                                if pd.notna(parsed):
+                                    return parsed
+                            except:
+                                pass
+
+                    return pd.NaT
+
+                cleaned_df['date_rglt'] = cleaned_df['date_rglt'].apply(parse_french_date)
+                logger.info("✅ Parsed date_rglt with French month name support")
 
             step.metadata["cleaning_rules_applied"] = [
                 "Remove AT_SIEGE entries",
                 "Clean organization names (DOT_ removal, separator normalization)",
                 "Convert N_FACT to numeric",
                 "Parse and normalize numeric columns",
-                "Extract month from date_fact"
+                "Extract month from date_fact",
+                "Parse date_rglt"
             ]
             step.metadata["records_removed"] = original_count - len(cleaned_df)
 
@@ -634,22 +733,22 @@ class EncaissementARDotETL(BaseETLProcessor):
                     n_fact=int(row.get('n_fact', 0)) if pd.notna(row.get('n_fact')) else None,
                     typ_fact=row.get('typ_fact'),
                     date_fact=row.get('date_fact') if pd.notna(row.get('date_fact')) else None,
-                    mois=row.get('mois'),
-                    client=row.get('client'),
-                    n_client=row.get('n_client'),
-                    obj_fact=row.get('obj_fact'),
-                    periode=row.get('periode'),
-                    ref=row.get('ref'),
-                    termine_flag=row.get('termine_flag'),
-                    creer_par=row.get('creer_par'),
+                    mois=row.get('mois') if pd.notna(row.get('mois')) else None,
+                    client=row.get('client') if pd.notna(row.get('client')) else None,
+                    n_client=row.get('n_client') if pd.notna(row.get('n_client')) else None,
+                    obj_fact=row.get('obj_fact') if pd.notna(row.get('obj_fact')) else None,
+                    periode=row.get('periode') if pd.notna(row.get('periode')) else None,
+                    ref=row.get('ref') if pd.notna(row.get('ref')) else None,
+                    termine_flag=row.get('termine_flag') if pd.notna(row.get('termine_flag')) else None,
+                    creer_par=row.get('creer_par') if pd.notna(row.get('creer_par')) else None,
                     montant_ht=float(row.get('montant_ht', 0)) if pd.notna(row.get('montant_ht')) else None,
                     montant_taxe=float(row.get('montant_taxe', 0)) if pd.notna(row.get('montant_taxe')) else None,
                     montant_ttc=float(row.get('montant_ttc', 0)) if pd.notna(row.get('montant_ttc')) else None,
                     chiffre_aff_exe=float(row.get('chiffre_aff_exe', 0)) if pd.notna(row.get('chiffre_aff_exe')) else None,
                     encaissement=float(row.get('encaissement', 0)) if pd.notna(row.get('encaissement')) else None,
-                    n_rglt=row.get('n_rglt'),
+                    n_rglt=row.get('n_rglt') if pd.notna(row.get('n_rglt')) else None,
                     date_rglt=row.get('date_rglt') if pd.notna(row.get('date_rglt')) else None,
-                    facture_avoir_annulation=row.get('facture_avoir_annulation'),
+                    facture_avoir_annulation=row.get('facture_avoir_annulation') if pd.notna(row.get('facture_avoir_annulation')) else None,
                     taux_encaissement=float(row.get('taux_encaissement', 0)) if pd.notna(row.get('taux_encaissement')) else None,
                     montant_restant=float(row.get('montant_restant', 0)) if pd.notna(row.get('montant_restant')) else None,
                     composite_key=row.get('composite_key'),

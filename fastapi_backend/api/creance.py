@@ -36,6 +36,7 @@ class CreanceRecordResponse(BaseModel):
     mois: Optional[str]
     annee: Optional[str]
     period_key: Optional[str]
+    subs_status: Optional[str]
     produit: Optional[str]
     cust_lev1: Optional[str]
     cust_lev2: Optional[str]
@@ -184,8 +185,39 @@ async def get_creance_records(
 
         total_pages = (total + page_size - 1) // page_size
 
+        # Convert records to response format explicitly to avoid serialization issues
+        items = []
+        for record in records:
+            items.append(CreanceRecordResponse(
+                id=record.id,
+                file_upload_id=record.file_upload_id,
+                dot_id=record.dot_id,
+                dot=record.dot,
+                actel=record.actel,
+                mois=record.mois,
+                annee=record.annee,
+                period_key=record.period_key,
+                subs_status=record.subs_status,
+                produit=record.produit,
+                cust_lev1=record.cust_lev1,
+                cust_lev2=record.cust_lev2,
+                cust_lev3=record.cust_lev3,
+                invoice_amt_ht=float(record.invoice_amt_ht) if record.invoice_amt_ht is not None else None,
+                invoice_amt=float(record.invoice_amt) if record.invoice_amt is not None else None,
+                open_amt=float(record.open_amt) if record.open_amt is not None else None,
+                creance_ht=float(record.creance_ht) if record.creance_ht is not None else None,
+                creance_net=float(record.creance_net) if record.creance_net is not None else None,
+                creance_brut=float(record.creance_brut) if record.creance_brut is not None else None,
+                avoir_amt=float(record.avoir_amt) if record.avoir_amt is not None else None,
+                avoir_amt_ht=float(record.avoir_amt_ht) if record.avoir_amt_ht is not None else None,
+                exigible_mt=float(record.exigible_mt) if record.exigible_mt is not None else None,
+                creance_120_mt=float(record.creance_120_mt) if record.creance_120_mt is not None else None,
+                created_at=record.created_at,
+                updated_at=record.updated_at
+            ))
+        
         return CreanceListResponse(
-            items=[CreanceRecordResponse.from_orm(record) for record in records],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,
@@ -216,7 +248,34 @@ async def get_creance_by_id(
         if not record:
             raise HTTPException(status_code=404, detail="Record not found or access denied")
 
-        return CreanceRecordResponse.from_orm(record)
+        # Convert record to response format explicitly to avoid serialization issues
+        return CreanceRecordResponse(
+            id=record.id,
+            file_upload_id=record.file_upload_id,
+            dot_id=record.dot_id,
+            dot=record.dot,
+            actel=record.actel,
+            mois=record.mois,
+            annee=record.annee,
+            period_key=record.period_key,
+            subs_status=record.subs_status,
+            produit=record.produit,
+            cust_lev1=record.cust_lev1,
+            cust_lev2=record.cust_lev2,
+            cust_lev3=record.cust_lev3,
+            invoice_amt_ht=float(record.invoice_amt_ht) if record.invoice_amt_ht is not None else None,
+            invoice_amt=float(record.invoice_amt) if record.invoice_amt is not None else None,
+            open_amt=float(record.open_amt) if record.open_amt is not None else None,
+            creance_ht=float(record.creance_ht) if record.creance_ht is not None else None,
+            creance_net=float(record.creance_net) if record.creance_net is not None else None,
+            creance_brut=float(record.creance_brut) if record.creance_brut is not None else None,
+            avoir_amt=float(record.avoir_amt) if record.avoir_amt is not None else None,
+            avoir_amt_ht=float(record.avoir_amt_ht) if record.avoir_amt_ht is not None else None,
+            exigible_mt=float(record.exigible_mt) if record.exigible_mt is not None else None,
+            creance_120_mt=float(record.creance_120_mt) if record.creance_120_mt is not None else None,
+            created_at=record.created_at,
+            updated_at=record.updated_at
+        )
 
     except HTTPException:
         raise

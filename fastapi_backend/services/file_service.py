@@ -331,8 +331,25 @@ class FileService:
     def process_csv_file(self, file_path: str, max_rows: int = 100) -> Dict[str, Any]:
         """Process CSV file and return preview data"""
         try:
+            # Auto-detect delimiter by trying common delimiters
+            delimiter = None
+            best_columns = 0
+            for test_delimiter in [',', ';', '\t', '|']:
+                try:
+                    test_df = pd.read_csv(file_path, nrows=1, sep=test_delimiter, encoding='utf-8')
+                    if len(test_df.columns) > best_columns:
+                        best_columns = len(test_df.columns)
+                        delimiter = test_delimiter
+                except:
+                    continue
+
+            if delimiter is None:
+                delimiter = ','  # Default fallback
+
+            logger.info(f"Detected CSV delimiter: '{delimiter}' with {best_columns} columns")
+
             # Read CSV file
-            df = pd.read_csv(file_path)
+            df = pd.read_csv(file_path, sep=delimiter, encoding='utf-8')
 
             # Get preview data
             preview_data = self._get_dataframe_preview(df, max_rows)
@@ -503,9 +520,57 @@ class FileService:
                 ), {"file_id": file_id}).rowcount
                 if revenue_count > 0:
                     logger.info(
-                        f"Deleted {revenue_count} revenue records related to file {file_id}")
+                        f"Deleted {revenue_count} revenue journal records related to file {file_id}")
         except Exception as e:
-            logger.warning(f"Error deleting revenue records: {e}")
+            logger.warning(f"Error deleting revenue journal records: {e}")
+
+        # Delete related revenue objectives records if table exists
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'revenue_objectives')"
+            )).scalar()
+
+            if result:
+                objectives_count = db.execute(text(
+                    "DELETE FROM revenue_objectives WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if objectives_count > 0:
+                    logger.info(
+                        f"Deleted {objectives_count} revenue objectives records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting revenue objectives records: {e}")
+
+        # Delete related account descriptions records if table exists
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'account_descriptions')"
+            )).scalar()
+
+            if result:
+                account_desc_count = db.execute(text(
+                    "DELETE FROM account_descriptions WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if account_desc_count > 0:
+                    logger.info(
+                        f"Deleted {account_desc_count} account descriptions records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting account descriptions records: {e}")
+
+        # Delete related revenue anomalies records if table exists
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'revenue_anomalies')"
+            )).scalar()
+
+            if result:
+                anomalies_count = db.execute(text(
+                    "DELETE FROM revenue_anomalies WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if anomalies_count > 0:
+                    logger.info(
+                        f"Deleted {anomalies_count} revenue anomalies records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting revenue anomalies records: {e}")
 
         # Delete file_previews first (foreign key constraint)
         try:
@@ -901,12 +966,106 @@ class FileService:
             logger.info(
                 f"Processing CSV file: {file_path} with max_rows: {max_rows}")
 
+            # Auto-detect delimiter by trying common delimiters with multiple encodings
+            delimiter = None
+            best_columns = 0
+            best_encoding = 'utf-8'
+            
+            # Try different encodings (French CSV files often use latin-1 or cp1252)
+            for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
+                for test_delimiter in [';', ',', '\t', '|']:  # Prioritize ';' for French CSV
+                    try:
+                        # Read first 5 rows to better detect delimiter and validate
+                        test_df = pd.read_csv(
+                            file_path, 
+                            nrows=5, 
+                            sep=test_delimiter, 
+                            encoding=encoding,
+                            header=0,
+                            on_bad_lines='skip',
+                            low_memory=False
+                        )
+                        # Count columns with actual data (not all NaN in first 5 rows)
+                        non_empty_cols = test_df.notna().any(axis=0).sum()
+                        total_cols = len(test_df.columns)
+                        
+                        # Prefer delimiters that give us more columns with data
+                        # Also check if we have reasonable number of columns (not just 1)
+                        if non_empty_cols > best_columns and total_cols > 1:
+                            best_columns = non_empty_cols
+                            delimiter = test_delimiter
+                            best_encoding = encoding
+                            logger.info(f"  Better delimiter found: '{delimiter}' with {total_cols} columns ({non_empty_cols} with data), encoding: {encoding}")
+                    except Exception as e:
+                        logger.debug(f"  Failed to test delimiter '{test_delimiter}' with encoding {encoding}: {e}")
+                        continue
+
+            if delimiter is None:
+                # Try semicolon as default for French CSV files
+                delimiter = ';'
+                best_encoding = 'utf-8'
+                logger.warning(f"Could not detect delimiter reliably, defaulting to ';'")
+                try:
+                    # Verify semicolon works
+                    test_df = pd.read_csv(file_path, nrows=5, sep=';', encoding='utf-8', on_bad_lines='skip')
+                    if len(test_df.columns) > 1:
+                        logger.info(f"✅ Semicolon delimiter works: {len(test_df.columns)} columns")
+                    else:
+                        # Fallback to comma
+                        delimiter = ','
+                        logger.warning(f"Semicolon failed, trying comma")
+                except Exception as e:
+                    logger.warning(f"Semicolon failed: {e}, trying comma")
+                    delimiter = ','
+
+            logger.info(f"✅ Detected CSV delimiter: '{delimiter}' with {best_columns} columns (encoding: {best_encoding})")
+
             # Read only a limited number of rows for preview to handle large files
             # Read 2x for better sampling
-            df = pd.read_csv(file_path, nrows=max_rows * 2)
+            df = pd.read_csv(
+                file_path, 
+                nrows=max_rows * 2, 
+                sep=delimiter, 
+                encoding=best_encoding,
+                header=0,
+                on_bad_lines='skip',
+                low_memory=False
+            )
 
             logger.info(
                 f"CSV file loaded: {len(df)} rows, {len(df.columns)} columns")
+            
+            # Log first few column names for debugging
+            if len(df.columns) > 0:
+                logger.info(f"  First 10 columns: {list(df.columns[:10])}")
+                logger.info(f"  All columns: {list(df.columns)}")
+            
+            # Clean column names (remove leading/trailing spaces, newlines, etc.)
+            df.columns = df.columns.str.strip().str.replace('\n', ' ').str.replace('\r', ' ')
+            
+            # Check if we have reasonable number of columns
+            if len(df.columns) == 1:
+                logger.warning(f"⚠️ Only 1 column detected! CSV might not be parsed correctly. First row sample: {df.iloc[0, 0] if len(df) > 0 else 'N/A'}")
+                # Try to re-read with semicolon if we only got 1 column
+                if delimiter != ';':
+                    logger.info(f"  Retrying with semicolon delimiter...")
+                    try:
+                        df_retry = pd.read_csv(
+                            file_path, 
+                            nrows=max_rows * 2, 
+                            sep=';', 
+                            encoding=best_encoding,
+                            header=0,
+                            on_bad_lines='skip',
+                            low_memory=False
+                        )
+                        if len(df_retry.columns) > len(df.columns):
+                            logger.info(f"  ✅ Semicolon works better: {len(df_retry.columns)} columns")
+                            df = df_retry
+                            df.columns = df.columns.str.strip().str.replace('\n', ' ').str.replace('\r', ' ')
+                            delimiter = ';'
+                    except Exception as e:
+                        logger.warning(f"  Retry with semicolon failed: {e}")
 
             # Get preview data
             preview_data = self._get_dataframe_preview(df, max_rows)
@@ -914,14 +1073,14 @@ class FileService:
             # Count total rows efficiently without loading entire file
             total_rows = 0
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'r', encoding=best_encoding) as f:
                     total_rows = sum(1 for line in f) - 1  # Subtract header
             except Exception as e:
                 logger.warning(f"Could not count total rows: {str(e)}")
                 total_rows = len(df)  # Fallback to loaded rows
 
             logger.info(
-                f"CSV processing completed. Total rows: {total_rows}, Preview rows: {len(preview_data)}")
+                f"CSV processing completed. Total rows: {total_rows}, Preview rows: {len(df)}")
 
             return [{
                 "sheet_name": None,  # CSV files don't have sheet names

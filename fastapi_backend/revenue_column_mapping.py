@@ -7,6 +7,9 @@ Maps actual revenue file headers to database fields for 3 different file types
 import pandas as pd
 from typing import Dict, Any, Optional
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # FILE 1: Journal Chiffre d'Affaires (Main Revenue Journal)
@@ -162,7 +165,7 @@ def safe_string(value: Any) -> Optional[str]:
     return text if text and text.lower() not in ['nan', 'none', 'null', ''] else None
 
 
-def safe_float(value: Any) -> Optional[float]:
+def safe_float(value: Any, max_value: Optional[float] = None, min_value: Optional[float] = None) -> Optional[float]:
     """Safely convert value to float, removing thousands separators"""
     if value is None or pd.isna(value):
         return None
@@ -172,7 +175,17 @@ def safe_float(value: Any) -> Optional[float]:
     try:
         # Remove dots (thousands separator in French format)
         text = text.replace('.', '').replace(',', '.')
-        return float(text)
+        float_value = float(text)
+        
+        # Clamp to valid range if specified
+        if max_value is not None and float_value > max_value:
+            logger.warning(f"Float value {float_value} exceeds maximum {max_value}, clamping")
+            return max_value
+        if min_value is not None and float_value < min_value:
+            logger.warning(f"Float value {float_value} below minimum {min_value}, clamping")
+            return min_value
+        
+        return float_value
     except Exception:
         return None
 
@@ -182,15 +195,23 @@ def safe_date(value: Any) -> Optional[datetime]:
     if value is None or pd.isna(value):
         return None
     text = str(value).strip()
-    if not text or text.lower() in ['nan', 'none', 'null', '']:
+    if not text or text.lower() in ['nan', 'none', 'null', 'nat', '']:
         return None
     try:
         # Try ISO format first
-        return pd.to_datetime(text, format="%Y-%m-%d", errors="coerce").to_pydatetime()
+        result = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+        # Check if result is NaT (Not a Time) before converting
+        if pd.isna(result):
+            return None
+        return result.to_pydatetime()
     except:
         try:
-            # Try flexible parsing
-            return pd.to_datetime(text, errors="coerce", dayfirst=False).to_pydatetime()
+            # Try flexible parsing with dayfirst=True for French date format (dd/mm/yyyy)
+            result = pd.to_datetime(text, errors="coerce", dayfirst=True)
+            # Check if result is NaT (Not a Time) before converting
+            if pd.isna(result):
+                return None
+            return result.to_pydatetime()
         except:
             return None
 
@@ -225,6 +246,10 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
                 return record.get(kw, default)
         return default
 
+    # Maximum value for NUMERIC(15, 2): 9,999,999,999,999.99
+    MAX_NUMERIC_15_2 = 9999999999999.99
+    MIN_NUMERIC_15_2 = -9999999999999.99
+
     return {
         "file_upload_id": file_upload_id,
         "org_name": safe_string(_get(["Org Name", "org name", "organisation"])),
@@ -243,24 +268,25 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
         "periode_de_facturation": safe_string(_get(["Periode de facturation", "billing period"])),
         "reference": safe_string(_get(["Reference", "ref"])),
         "termine_flag": safe_boolean(_get(["Termine Flag", "terminated"])),
-        "tax_amount": safe_float(_get(["Tax Amount", "montant taxe"])),
+        # Monetary fields with NUMERIC(15, 2) clamping
+        "tax_amount": safe_float(_get(["Tax Amount", "montant taxe"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "creer_par": safe_string(_get(["Creer Par", "created by"])),
         "n_ligne": safe_string(_get(["N Ligne", "line number"])),
         "description_ligne_de_produit": safe_string(_get(["Description (ligne de produit)", "product line description", "description ligne"])),
         "uom": safe_string(_get(["Uom", "unit of measure", "unite"])),
-        "qte": safe_float(_get(["Qte", "quantity", "quantite"])),
-        "prix_uni": safe_float(_get(["Prix Uni", "unit price", "prix unitaire"])),
-        "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux"])),
-        "mnt_ht": safe_float(_get(["Mnt Ht", "montant ht", "amount excluding tax"])),
+        "qte": safe_float(_get(["Qte", "quantity", "quantite"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        "prix_uni": safe_float(_get(["Prix Uni", "unit price", "prix unitaire"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        "mnt_ht": safe_float(_get(["Mnt Ht", "montant ht", "amount excluding tax"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "tax": safe_string(_get(["Tax", "taxe"])),
-        "mnt_tax": safe_float(_get(["Mnt Tax", "montant tax", "tax amount"])),
-        "mnt_ttc": safe_float(_get(["Mnt Ttc", "montant ttc", "amount including tax"])),
+        "mnt_tax": safe_float(_get(["Mnt Tax", "montant tax", "tax amount"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        "mnt_ttc": safe_float(_get(["Mnt Ttc", "montant ttc", "amount including tax"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "memo_line_id": safe_string(_get(["Memo Line Id", "memo"])),
-        "chiffre_aff_exe_dzd": safe_float(_get(["Chiffre Aff Exe Dzd", "chiffre affaires", "revenue dzd"])),
-        # Calculated columns
-        "tva": safe_float(_get(["TVA", "tva", "vat"])),
-        "chiffre_aff_exe_dzd_ttc": safe_float(_get(["Chiffre_Aff_Exe_Dzd_TTC", "ca ttc", "revenue ttc"])),
-        "taux_realisation_ca": safe_float(_get(["Taux_Realisation_CA", "achievement rate", "taux realisation"])),
+        "chiffre_aff_exe_dzd": safe_float(_get(["Chiffre Aff Exe Dzd", "chiffre affaires", "revenue dzd"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        # Calculated columns - clamp to NUMERIC(10, 4) range: -999999.9999 to 999999.9999
+        "tva": safe_float(_get(["TVA", "tva", "vat"]), max_value=999999.9999, min_value=-999999.9999),
+        "chiffre_aff_exe_dzd_ttc": safe_float(_get(["Chiffre_Aff_Exe_Dzd_TTC", "ca ttc", "revenue ttc"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        "taux_realisation_ca": safe_float(_get(["Taux_Realisation_CA", "achievement rate", "taux realisation"]), max_value=999999.9999, min_value=-999999.9999),
         # Matched relationships (will be set after matching)
         "account_description_id": _get(["account_description_id"]),
         "revenue_objective_id": _get(["revenue_objective_id"]),
@@ -305,10 +331,16 @@ def map_revenue_objective_record(record: dict, file_upload_id: int = None) -> di
                 return record.get(kw, default)
         return default
 
+    dot_name = safe_string(_get(["DOT", "dot name", "organisation"]))
+    objectif_ca = safe_float(_get(["Objectif C.A", "objectif", "objective", "target"]))
+    
+    # Log mapping for debugging
+    logger.debug(f"📋 Mapping revenue objective: dot_name='{dot_name}', objectif_ca={objectif_ca}")
+    
     return {
         "file_upload_id": file_upload_id,
-        "dot_name": safe_string(_get(["DOT", "dot name", "organisation"])),
-        "objectif_ca": safe_float(_get(["Objectif C.A", "objectif", "objective", "target"])),
+        "dot_name": dot_name,
+        "objectif_ca": objectif_ca,
         "created_at": datetime.utcnow(),
     }
 

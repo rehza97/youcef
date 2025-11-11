@@ -81,22 +81,34 @@ class RevenueDataProcessor:
         """Process Account Descriptions file (Description Cpt Comptable.xlsx)"""
         try:
             df = self._read_file(file_path)
-            logger.info(
-                f"Loaded {len(df)} account descriptions from file")
+            logger.info(f"✅ Loaded {len(df)} account descriptions from file")
+            logger.info(f"📋 File columns: {list(df.columns)}")
+            
+            # Show first few rows for debugging
+            if len(df) > 0:
+                logger.info(f"📊 First 3 rows preview:")
+                for idx, row in df.head(3).iterrows():
+                    logger.info(f"   Row {idx}: {dict(row)}")
 
             # Clean and validate
             df_processed = self._process_account_descriptions_data(df)
+            logger.info(f"✅ After processing: {len(df_processed)} rows (removed {len(df) - len(df_processed)} duplicates)")
 
             # Save to database
             records = df_processed.to_dict('records')
             saved_count = 0
+            created_count = 0
+            updated_count = 0
+            skipped_count = 0
 
-            for record in records:
+            for idx, record in enumerate(records):
                 from revenue_column_mapping import map_account_description_record
                 mapped = map_account_description_record(
                     record, file_upload_id)
 
                 if not mapped.get('cpt_comptable'):
+                    logger.warning(f"⚠️ Row {idx}: No cpt_comptable value found")
+                    skipped_count += 1
                     continue
 
                 # Check if exists
@@ -106,27 +118,75 @@ class RevenueDataProcessor:
 
                 if existing:
                     # Update
+                    old_values = {
+                        'description': existing.description_cpt_comptable,
+                        'type_cpte': existing.type_cpte,
+                    }
                     for key, value in mapped.items():
                         if key != 'created_at' and hasattr(existing, key):
                             setattr(existing, key, value)
                     existing.updated_at = datetime.utcnow()
+                    updated_count += 1
+                    logger.debug(f"📝 Updated account '{mapped['cpt_comptable']}': {old_values} → {mapped.get('description_cpt_comptable')}")
                 else:
                     # Create
                     account_desc = AccountDescription(**mapped)
                     self.db.add(account_desc)
+                    self.db.flush()
+                    created_count += 1
+                    logger.debug(f"➕ Created account '{mapped['cpt_comptable']}': description='{mapped.get('description_cpt_comptable')}', type_cpte='{mapped.get('type_cpte')}', aut_bdg='{mapped.get('aut_bdg')}', aut_imp='{mapped.get('aut_imp')}', auxil='{mapped.get('auxil')}', let='{mapped.get('let')}'")
 
                 saved_count += 1
 
-            self.db.commit()
+            # Commit transaction
+            try:
+                self.db.flush()
+                logger.info(f"🔄 Flushed session: {created_count} to create, {updated_count} to update")
+                
+                self.db.commit()
+                logger.info(f"✅ Transaction committed successfully")
+                
+                # Verify save by counting records in DB
+                total_in_db = self.db.query(AccountDescription).count()
+                logger.info(f"📊 Total account descriptions in database after commit: {total_in_db}")
+                
+                # Show account descriptions from the file we just processed
+                if file_upload_id:
+                    recent_accounts = self.db.query(AccountDescription).filter(
+                        AccountDescription.file_upload_id == file_upload_id
+                    ).limit(10).all()
+                    logger.info(f"📋 Found {len(recent_accounts)} account descriptions with file_upload_id={file_upload_id}:")
+                    for acc in recent_accounts:
+                        logger.info(f"   ✅ ID={acc.id}, cpt_comptable='{acc.cpt_comptable}', description='{acc.description_cpt_comptable}', type_cpte='{acc.type_cpte}', aut_bdg='{acc.aut_bdg}', aut_imp='{acc.aut_imp}', auxil='{acc.auxil}', let='{acc.let}'")
+                else:
+                    # Show latest 5 account descriptions
+                    sample_accounts = self.db.query(AccountDescription).order_by(
+                        AccountDescription.updated_at.desc()
+                    ).limit(5).all()
+                    logger.info(f"📋 Showing latest 5 account descriptions:")
+                    for acc in sample_accounts:
+                        logger.info(f"   ✅ ID={acc.id}, cpt_comptable='{acc.cpt_comptable}', description='{acc.description_cpt_comptable}', type_cpte='{acc.type_cpte}', aut_bdg='{acc.aut_bdg}', aut_imp='{acc.aut_imp}', auxil='{acc.auxil}', let='{acc.let}', file_upload_id={acc.file_upload_id}")
+                
+            except Exception as commit_error:
+                logger.error(f"❌ Error committing transaction: {commit_error}")
+                logger.exception(commit_error)
+                self.db.rollback()
+                raise
+
+            logger.info(f"✅ Saved {saved_count} account descriptions: {created_count} created, {updated_count} updated, {skipped_count} skipped")
 
             return {
                 "success": True,
                 "processed_rows": len(df_processed),
-                "saved_count": saved_count
+                "saved_count": saved_count,
+                "created_count": created_count,
+                "updated_count": updated_count,
+                "skipped_count": skipped_count
             }
 
         except Exception as e:
             logger.error(f"Error processing account descriptions: {e}")
+            logger.exception(e)
             self.db.rollback()
             return {
                 "success": False,
@@ -137,51 +197,136 @@ class RevenueDataProcessor:
         """Process Revenue Objectives file (Objectif C.A.xlsx)"""
         try:
             df = self._read_file(file_path)
-            logger.info(f"Loaded {len(df)} revenue objectives from file")
+            logger.info(f"✅ Loaded {len(df)} revenue objectives from file")
+            logger.info(f"📋 File columns: {list(df.columns)}")
+            
+            # Show first few rows for debugging
+            if len(df) > 0:
+                logger.info(f"📊 First 3 rows preview:")
+                for idx, row in df.head(3).iterrows():
+                    logger.info(f"   Row {idx}: {dict(row)}")
 
             # Clean and validate
             df_processed = self._process_objectives_data(df)
+            logger.info(f"✅ After processing: {len(df_processed)} rows (removed {len(df) - len(df_processed)} duplicates)")
 
             # Save to database
             records = df_processed.to_dict('records')
             saved_count = 0
+            created_count = 0
+            updated_count = 0
+            skipped_count = 0
 
-            for record in records:
+            for idx, record in enumerate(records):
                 from revenue_column_mapping import map_revenue_objective_record
                 mapped = map_revenue_objective_record(record, file_upload_id)
 
                 if not mapped.get('dot_name'):
+                    logger.warning(f"⚠️ Row {idx}: Skipping record with no DOT name: {record}")
+                    skipped_count += 1
+                    continue
+
+                # Validate objectif_ca
+                if mapped.get('objectif_ca') is None:
+                    logger.warning(f"⚠️ Row {idx}: DOT '{mapped['dot_name']}' has no objectif_ca value")
+                    skipped_count += 1
                     continue
 
                 # Get or create DOT
                 dot = DOTService.get_or_create_dot(
                     self.db, mapped['dot_name'])
                 mapped['dot_id'] = dot.id
+                logger.info(f"🔍 DOT '{mapped['dot_name']}' → DOT ID: {dot.id}, DOT name in DB: '{dot.name}'")
 
-                # Check if exists
+                # Check if exists - use case-insensitive comparison
+                # Try exact match first, then case-insensitive
                 existing = self.db.query(RevenueObjective).filter(
                     RevenueObjective.dot_name == mapped['dot_name']
                 ).first()
+                
+                if not existing:
+                    # Try case-insensitive
+                    existing = self.db.query(RevenueObjective).filter(
+                        RevenueObjective.dot_name.ilike(mapped['dot_name'])
+                    ).first()
 
                 if existing:
                     # Update
-                    for key, value in mapped.items():
-                        if key != 'created_at' and hasattr(existing, key):
-                            setattr(existing, key, value)
-                    existing.updated_at = datetime.utcnow()
+                    old_value = float(existing.objectif_ca) if existing.objectif_ca else 0
+                    new_value = float(mapped['objectif_ca']) if mapped['objectif_ca'] else 0
+                    old_dot_name = existing.dot_name
+                    logger.info(f"📝 Found existing objective for DOT '{mapped['dot_name']}' (DB: '{old_dot_name}')")
+                    logger.info(f"   Updating: objectif_ca {old_value} → {new_value}")
+                    
+                    # Only update if values are different
+                    if old_value != new_value or existing.dot_id != mapped.get('dot_id') or existing.file_upload_id != mapped.get('file_upload_id'):
+                        for key, value in mapped.items():
+                            if key != 'created_at' and hasattr(existing, key):
+                                setattr(existing, key, value)
+                        existing.updated_at = datetime.utcnow()
+                        logger.info(f"   ✅ Values changed, updating record ID {existing.id}")
+                    else:
+                        logger.info(f"   ⏭️ Values unchanged, skipping update for record ID {existing.id}")
+                    
+                    updated_count += 1
+                    logger.info(f"✅ Updated DOT '{mapped['dot_name']}': {old_value} → {new_value}")
                 else:
                     # Create
+                    logger.info(f"➕ Creating new objective for DOT '{mapped['dot_name']}' with objectif_ca = {mapped['objectif_ca']}")
                     objective = RevenueObjective(**mapped)
                     self.db.add(objective)
+                    # Flush to get the ID
+                    self.db.flush()
+                    created_count += 1
+                    logger.info(f"✅ Created DOT '{mapped['dot_name']}': objectif_ca = {mapped['objectif_ca']}, dot_id = {mapped['dot_id']}, new_id = {objective.id}")
 
                 saved_count += 1
 
-            self.db.commit()
+            # Commit transaction
+            try:
+                # Flush before commit to ensure all changes are in the session
+                self.db.flush()
+                logger.info(f"🔄 Flushed session: {created_count} to create, {updated_count} to update")
+                
+                self.db.commit()
+                logger.info(f"✅ Transaction committed successfully")
+                
+                # Verify save by counting records in DB (new query after commit)
+                total_in_db = self.db.query(RevenueObjective).count()
+                logger.info(f"📊 Total revenue objectives in database after commit: {total_in_db}")
+                
+                # Show objectives from the file we just processed
+                if file_upload_id:
+                    recent_objectives = self.db.query(RevenueObjective).filter(
+                        RevenueObjective.file_upload_id == file_upload_id
+                    ).limit(10).all()
+                    logger.info(f"📋 Found {len(recent_objectives)} objectives with file_upload_id={file_upload_id}:")
+                    for obj in recent_objectives:
+                        logger.info(f"   ✅ ID={obj.id}, dot_name='{obj.dot_name}', objectif_ca={obj.objectif_ca}, dot_id={obj.dot_id}")
+                else:
+                    # Show latest 5 objectives
+                    sample_objectives = self.db.query(RevenueObjective).order_by(
+                        RevenueObjective.updated_at.desc()
+                    ).limit(5).all()
+                    logger.info(f"📋 Showing latest 5 objectives (no file_upload_id provided):")
+                    for obj in sample_objectives:
+                        logger.info(f"   ✅ ID={obj.id}, dot_name='{obj.dot_name}', objectif_ca={obj.objectif_ca}, dot_id={obj.dot_id}, file_upload_id={obj.file_upload_id}")
+                
+            except Exception as commit_error:
+                logger.error(f"❌ Error committing transaction: {commit_error}")
+                logger.exception(commit_error)
+                self.db.rollback()
+                raise
+
+            logger.info(f"✅ Saved {saved_count} revenue objectives: {created_count} created, {updated_count} updated, {skipped_count} skipped")
 
             return {
                 "success": True,
                 "processed_rows": len(df_processed),
-                "saved_count": saved_count
+                "saved_count": saved_count,
+                "created_count": created_count,
+                "updated_count": updated_count,
+                "skipped_count": skipped_count
             }
 
         except Exception as e:
@@ -193,13 +338,118 @@ class RevenueDataProcessor:
             }
 
     def _read_file(self, file_path: str) -> pd.DataFrame:
-        """Read CSV or Excel file"""
-        if file_path.endswith('.csv'):
+        """Read CSV or Excel file, with support for HTML files masquerading as .xls"""
+        from pathlib import Path
+        file_ext = Path(file_path).suffix.lower()
+        
+        if file_ext == '.csv':
             return pd.read_csv(file_path, low_memory=False)
-        elif file_path.endswith(('.xlsx', '.xls')):
-            return pd.read_excel(file_path)
+        elif file_ext == '.xlsx':
+            return pd.read_excel(file_path, engine='openpyxl')
+        elif file_ext == '.xls':
+            # .xls files might be HTML masquerading as Excel
+            try:
+                # First, try to read as real Excel file
+                logger.info(f"📖 Attempting to read {file_path} as Excel file")
+                return pd.read_excel(file_path, engine='xlrd')
+            except Exception as e:
+                # If that fails, try HTML parsing (some systems export HTML with .xls extension)
+                logger.warning(f"⚠️ Failed to read .xls as Excel: {str(e)}")
+                logger.info(f"📖 Attempting to read {file_path} as HTML table")
+                try:
+                    # Read HTML tables without header first to detect structure
+                    html_tables_raw = pd.read_html(file_path, header=None)
+                    if not html_tables_raw:
+                        raise ValueError("No HTML tables found in file")
+                    
+                    logger.info(f"✅ Found {len(html_tables_raw)} HTML table(s) in file")
+                    
+                    # Find the table with the most columns (likely the data table)
+                    # For revenue journal, we expect 30 columns
+                    best_table = None
+                    best_table_idx = -1
+                    max_columns = 0
+                    
+                    for idx, table in enumerate(html_tables_raw):
+                        if len(table.columns) > max_columns:
+                            max_columns = len(table.columns)
+                            best_table = table
+                            best_table_idx = idx
+                    
+                    if best_table is None:
+                        raise ValueError("No suitable HTML table found")
+                    
+                    logger.info(f"📊 Using HTML table {best_table_idx} with {len(best_table.columns)} columns and {len(best_table)} rows")
+                    
+                    # Find header row (search first 20 rows)
+                    header_row = self._find_header_row_for_revenue_journal(best_table.head(20).reset_index(drop=True))
+                    
+                    if header_row is not None:
+                        logger.info(f"✅ Found header row at index {header_row}")
+                        # Extract headers from the detected row
+                        headers = best_table.iloc[header_row].astype(str).tolist()
+                        # Data starts after header
+                        df = best_table.iloc[header_row + 1:].copy()
+                        df.columns = headers
+                        df.reset_index(drop=True, inplace=True)
+                        logger.info(f"✅ Created DataFrame with {len(df)} rows and {len(df.columns)} columns")
+                        return df
+                    else:
+                        # If no header row found, assume first row is header
+                        logger.warning("⚠️ No clear header row found, using row 0 as header")
+                        df = best_table.iloc[1:].copy()
+                        df.columns = best_table.iloc[0].astype(str).tolist()
+                        df.reset_index(drop=True, inplace=True)
+                        return df
+                        
+                except Exception as html_error:
+                    logger.error(f"❌ Failed to read file as HTML: {str(html_error)}")
+                    raise ValueError(f"Could not read file as Excel or HTML: {str(e)}. HTML error: {str(html_error)}")
         else:
             raise ValueError(f"Unsupported file format: {file_path}")
+    
+    def _find_header_row_for_revenue_journal(self, df: pd.DataFrame) -> Optional[int]:
+        """Find the header row in a DataFrame by looking for revenue journal column names"""
+        # Expected revenue journal columns
+        expected_headers = [
+            'Org Name', 'Origine', 'N Fact', 'Typ Fact', 'Date Fact',
+            'N Client', 'Client', 'Delai Paie', 'Devise', 'Obj Fact',
+            'Cpt Comptable', 'Date facture GL', 'Date GL', 'Periode de facturation',
+            'Reference', 'Termine Flag', 'Tax Amount', 'Creer Par', 'N Ligne',
+            'Description (ligne de produit)', 'Uom', 'Qte', 'Prix Uni', 'Taux Change',
+            'Mnt Ht', 'Tax', 'Mnt Tax', 'Mnt Ttc', 'Memo Line Id', 'Chiffre Aff Exe Dzd'
+        ]
+        
+        # Normalize function for comparison
+        def normalize(s):
+            return str(s).strip().lower().replace('_', ' ').replace('-', ' ')
+        
+        normalized_expected = [normalize(h) for h in expected_headers]
+        
+        # Search first 20 rows for header row
+        max_rows_to_check = min(20, len(df))
+        best_match_row = None
+        best_match_count = 0
+        
+        for row_idx in range(max_rows_to_check):
+            row_values = [normalize(str(val)) for val in df.iloc[row_idx].values if pd.notna(val)]
+            match_count = sum(1 for expected in normalized_expected if any(expected in val or val in expected for val in row_values))
+            
+            if match_count > best_match_count:
+                best_match_count = match_count
+                best_match_row = row_idx
+            
+            # If we found at least 5 matching headers, consider it a good match
+            if match_count >= 5:
+                logger.info(f"✅ Found header row at index {row_idx} with {match_count} matching headers")
+                return row_idx
+        
+        # Return best match if we found at least 3 matches
+        if best_match_count >= 3:
+            logger.info(f"✅ Found best header row at index {best_match_row} with {best_match_count} matching headers")
+            return best_match_row
+        
+        return None
 
     def _apply_journal_processing_rules(self, df: pd.DataFrame,
                                           progress_callback=None) -> pd.DataFrame:
@@ -279,7 +529,7 @@ class RevenueDataProcessor:
         """Remove 'DOT_' prefix from Org Name"""
         org_name_col = self._find_column(df, ['Org Name', 'organisation'])
         if org_name_col:
-            df[org_name_col] = df[org_name_col].astype(
+            df.loc[:, org_name_col] = df[org_name_col].astype(
                 str).str.replace('DOT_', '', case=False)
         return df
 
@@ -287,7 +537,7 @@ class RevenueDataProcessor:
         """Replace – and _ with spaces in Org Name"""
         org_name_col = self._find_column(df, ['Org Name', 'organisation'])
         if org_name_col:
-            df[org_name_col] = df[org_name_col].astype(str).str.replace(
+            df.loc[:, org_name_col] = df[org_name_col].astype(str).str.replace(
                 '–', ' ').str.replace('_', ' ').str.replace('  ', ' ').str.strip()
         return df
 
@@ -429,24 +679,97 @@ class RevenueDataProcessor:
 
     def _process_account_descriptions_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process account descriptions data"""
-        # Remove duplicates
+        logger.info(f"📋 Processing account descriptions data: {len(df)} rows")
+        logger.info(f"   Columns: {list(df.columns)}")
+        
+        # Find and validate cpt_comptable column
         cpt_col = self._find_column(
-            df, ['Cpt Comptable', 'account code'])
+            df, ['Cpt Comptable', 'cpt_comptable', 'cpt comptable', 'account code'])
         if cpt_col:
-            df = df.drop_duplicates(subset=[cpt_col])
+            logger.info(f"✅ Found Cpt Comptable column: '{cpt_col}'")
+            
+            # Show original values
+            logger.info(f"   First 5 original account codes: {df[cpt_col].head(5).tolist()}")
+            
+            # Remove rows with empty cpt_comptable
+            before = len(df)
+            df = df[df[cpt_col].notna() & (df[cpt_col] != '')]
+            after = len(df)
+            if before != after:
+                logger.info(f"   Removed {before - after} rows with empty account codes")
+            
+            # Remove duplicates (keep last occurrence)
+            before = len(df)
+            df = df.drop_duplicates(subset=[cpt_col], keep='last')
+            after = len(df)
+            if before != after:
+                logger.info(f"   Removed {before - after} duplicate account codes")
+        else:
+            logger.warning(f"⚠️ No Cpt Comptable column found in file. Available columns: {list(df.columns)}")
+        
+        logger.info(f"✅ After processing: {len(df)} valid rows")
         return df
 
     def _process_objectives_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process objectives data"""
-        # Clean DOT names
+        logger.info(f"📋 Processing objectives data: {len(df)} rows")
+        logger.info(f"   Columns: {list(df.columns)}")
+        
+        # Clean DOT names - Normalize but keep original format
+        # DON'T use clean_org_name_for_matching which is too aggressive (removes DOT_, uppercase only)
+        # We want to keep the original format for database storage
         dot_col = self._find_column(df, ['DOT', 'dot name'])
         if dot_col:
-            from services.revenue_processing_helpers import RevenueProcessingHelpers
-            df[dot_col] = df[dot_col].apply(
-                lambda x: RevenueProcessingHelpers.clean_org_name_for_matching(str(x))
-            )
-            # Remove duplicates
-            df = df.drop_duplicates(subset=[dot_col])
+            logger.info(f"✅ Found DOT column: '{dot_col}'")
+            
+            # Show original values
+            logger.info(f"   First 5 original DOT names: {df[dot_col].head(5).tolist()}")
+            
+            # Normalize: strip whitespace, normalize multiple spaces to single space
+            def normalize_dot_name(x):
+                if pd.isna(x):
+                    return None
+                # Convert to string, strip, normalize spaces
+                name = str(x).strip()
+                # Replace multiple spaces/tabs with single space
+                import re
+                name = re.sub(r'\s+', ' ', name)
+                return name
+            
+            df[dot_col] = df[dot_col].apply(normalize_dot_name)
+            
+            logger.info(f"   First 5 normalized DOT names: {df[dot_col].head(5).tolist()}")
+            
+            # Remove rows with empty DOT names
+            before = len(df)
+            df = df[df[dot_col].notna() & (df[dot_col] != '')]
+            after = len(df)
+            if before != after:
+                logger.info(f"   Removed {before - after} rows with empty DOT names")
+            
+            # Remove duplicates (keep last occurrence)
+            before = len(df)
+            df = df.drop_duplicates(subset=[dot_col], keep='last')
+            after = len(df)
+            if before != after:
+                logger.info(f"   Removed {before - after} duplicate DOT entries")
+        else:
+            logger.warning(f"⚠️ No DOT column found in file. Available columns: {list(df.columns)}")
+            
+        # Validate objectif_ca column
+        objectif_col = self._find_column(df, ['Objectif C.A', 'objectif', 'objective', 'target'])
+        if objectif_col:
+            logger.info(f"✅ Found Objectif C.A column: '{objectif_col}'")
+            # Remove rows with invalid objectif_ca
+            before = len(df)
+            df = df[df[objectif_col].notna()]
+            after = len(df)
+            if before != after:
+                logger.info(f"   Removed {before - after} rows with empty objectif_ca")
+        else:
+            logger.warning(f"⚠️ No Objectif C.A column found. Available columns: {list(df.columns)}")
+            
+        logger.info(f"✅ After processing: {len(df)} valid rows")
         return df
 
     def _save_journal_to_database(self, records: List[Dict[str, Any]],
@@ -483,7 +806,34 @@ class RevenueDataProcessor:
                 except Exception as e:
                     errors.append({"record": i, "error": str(e)})
 
-            self.db.commit()
+            # Commit transaction
+            try:
+                self.db.flush()
+                logger.info(f"🔄 Flushed session: {saved_count} records to save")
+                
+                self.db.commit()
+                logger.info(f"✅ Transaction committed successfully")
+                
+                # Verify save by counting records in DB
+                total_in_db = self.db.query(RevenueJournal).count()
+                logger.info(f"📊 Total revenue journal entries in database after commit: {total_in_db}")
+                
+                # Show journal entries from the file we just processed
+                if file_upload_id:
+                    recent_journals = self.db.query(RevenueJournal).filter(
+                        RevenueJournal.file_upload_id == file_upload_id
+                    ).limit(5).all()
+                    logger.info(f"📋 Found {len(recent_journals)} journal entries with file_upload_id={file_upload_id}:")
+                    for journal in recent_journals:
+                        logger.info(f"   ✅ ID={journal.id}, org_name='{journal.org_name}', n_fact='{journal.n_fact}', cpt_comptable='{journal.cpt_comptable}', chiffre_aff_exe_dzd={journal.chiffre_aff_exe_dzd}")
+                        logger.debug(f"      All fields: origine='{journal.origine}', typ_fact='{journal.typ_fact}', client='{journal.client}', mnt_ht={journal.mnt_ht}, mnt_ttc={journal.mnt_ttc}")
+                
+            except Exception as commit_error:
+                logger.error(f"❌ Error committing transaction: {commit_error}")
+                logger.exception(commit_error)
+                self.db.rollback()
+                raise
+            
             return {
                 "success": True,
                 "saved_count": saved_count,

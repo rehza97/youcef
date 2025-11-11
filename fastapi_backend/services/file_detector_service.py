@@ -130,7 +130,7 @@ class FileDetectorService:
                     'creance_brut', 'creance brut',
                     'creance_net', 'creance net'
                 ],
-                'min_matches': 6,
+                'min_matches': 10,  # Increased to prioritize DOT version
                 'keywords': ['creance', 'créance', 'cust_lev', 'invoice', 'actel']
             },
             KPIFileType.CREANCE_PERIODIQUE_DOT: {
@@ -295,7 +295,7 @@ class FileDetectorService:
 
                 # If all fail, try with error handling and default delimiter
                 df = pd.read_csv(file_path, nrows=0,
-                                 encoding='utf-8', errors='ignore')
+                                 encoding='utf-8', on_bad_lines='skip')
                 return df.columns.tolist()
 
             elif file_ext == '.xlsx':
@@ -397,6 +397,17 @@ class FileDetectorService:
                 'actel code', 'actel', 'customer level',
                 'telecom type', 'primary offer', 'subscriber status',
                 'offer type', 'price plan', 'activation date'
+            ],
+            'creance_periodique': [
+                'dot', 'actel', 'mois', 'annee', 'année',
+                'produit', 'cust lev1', 'cust lev2', 'cust lev3',
+                'invoice amt', 'open amt', 'creance brut', 'creance net',
+                'subs status', 'dispute amt'
+            ],
+            'encaissement': [
+                'organisation', 'source', 'n fact', 'typ fact',
+                'montant ht', 'montant ttc', 'encaissement',
+                'chiffre aff exe', 'date rglt', 'taux encaissement'
             ]
         }
 

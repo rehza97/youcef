@@ -8,6 +8,11 @@ import {
   getParkDataSavedData,
   getParkDataStats,
   getOrGenerateFilePreview,
+  getRevenueObjectives,
+  getAccountDescriptions,
+  getRevenueJournals,
+  getEncaissementRecords,
+  getCreanceRecords,
 } from "../../services/api";
 import { useProcessing } from "../../contexts/ProcessingContext";
 import {
@@ -98,7 +103,7 @@ const FilePreviewPage = () => {
 
   // Saved data state
   const [savedDataPage, setSavedDataPage] = useState(1);
-  const [savedDataPageSize] = useState(50);
+  const [savedDataPageSize, setSavedDataPageSize] = useState(50);
   const [savedDataSearch, setSavedDataSearch] = useState("");
   const [savedDataFilters, setSavedDataFilters] = useState({
     subscriberStatus: "all",
@@ -135,7 +140,36 @@ const FilePreviewPage = () => {
     [previewResponse?.data?.data]
   );
 
-  // Fetch saved park data
+  // Detect file type using useMemo to avoid issues with undefined fileData
+  const fileType = useMemo(() => {
+    return fileData?.data?.detected_kpi_type || fileData?.data?.file_type || "";
+  }, [fileData?.data?.detected_kpi_type, fileData?.data?.file_type]);
+  
+  const isRevenueObjectiveFile = useMemo(() => {
+    return fileType === "chiffre_affaires_objective" || fileType === "revenue_objectives";
+  }, [fileType]);
+  
+  const isAccountDescriptionFile = useMemo(() => {
+    return fileType === "chiffre_affaires_account_desc" || fileType === "account_descriptions";
+  }, [fileType]);
+  
+  const isRevenueJournalFile = useMemo(() => {
+    return fileType === "chiffre_affaires" || fileType === "revenue_journal";
+  }, [fileType]);
+  
+  const isEncaissementArDotFile = useMemo(() => {
+    return fileType === "encaissement_ar_dot" || fileType === "encaissement";
+  }, [fileType]);
+  
+  const isCreancePeriodiqueDotFile = useMemo(() => {
+    return fileType === "creance_periodique_dot" || fileType === "creance_periodique";
+  }, [fileType]);
+  
+  const isParkFile = useMemo(() => {
+    return fileType === "parc_corporate_ngbss" || fileType === "park";
+  }, [fileType]);
+
+  // Fetch saved data based on file type
   const {
     data: savedData,
     isLoading: savedDataLoading,
@@ -143,38 +177,152 @@ const FilePreviewPage = () => {
     refetch: refetchSavedData,
   } = useQuery({
     queryKey: [
-      "savedParkData",
+      isRevenueObjectiveFile ? "revenueObjectives" : isAccountDescriptionFile ? "accountDescriptions" : isRevenueJournalFile ? "revenueJournals" : isEncaissementArDotFile ? "encaissementRecords" : isCreancePeriodiqueDotFile ? "creanceRecords" : "savedParkData",
       savedDataPage,
       savedDataPageSize,
       savedDataSearch,
       savedDataFilters,
+      fileId,
+      fileType,
     ],
-    queryFn: () =>
-      getParkDataSavedData({
-        page: savedDataPage,
-        pageSize: savedDataPageSize,
-        search: savedDataSearch || undefined,
-        subscriberStatus:
-          savedDataFilters.subscriberStatus === "all"
-            ? undefined
-            : savedDataFilters.subscriberStatus,
-        telecomType:
-          savedDataFilters.telecomType === "all"
-            ? undefined
-            : savedDataFilters.telecomType,
-        offerType:
-          savedDataFilters.offerType === "all"
-            ? undefined
-            : savedDataFilters.offerType,
-      }),
-    enabled: true,
+    queryFn: () => {
+      if (isRevenueObjectiveFile) {
+        // Fetch revenue objectives filtered by file_upload_id
+        return getRevenueObjectives({
+          dot_name: savedDataSearch || undefined,
+          file_upload_id: fileId ? parseInt(fileId) : undefined,
+        }).then((response) => {
+          // Transform to match expected format
+          const objectives = response.data || [];
+          return {
+            data: {
+              data: objectives,
+              total: objectives.length,
+              page: 1,
+              page_size: objectives.length,
+              total_pages: 1,
+            },
+          };
+        });
+      } else if (isAccountDescriptionFile) {
+        // Fetch account descriptions filtered by file_upload_id
+        return getAccountDescriptions({
+          cpt_comptable: savedDataSearch || undefined,
+          file_upload_id: fileId ? parseInt(fileId) : undefined,
+        }).then((response) => {
+          // Transform to match expected format
+          const accounts = response.data || [];
+          return {
+            data: {
+              data: accounts,
+              total: accounts.length,
+              page: 1,
+              page_size: accounts.length,
+              total_pages: 1,
+            },
+          };
+        });
+      } else if (isRevenueJournalFile) {
+        // Fetch revenue journals filtered by file_upload_id
+        return getRevenueJournals({
+          org_name: savedDataSearch || undefined,
+          file_upload_id: fileId ? parseInt(fileId) : undefined,
+          page: savedDataPage,
+          page_size: savedDataPageSize,
+        }).then((response) => {
+          // Transform to match expected format
+          const journals = response.data?.data || response.data || [];
+          const total = response.data?.total || journals.length;
+          const page = response.data?.page || savedDataPage;
+          const page_size = response.data?.page_size || savedDataPageSize;
+          const total_pages = response.data?.total_pages || Math.ceil(total / page_size);
+          return {
+            data: {
+              data: journals,
+              total: total,
+              page: page,
+              page_size: page_size,
+              total_pages: total_pages,
+            },
+          };
+        });
+      } else if (isEncaissementArDotFile) {
+        // Fetch encaissement AR DOT records filtered by file_upload_id
+        return getEncaissementRecords({
+          organisation: savedDataSearch || undefined,
+          file_upload_id: fileId ? parseInt(fileId) : undefined,
+          page: savedDataPage,
+          page_size: savedDataPageSize,
+        }).then((response) => {
+          // Transform to match expected format
+          const records = response.data?.items || response.data || [];
+          const total = response.data?.total || records.length;
+          const page = response.data?.page || savedDataPage;
+          const page_size = response.data?.page_size || savedDataPageSize;
+          const total_pages = response.data?.total_pages || Math.ceil(total / page_size);
+          return {
+            data: {
+              data: records,
+              total: total,
+              page: page,
+              page_size: page_size,
+              total_pages: total_pages,
+            },
+          };
+        });
+      } else if (isCreancePeriodiqueDotFile) {
+        // Fetch créance périodique DOT records filtered by file_upload_id
+        return getCreanceRecords({
+          dot: savedDataSearch || undefined,
+          file_upload_id: fileId ? parseInt(fileId) : undefined,
+          page: savedDataPage,
+          page_size: savedDataPageSize,
+        }).then((response) => {
+          // Transform to match expected format
+          const records = response.data?.items || response.data || [];
+          const total = response.data?.total || records.length;
+          const page = response.data?.page || savedDataPage;
+          const page_size = response.data?.page_size || savedDataPageSize;
+          const total_pages = response.data?.total_pages || Math.ceil(total / page_size);
+          return {
+            data: {
+              data: records,
+              total: total,
+              page: page,
+              page_size: page_size,
+              total_pages: total_pages,
+            },
+          };
+        });
+      } else {
+        // Fetch park data (default)
+        return getParkDataSavedData({
+          page: savedDataPage,
+          pageSize: savedDataPageSize,
+          search: savedDataSearch || undefined,
+          subscriberStatus:
+            savedDataFilters.subscriberStatus === "all"
+              ? undefined
+              : savedDataFilters.subscriberStatus,
+          telecomType:
+            savedDataFilters.telecomType === "all"
+              ? undefined
+              : savedDataFilters.telecomType,
+          offerType:
+            savedDataFilters.offerType === "all"
+              ? undefined
+              : savedDataFilters.offerType,
+        });
+      }
+    },
+    enabled: !!fileId && !!fileData?.data,
   });
 
-  // Fetch park data statistics
+  // Fetch park data statistics (only for park files)
   const { data: parkStats, refetch: refetchStats } = useQuery({
     queryKey: ["parkStats"],
     queryFn: () => getParkDataStats(),
-    enabled: true,
+    enabled: isParkFile && !!fileData?.data,
   });
 
   // Process preview data when it loads
@@ -346,6 +494,68 @@ const FilePreviewPage = () => {
   // Get all available columns from the first record
   const getAvailableColumns = () => {
     if (!savedData?.data?.data || savedData.data.data.length === 0) return [];
+    
+    if (isRevenueObjectiveFile) {
+      // For revenue objectives, show specific columns
+      return ["dot_name", "objectif_ca"];
+    } else if (isAccountDescriptionFile) {
+      // For account descriptions, show all columns
+      return ["cpt_comptable", "description_cpt_comptable", "type_cpte", "aut_bdg", "aut_imp", "auxil", "let"];
+    } else if (isRevenueJournalFile) {
+      // For revenue journals, show key columns
+      return [
+        "org_name", 
+        "n_fact", 
+        "typ_fact", 
+        "date_fact", 
+        "client", 
+        "cpt_comptable", 
+        "date_gl", 
+        "mnt_ht", 
+        "mnt_ttc", 
+        "chiffre_aff_exe_dzd",
+        "tva",
+        "taux_realisation_ca"
+      ];
+    } else if (isEncaissementArDotFile) {
+      // For encaissement AR DOT, show key columns
+      return [
+        "organisation",
+        "source",
+        "n_fact",
+        "typ_fact",
+        "date_fact",
+        "client",
+        "montant_ht",
+        "montant_ttc",
+        "encaissement",
+        "taux_encaissement",
+        "montant_restant",
+        "date_rglt",
+        "n_rglt"
+      ];
+    } else if (isCreancePeriodiqueDotFile) {
+      // For créance périodique DOT, show key columns
+      return [
+        "dot",
+        "actel",
+        "mois",
+        "annee",
+        "period_key",
+        "subs_status",
+        "produit",
+        "cust_lev1",
+        "cust_lev2",
+        "cust_lev3",
+        "invoice_amt",
+        "open_amt",
+        "creance_brut",
+        "creance_net",
+        "creance_ht"
+      ];
+    }
+    
+    // For park data, show all columns
     return Object.keys(savedData.data.data[0]);
   };
 
@@ -766,7 +976,184 @@ const FilePreviewPage = () => {
               </CardHeader>
               <CardContent>
                 {/* Statistics */}
-                {parkStats && (
+                {isRevenueObjectiveFile && savedData?.data?.data ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {savedData.data.data.length || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Total objectifs
+                      </div>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">
+                        {savedData.data.data.reduce((sum, obj) => sum + (parseFloat(obj.objectif_ca) || 0), 0).toLocaleString('fr-FR') || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Objectif total (DZD)</div>
+                    </div>
+                    <div className="text-center p-4 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {savedData.data.data.filter(obj => obj.dot_id).length || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        DOTs associés
+                      </div>
+                    </div>
+                    <div className="text-center p-4 bg-orange-50 rounded-lg">
+                      <div className="text-2xl font-bold text-orange-600">
+                        {savedData.data.data.length > 0 
+                          ? Math.round(savedData.data.data.reduce((sum, obj) => sum + (parseFloat(obj.objectif_ca) || 0), 0) / savedData.data.data.length).toLocaleString('fr-FR')
+                          : 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Moyenne (DZD)</div>
+                    </div>
+                  </div>
+                ) : isAccountDescriptionFile && savedData?.data?.data ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {savedData.data.data.length || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Total comptes
+                      </div>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">
+                        {new Set(savedData.data.data.map(acc => acc.type_cpte).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Types de comptes</div>
+                    </div>
+                    <div className="text-center p-4 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {savedData.data.data.filter(acc => acc.description_cpt_comptable).length || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        Comptes avec description
+                      </div>
+                    </div>
+                    <div className="text-center p-4 bg-orange-50 rounded-lg">
+                      <div className="text-2xl font-bold text-orange-600">
+                        {new Set(savedData.data.data.map(acc => acc.aut_bdg).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Autorités budget</div>
+                    </div>
+                  </div>
+                ) : isRevenueJournalFile && savedData?.data?.data ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {savedData.data.total || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Total enregistrements</div>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">
+                        {new Intl.NumberFormat('fr-FR', {
+                          style: 'decimal',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(
+                          savedData.data.data.reduce((sum, record) => 
+                            sum + (parseFloat(record.chiffre_aff_exe_dzd) || 0), 0
+                          )
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-600">Chiffre d'affaires total (DZD)</div>
+                    </div>
+                    <div className="text-center p-4 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {new Set(savedData.data.data.map(record => record.org_name).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Organisations</div>
+                    </div>
+                    <div className="text-center p-4 bg-orange-50 rounded-lg">
+                      <div className="text-2xl font-bold text-orange-600">
+                        {new Set(savedData.data.data.map(record => record.n_fact).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Factures uniques</div>
+                    </div>
+                  </div>
+                ) : isEncaissementArDotFile && savedData?.data?.data ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {savedData.data.total || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Total enregistrements</div>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">
+                        {new Intl.NumberFormat('fr-FR', {
+                          style: 'decimal',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(
+                          savedData.data.data.reduce((sum, record) => 
+                            sum + (parseFloat(record.montant_ttc) || 0), 0
+                          )
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-600">Montant TTC total (DZD)</div>
+                    </div>
+                    <div className="text-center p-4 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {new Intl.NumberFormat('fr-FR', {
+                          style: 'decimal',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(
+                          savedData.data.data.reduce((sum, record) => 
+                            sum + (parseFloat(record.encaissement) || 0), 0
+                          )
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-600">Encaissement total (DZD)</div>
+                    </div>
+                    <div className="text-center p-4 bg-orange-50 rounded-lg">
+                      <div className="text-2xl font-bold text-orange-600">
+                        {new Set(savedData.data.data.map(record => record.organisation).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Organisations</div>
+                    </div>
+                  </div>
+                ) : isCreancePeriodiqueDotFile && savedData?.data?.data ? (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="text-center p-4 bg-blue-50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-600">
+                        {savedData.data.total || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Total enregistrements</div>
+                    </div>
+                    <div className="text-center p-4 bg-green-50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-600">
+                        {new Intl.NumberFormat('fr-FR', {
+                          style: 'decimal',
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2
+                        }).format(
+                          savedData.data.data.reduce((sum, record) => 
+                            sum + (parseFloat(record.creance_net) || 0), 0
+                          )
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-600">Créance Net total (DZD)</div>
+                    </div>
+                    <div className="text-center p-4 bg-purple-50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-600">
+                        {new Set(savedData.data.data.map(record => record.dot).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">DOTs</div>
+                    </div>
+                    <div className="text-center p-4 bg-orange-50 rounded-lg">
+                      <div className="text-2xl font-bold text-orange-600">
+                        {new Set(savedData.data.data.map(record => record.produit).filter(Boolean)).size || 0}
+                      </div>
+                      <div className="text-sm text-gray-600">Produits</div>
+                    </div>
+                  </div>
+                ) : parkStats ? (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                     <div className="text-center p-4 bg-blue-50 rounded-lg">
                       <div className="text-2xl font-bold text-blue-600">
@@ -797,92 +1184,154 @@ const FilePreviewPage = () => {
                       <div className="text-sm text-gray-600">Types télécom</div>
                     </div>
                   </div>
-                )}
+                ) : null}
 
                 {/* Filters */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                  <div>
-                    <Label htmlFor="search">Rechercher</Label>
-                    <Input
-                      id="search"
-                      placeholder="Code client, numéro service..."
-                      value={savedDataSearch}
-                      onChange={(e) => setSavedDataSearch(e.target.value)}
-                    />
+                {isRevenueObjectiveFile ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <Label htmlFor="search">Rechercher par DOT</Label>
+                      <Input
+                        id="search"
+                        placeholder="Nom du DOT..."
+                        value={savedDataSearch}
+                        onChange={(e) => setSavedDataSearch(e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label htmlFor="status">Statut abonné</Label>
-                    <Select
-                      value={savedDataFilters.subscriberStatus}
-                      onValueChange={(value) =>
-                        setSavedDataFilters((prev) => ({
-                          ...prev,
-                          subscriberStatus: value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Tous les statuts" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Tous les statuts</SelectItem>
-                        {parkStats?.subscriber_statuses?.map((status) => (
-                          <SelectItem key={status} value={status}>
-                            {status}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                ) : isAccountDescriptionFile ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <Label htmlFor="search">Rechercher par code comptable</Label>
+                      <Input
+                        id="search"
+                        placeholder="Code comptable..."
+                        value={savedDataSearch}
+                        onChange={(e) => setSavedDataSearch(e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label htmlFor="telecom">Type télécom</Label>
-                    <Select
-                      value={savedDataFilters.telecomType}
-                      onValueChange={(value) =>
-                        setSavedDataFilters((prev) => ({
-                          ...prev,
-                          telecomType: value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Tous les types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Tous les types</SelectItem>
-                        {parkStats?.telecom_types?.map((type) => (
-                          <SelectItem key={type} value={type}>
-                            {type}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                ) : isRevenueJournalFile ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <Label htmlFor="search">Rechercher par organisation</Label>
+                      <Input
+                        id="search"
+                        placeholder="Nom de l'organisation..."
+                        value={savedDataSearch}
+                        onChange={(e) => setSavedDataSearch(e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <Label htmlFor="offer">Type d'offre</Label>
-                    <Select
-                      value={savedDataFilters.offerType}
-                      onValueChange={(value) =>
-                        setSavedDataFilters((prev) => ({
-                          ...prev,
-                          offerType: value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Tous les types" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Tous les types</SelectItem>
-                        {parkStats?.offer_types?.map((type) => (
-                          <SelectItem key={type} value={type}>
-                            {type}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                ) : isEncaissementArDotFile ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <Label htmlFor="search">Rechercher par organisation</Label>
+                      <Input
+                        id="search"
+                        placeholder="Nom de l'organisation..."
+                        value={savedDataSearch}
+                        onChange={(e) => setSavedDataSearch(e.target.value)}
+                      />
+                    </div>
                   </div>
-                </div>
+                ) : isCreancePeriodiqueDotFile ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                      <Label htmlFor="search">Rechercher par DOT</Label>
+                      <Input
+                        id="search"
+                        placeholder="Nom du DOT..."
+                        value={savedDataSearch}
+                        onChange={(e) => setSavedDataSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div>
+                      <Label htmlFor="search">Rechercher</Label>
+                      <Input
+                        id="search"
+                        placeholder="Code client, numéro service..."
+                        value={savedDataSearch}
+                        onChange={(e) => setSavedDataSearch(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="status">Statut abonné</Label>
+                      <Select
+                        value={savedDataFilters.subscriberStatus}
+                        onValueChange={(value) =>
+                          setSavedDataFilters((prev) => ({
+                            ...prev,
+                            subscriberStatus: value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Tous les statuts" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tous les statuts</SelectItem>
+                          {parkStats?.subscriber_statuses?.map((status) => (
+                            <SelectItem key={status} value={status}>
+                              {status}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="telecom">Type télécom</Label>
+                      <Select
+                        value={savedDataFilters.telecomType}
+                        onValueChange={(value) =>
+                          setSavedDataFilters((prev) => ({
+                            ...prev,
+                            telecomType: value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Tous les types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tous les types</SelectItem>
+                          {parkStats?.telecom_types?.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label htmlFor="offer">Type d'offre</Label>
+                      <Select
+                        value={savedDataFilters.offerType}
+                        onValueChange={(value) =>
+                          setSavedDataFilters((prev) => ({
+                            ...prev,
+                            offerType: value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Tous les types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Tous les types</SelectItem>
+                          {parkStats?.offer_types?.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
 
                 {/* Data Table */}
                 {savedDataLoading ? (
@@ -913,7 +1362,51 @@ const FilePreviewPage = () => {
                         <TableRow>
                           {getAvailableColumns().map((column) => (
                             <TableHead key={column} className="min-w-[120px]">
-                              {column}
+                              {column === "dot_name" ? "DOT" :
+                               column === "objectif_ca" ? "Objectif C.A (DZD)" :
+                               column === "cpt_comptable" ? "Code Comptable" :
+                               column === "description_cpt_comptable" ? "Description Cpt Comptable" :
+                               column === "type_cpte" ? "TYPE_CPTE" :
+                               column === "aut_bdg" ? "AUT_BDG" :
+                               column === "aut_imp" ? "AUT_IMP" :
+                               column === "auxil" ? "AUXIL" :
+                               column === "let" ? "LET" :
+                               column === "org_name" ? "Organisation" :
+                               column === "n_fact" ? "N° Facture" :
+                               column === "typ_fact" ? "Type Facture" :
+                               column === "date_fact" ? "Date Facture" :
+                               column === "client" ? "Client" :
+                               column === "date_gl" ? "Date GL" :
+                               column === "mnt_ht" ? "Montant HT (DZD)" :
+                               column === "mnt_ttc" ? "Montant TTC (DZD)" :
+                               column === "chiffre_aff_exe_dzd" ? "Chiffre d'Affaires (DZD)" :
+                               column === "tva" ? "TVA" :
+                               column === "taux_realisation_ca" ? "Taux Réalisation C.A (%)" :
+                               // Encaissement AR DOT columns
+                               column === "organisation" ? "Organisation" :
+                               column === "source" ? "Source" :
+                               column === "encaissement" ? "Encaissement (DZD)" :
+                               column === "taux_encaissement" ? "Taux Encaissement (%)" :
+                               column === "montant_restant" ? "Montant Restant (DZD)" :
+                               column === "date_rglt" ? "Date Règlement" :
+                               column === "n_rglt" ? "N° Règlement" :
+                               // Créance Périodique DOT columns
+                               column === "dot" ? "DOT" :
+                               column === "actel" ? "ACTEL" :
+                               column === "mois" ? "Mois" :
+                               column === "annee" ? "Année" :
+                               column === "period_key" ? "Période" :
+                               column === "subs_status" ? "Statut Abonné" :
+                               column === "produit" ? "Produit" :
+                               column === "cust_lev1" ? "Niveau Client 1" :
+                               column === "cust_lev2" ? "Niveau Client 2" :
+                               column === "cust_lev3" ? "Niveau Client 3" :
+                               column === "invoice_amt" ? "Montant Facture (DZD)" :
+                               column === "open_amt" ? "Montant Ouvert (DZD)" :
+                               column === "creance_brut" ? "Créance Brut (DZD)" :
+                               column === "creance_net" ? "Créance Net (DZD)" :
+                               column === "creance_ht" ? "Créance HT (DZD)" :
+                               column}
                             </TableHead>
                           ))}
                         </TableRow>
@@ -930,7 +1423,63 @@ const FilePreviewPage = () => {
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <div className="truncate">
-                                        {formatValue(record[column])}
+                                        {column === "objectif_ca" && isRevenueObjectiveFile
+                                          ? new Intl.NumberFormat('fr-FR', {
+                                              style: 'decimal',
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2
+                                            }).format(parseFloat(record[column]) || 0)
+                                          : (isRevenueJournalFile && (column === "mnt_ht" || column === "mnt_ttc" || column === "chiffre_aff_exe_dzd"))
+                                          ? new Intl.NumberFormat('fr-FR', {
+                                              style: 'decimal',
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2
+                                            }).format(parseFloat(record[column]) || 0)
+                                          : (isRevenueJournalFile && column === "tva")
+                                          ? record[column] !== null && record[column] !== undefined
+                                            ? new Intl.NumberFormat('fr-FR', {
+                                                style: 'decimal',
+                                                minimumFractionDigits: 4,
+                                                maximumFractionDigits: 4
+                                              }).format(parseFloat(record[column]) || 0)
+                                            : "N/A"
+                                          : (isRevenueJournalFile && column === "taux_realisation_ca")
+                                          ? record[column] !== null && record[column] !== undefined
+                                            ? new Intl.NumberFormat('fr-FR', {
+                                                style: 'decimal',
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2
+                                              }).format(parseFloat(record[column]) || 0) + "%"
+                                            : "N/A"
+                                          : (isRevenueJournalFile && (column === "date_fact" || column === "date_gl"))
+                                          ? record[column] 
+                                            ? new Date(record[column]).toLocaleDateString('fr-FR')
+                                            : "N/A"
+                                          : (isEncaissementArDotFile && (column === "montant_ht" || column === "montant_ttc" || column === "encaissement" || column === "montant_restant"))
+                                          ? new Intl.NumberFormat('fr-FR', {
+                                              style: 'decimal',
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2
+                                            }).format(parseFloat(record[column]) || 0)
+                                          : (isEncaissementArDotFile && column === "taux_encaissement")
+                                          ? record[column] !== null && record[column] !== undefined
+                                            ? new Intl.NumberFormat('fr-FR', {
+                                                style: 'decimal',
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2
+                                              }).format(parseFloat(record[column]) || 0) + "%"
+                                            : "N/A"
+                                          : (isEncaissementArDotFile && (column === "date_fact" || column === "date_rglt"))
+                                          ? record[column] 
+                                            ? new Date(record[column]).toLocaleDateString('fr-FR')
+                                            : "N/A"
+                                          : (isCreancePeriodiqueDotFile && (column === "invoice_amt" || column === "open_amt" || column === "creance_brut" || column === "creance_net" || column === "creance_ht"))
+                                          ? new Intl.NumberFormat('fr-FR', {
+                                              style: 'decimal',
+                                              minimumFractionDigits: 2,
+                                              maximumFractionDigits: 2
+                                            }).format(parseFloat(record[column]) || 0)
+                                          : formatValue(record[column])}
                                       </div>
                                     </TooltipTrigger>
                                     <TooltipContent>

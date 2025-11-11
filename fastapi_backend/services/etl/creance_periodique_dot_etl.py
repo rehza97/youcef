@@ -9,9 +9,10 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import logging
 import os
+import re
 from sqlalchemy.orm import Session
 
-from services.etl.base_etl_processor import BaseETLProcessor
+from .base import BaseETLProcessor, ETLResult, ETLStep, ETLStepType
 from models.creance import CreancePeriodiqueDot, CreanceAggregateView
 from models.dot import DOT
 
@@ -274,6 +275,104 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
         if missing_cols:
             result["warnings"].append(f"Missing columns: {missing_cols}")
 
+        # Validate and clean MOIS (month) - should be 01-12
+        if 'MOIS' in validated_df.columns:
+            # Convert to string, remove spaces, and validate
+            validated_df['MOIS'] = (
+                validated_df['MOIS']
+                .astype(str)
+                .str.strip()
+                .str.replace(' ', '')
+            )
+            # Try to extract valid month (1-12) from the value
+            def extract_month(val):
+                if pd.isna(val) or val == '' or val == 'nan':
+                    return None
+                val_str = str(val).strip()
+                # Remove spaces and split by common separators to get first value
+                val_str = val_str.replace(' ', '').split(';')[0].split(',')[0]
+                
+                # If it's a number, check if it's in valid range
+                try:
+                    month_int = int(float(val_str))
+                    if 1 <= month_int <= 12:
+                        return str(month_int).zfill(2)
+                    # If it's a large number, try to extract last 2 digits
+                    if month_int > 12:
+                        month_str = str(month_int)
+                        # Try last 2 digits
+                        if len(month_str) >= 2:
+                            last_two = month_str[-2:]
+                            month_int = int(last_two)
+                            if 1 <= month_int <= 12:
+                                return str(month_int).zfill(2)
+                        # Try first 2 digits if it's very long (e.g., "28693" -> "28" invalid, try "86" or "93")
+                        # Actually, for months, we want last 2 digits
+                except (ValueError, OverflowError):
+                    pass
+                return None
+            
+            validated_df['MOIS'] = validated_df['MOIS'].apply(extract_month)
+            # Filter out rows with invalid months
+            before = len(validated_df)
+            validated_df = validated_df[validated_df['MOIS'].notna()]
+            filtered = before - len(validated_df)
+            if filtered > 0:
+                logger.warning(f"Filtered {filtered} rows with invalid MOIS values")
+                result["warnings"].append(f"Filtered {filtered} rows: Invalid MOIS values")
+
+        # Validate and clean ANNEE (year) - should be reasonable year (2000-2100)
+        if 'ANNEE' in validated_df.columns:
+            # Convert to string and validate
+            validated_df['ANNEE'] = (
+                validated_df['ANNEE']
+                .astype(str)
+                .str.strip()
+                .str.replace(' ', '')
+            )
+            # Try to extract valid year (2000-2100) from the value
+            def extract_year(val):
+                if pd.isna(val) or val == '' or val == 'nan':
+                    return None
+                val_str = str(val).strip()
+                # Remove spaces and split by common separators to get first value
+                val_str = val_str.replace(' ', '').split(';')[0].split(',')[0]
+                
+                try:
+                    year_int = int(float(val_str))
+                    # If it's in valid range, return as is
+                    if 2000 <= year_int <= 2100:
+                        return str(year_int)
+                    # If it's a very large number, try to extract last 4 digits
+                    if year_int > 2100:
+                        year_str = str(year_int)
+                        # Try last 4 digits (most common case: "21684" -> "1684" invalid, but "179229" -> "9229" invalid)
+                        # Actually, we should try different positions
+                        if len(year_str) >= 4:
+                            # Try last 4 digits first
+                            last_four = year_str[-4:]
+                            year_int_test = int(last_four)
+                            if 2000 <= year_int_test <= 2100:
+                                return str(year_int_test)
+                            # If that doesn't work, try first 4 digits (e.g., "2168" from "21684")
+                            if len(year_str) > 4:
+                                first_four = year_str[:4]
+                                year_int_test = int(first_four)
+                                if 2000 <= year_int_test <= 2100:
+                                    return str(year_int_test)
+                except (ValueError, OverflowError):
+                    pass
+                return None
+            
+            validated_df['ANNEE'] = validated_df['ANNEE'].apply(extract_year)
+            # Filter out rows with invalid years
+            before = len(validated_df)
+            validated_df = validated_df[validated_df['ANNEE'].notna()]
+            filtered = before - len(validated_df)
+            if filtered > 0:
+                logger.warning(f"Filtered {filtered} rows with invalid ANNEE values")
+                result["warnings"].append(f"Filtered {filtered} rows: Invalid ANNEE values")
+
         # Convert amount columns to numeric (handle French format with spaces)
         amount_columns = [
             'INVOICE_AMT', 'OPEN_AMT', 'TAX_AMT', 'INVOICE_AMT_HT',
@@ -283,16 +382,34 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
 
         for col in amount_columns:
             if col in validated_df.columns:
-                # Remove spaces (thousand separators) and convert to numeric
+                # Remove spaces (thousand separators), replace comma with dot, and convert to numeric
                 validated_df[col] = (
                     validated_df[col]
                     .astype(str)
-                    .str.replace(' ', '')
-                    .str.replace(',', '.')
+                    .str.replace(' ', '')  # Remove all spaces (French thousand separator)
+                    .str.replace(',', '.')  # Replace comma with dot for decimal
+                    .str.replace(';', '')   # Remove semicolons that might be present
                 )
-                validated_df[col] = pd.to_numeric(validated_df[col], errors='coerce')
+                # Handle cases where multiple values might be concatenated (e.g., "286 93" -> "28693" or "286.93")
+                # Try to parse as float, if it fails, try to extract first valid number
+                def parse_amount(val):
+                    if pd.isna(val) or val == '' or val == 'nan' or val == 'None':
+                        return None
+                    val_str = str(val).strip()
+                    # Extract first number (with decimal point)
+                    match = re.search(r'-?\d+\.?\d*', val_str)
+                    if match:
+                        try:
+                            return float(match.group())
+                        except (ValueError, TypeError):
+                            pass
+                    return None
+                
+                validated_df[col] = validated_df[col].apply(parse_amount)
+                # Fill NaN with 0 for amount columns (assuming 0 if empty)
+                validated_df[col] = validated_df[col].fillna(0)
 
-        logger.info("Validation complete: Amount columns converted to numeric")
+        logger.info("Validation complete: MOIS/ANNEE validated, Amount columns converted to numeric")
 
         return validated_df
 
@@ -314,6 +431,33 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
                 transformed_df['MOIS'].astype(str).str.zfill(2)
             )
             logger.info("Applied Rule 10: Created PERIOD_KEY (YYYY-MM)")
+
+        # Ensure string columns remain as strings (convert from numeric if needed)
+        # This ensures that columns like SUBS_STATUS (which might be parsed as numeric) are converted to strings
+        string_columns = ['DOT', 'ACTEL', 'MOIS', 'ANNEE', 'PERIOD_KEY', 'SUBS_STATUS', 
+                         'PRODUIT', 'CUST_LEV1', 'CUST_LEV2', 'CUST_LEV3']
+        for col in string_columns:
+            if col in transformed_df.columns:
+                # Convert to object type first to preserve None values
+                transformed_df[col] = transformed_df[col].astype('object')
+                # Convert all values to strings, but keep None/NaN as None
+                def convert_to_string_safe(val):
+                    if val is None:
+                        return None
+                    if pd.isna(val):
+                        return None
+                    try:
+                        str_val = str(val).strip()
+                        # If it's a string representation of NaN, return None
+                        if str_val.lower() in ('nan', 'none', 'null', ''):
+                            return None
+                        return str_val
+                    except Exception:
+                        return None
+                
+                transformed_df[col] = transformed_df[col].apply(convert_to_string_safe)
+        
+        logger.info("Converted string columns to object type (preserving None values)")
 
         # Standardize column names (lowercase with underscores)
         column_mapping = {
@@ -378,10 +522,9 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
                 'open_amt': 'sum',
                 'creance_brut': 'sum',
                 'creance_net': 'sum',
-                'creance_ht': 'sum',
-                'dot': 'count'
+                'creance_ht': 'sum'
             }).reset_index(drop=False)
-            by_dot.rename(columns={'dot': 'nombre_lignes'}, inplace=True)
+            by_dot['nombre_lignes'] = df.groupby('dot').size().values
             by_dot['view_type'] = 'by_dot'
             aggregates.extend(by_dot.to_dict('records'))
 
@@ -390,10 +533,9 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
             by_annee = df.groupby('annee').agg({
                 'invoice_amt': 'sum',
                 'creance_brut': 'sum',
-                'creance_net': 'sum',
-                'annee': 'count'
+                'creance_net': 'sum'
             }).reset_index(drop=False)
-            by_annee.rename(columns={'annee': 'nombre_lignes'}, inplace=True)
+            by_annee['nombre_lignes'] = df.groupby('annee').size().values
             by_annee['view_type'] = 'by_annee'
             aggregates.extend(by_annee.to_dict('records'))
 
@@ -402,10 +544,9 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
             by_produit = df.groupby('produit').agg({
                 'invoice_amt': 'sum',
                 'creance_brut': 'sum',
-                'creance_net': 'sum',
-                'produit': 'count'
+                'creance_net': 'sum'
             }).reset_index(drop=False)
-            by_produit.rename(columns={'produit': 'nombre_lignes'}, inplace=True)
+            by_produit['nombre_lignes'] = df.groupby('produit').size().values
             by_produit['view_type'] = 'by_produit'
             aggregates.extend(by_produit.to_dict('records'))
 
@@ -414,10 +555,9 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
             by_cust = df.groupby('cust_lev2').agg({
                 'invoice_amt': 'sum',
                 'creance_brut': 'sum',
-                'creance_net': 'sum',
-                'cust_lev2': 'count'
+                'creance_net': 'sum'
             }).reset_index(drop=False)
-            by_cust.rename(columns={'cust_lev2': 'nombre_lignes'}, inplace=True)
+            by_cust['nombre_lignes'] = df.groupby('cust_lev2').size().values
             by_cust['view_type'] = 'by_cust_lev2'
             aggregates.extend(by_cust.to_dict('records'))
 
@@ -492,20 +632,34 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
                             matched_dot_id = dot_id
                             break
 
+                    # Helper function to safely convert to string, handling NaN
+                    def safe_str(val, max_len=None):
+                        if pd.isna(val) or val is None:
+                            return None
+                        try:
+                            str_val = str(val).strip()
+                            if str_val == '' or str_val.lower() in ('nan', 'none', 'null'):
+                                return None
+                            if max_len:
+                                return str_val[:max_len]
+                            return str_val
+                        except Exception:
+                            return None
+                    
                     # Create record
                     record = CreancePeriodiqueDot(
                         file_upload_id=file_upload_id,
                         dot_id=matched_dot_id,
-                        dot=row.get('dot'),
-                        actel=row.get('actel'),
-                        mois=str(row.get('mois', ''))[:2] if pd.notna(row.get('mois')) else None,
-                        annee=str(row.get('annee', ''))[:4] if pd.notna(row.get('annee')) else None,
-                        period_key=row.get('period_key'),
-                        subs_status=row.get('subs_status'),
-                        produit=row.get('produit'),
-                        cust_lev1=row.get('cust_lev1'),
-                        cust_lev2=row.get('cust_lev2'),
-                        cust_lev3=row.get('cust_lev3'),
+                        dot=safe_str(row.get('dot'), 200),
+                        actel=safe_str(row.get('actel'), 255),
+                        mois=safe_str(row.get('mois'), 2),
+                        annee=safe_str(row.get('annee'), 4),
+                        period_key=safe_str(row.get('period_key'), 7),
+                        subs_status=safe_str(row.get('subs_status'), 50),
+                        produit=safe_str(row.get('produit'), 100),
+                        cust_lev1=safe_str(row.get('cust_lev1'), 200),
+                        cust_lev2=safe_str(row.get('cust_lev2'), 200),
+                        cust_lev3=safe_str(row.get('cust_lev3'), 200),
                         invoice_amt=float(row.get('invoice_amt', 0)) if pd.notna(row.get('invoice_amt')) else None,
                         open_amt=float(row.get('open_amt', 0)) if pd.notna(row.get('open_amt')) else None,
                         tax_amt=float(row.get('tax_amt', 0)) if pd.notna(row.get('tax_amt')) else None,

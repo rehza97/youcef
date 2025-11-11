@@ -97,8 +97,8 @@ class RevenueProcessingHelpers:
         if date_col not in df.columns:
             return df
 
-        # Convert to datetime
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        # Convert to datetime with dayfirst=True for French date format (dd/mm/yyyy)
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
 
         # Extract year
         years = df[date_col].dt.year.dropna()
@@ -141,29 +141,50 @@ class RevenueProcessingHelpers:
                        mnt_ttc_col: str,
                        mnt_ht_col: str,
                        tva_col: str = 'TVA') -> pd.DataFrame:
-        """Calculate TVA = Mnt Ttc / Mnt Ht, replace #DIV/0! with 0"""
+        """
+        Calculate TVA = Mnt Ttc / Mnt Ht
+        Limit to NUMERIC(10, 4) range: -999999.9999 to 999999.9999
+        Handle division by zero and very small denominators
+        """
         if mnt_ttc_col not in df.columns or mnt_ht_col not in df.columns:
             logger.warning(
                 "Cannot calculate TVA: required columns not found")
             return df
+
+        # Maximum value for NUMERIC(10, 4): 999999.9999
+        MAX_TVA = 999999.9999
+        MIN_TVA = -999999.9999
+        MIN_DENOMINATOR = 0.0001  # Minimum denominator to avoid extreme values
 
         def calc_tva(row):
             ttc = row.get(mnt_ttc_col)
             ht = row.get(mnt_ht_col)
 
             if pd.isna(ttc) or pd.isna(ht):
-                return 0.0
+                return None
 
             try:
                 ttc = float(ttc)
                 ht = float(ht)
 
-                if ht == 0:
-                    return 0.0
+                # Handle division by zero or very small denominators
+                if abs(ht) < MIN_DENOMINATOR:
+                    # If denominator is too small, return None or 0
+                    return None
 
-                return ttc / ht
-            except:
-                return 0.0
+                tva_value = ttc / ht
+                
+                # Clamp to valid range for NUMERIC(10, 4)
+                if tva_value > MAX_TVA:
+                    logger.warning(f"TVA value {tva_value} exceeds maximum {MAX_TVA}, clamping")
+                    return MAX_TVA
+                elif tva_value < MIN_TVA:
+                    logger.warning(f"TVA value {tva_value} below minimum {MIN_TVA}, clamping")
+                    return MIN_TVA
+                
+                return round(tva_value, 4)  # Round to 4 decimal places
+            except (ValueError, TypeError, ZeroDivisionError):
+                return None
 
         df[tva_col] = df.apply(calc_tva, axis=1)
         return df
@@ -173,11 +194,18 @@ class RevenueProcessingHelpers:
                           ca_col: str,
                           tva_col: str = 'TVA',
                           ca_ttc_col: str = 'Chiffre_Aff_Exe_Dzd_TTC') -> pd.DataFrame:
-        """Calculate Chiffre Aff Exe Dzd TTC = CA * TVA"""
+        """
+        Calculate Chiffre Aff Exe Dzd TTC = CA * TVA
+        Limit to NUMERIC(15, 2) range: -9999999999999.99 to 9999999999999.99
+        """
         if ca_col not in df.columns or tva_col not in df.columns:
             logger.warning(
                 "Cannot calculate CA TTC: required columns not found")
             return df
+
+        # Maximum value for NUMERIC(15, 2): 9,999,999,999,999.99 (about 10 trillion)
+        MAX_CA_TTC = 9999999999999.99
+        MIN_CA_TTC = -9999999999999.99
 
         def calc_ca_ttc(row):
             ca = row.get(ca_col)
@@ -187,8 +215,21 @@ class RevenueProcessingHelpers:
                 return None
 
             try:
-                return float(ca) * float(tva)
-            except:
+                ca = float(ca)
+                tva = float(tva)
+
+                ca_ttc_value = ca * tva
+
+                # Clamp to valid range for NUMERIC(15, 2)
+                if ca_ttc_value > MAX_CA_TTC:
+                    logger.warning(f"CA TTC value {ca_ttc_value} exceeds maximum {MAX_CA_TTC}, clamping")
+                    return MAX_CA_TTC
+                elif ca_ttc_value < MIN_CA_TTC:
+                    logger.warning(f"CA TTC value {ca_ttc_value} below minimum {MIN_CA_TTC}, clamping")
+                    return MIN_CA_TTC
+
+                return round(ca_ttc_value, 2)  # Round to 2 decimal places for NUMERIC(15, 2)
+            except (ValueError, TypeError):
                 return None
 
         df[ca_ttc_col] = df.apply(calc_ca_ttc, axis=1)
@@ -199,11 +240,20 @@ class RevenueProcessingHelpers:
                                      ca_col: str,
                                      objectif_col: str = 'Objectif_CA',
                                      rate_col: str = 'Taux_Realisation_CA') -> pd.DataFrame:
-        """Calculate Taux de réalisation = CA / Objectif"""
+        """
+        Calculate Taux de réalisation = (CA / Objectif) * 100
+        Limit to NUMERIC(10, 4) range: -999999.9999 to 999999.9999
+        Handle division by zero and very small denominators
+        """
         if ca_col not in df.columns or objectif_col not in df.columns:
             logger.warning(
                 "Cannot calculate achievement rate: required columns not found")
             return df
+
+        # Maximum value for NUMERIC(10, 4): 999999.9999
+        MAX_RATE = 999999.9999
+        MIN_RATE = -999999.9999
+        MIN_DENOMINATOR = 0.01  # Minimum denominator (objectif) to avoid extreme values
 
         def calc_rate(row):
             ca = row.get(ca_col)
@@ -216,11 +266,23 @@ class RevenueProcessingHelpers:
                 ca = float(ca)
                 objectif = float(objectif)
 
-                if objectif == 0:
-                    return 0.0
+                # Handle division by zero or very small denominators
+                if abs(objectif) < MIN_DENOMINATOR:
+                    # If objectif is too small, return None
+                    return None
 
-                return (ca / objectif) * 100  # Return as percentage
-            except:
+                rate_value = (ca / objectif) * 100  # Return as percentage
+                
+                # Clamp to valid range for NUMERIC(10, 4)
+                if rate_value > MAX_RATE:
+                    logger.warning(f"Achievement rate {rate_value} exceeds maximum {MAX_RATE}, clamping")
+                    return MAX_RATE
+                elif rate_value < MIN_RATE:
+                    logger.warning(f"Achievement rate {rate_value} below minimum {MIN_RATE}, clamping")
+                    return MIN_RATE
+                
+                return round(rate_value, 4)  # Round to 4 decimal places
+            except (ValueError, TypeError, ZeroDivisionError):
                 return None
 
         df[rate_col] = df.apply(calc_rate, axis=1)

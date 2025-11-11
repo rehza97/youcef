@@ -570,42 +570,7 @@ const FilesPage = () => {
                 ))
               ) : (
                 <>
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-2xl font-bold text-blue-600">
-                        {fileStats?.total_files || 0}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Total des fichiers
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-2xl font-bold text-green-600">
-                        {fileStats?.excel_files || 0}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Fichiers Excel
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-2xl font-bold text-purple-600">
-                        {fileStats?.csv_files || 0}
-                      </div>
-                      <div className="text-sm text-gray-600">Fichiers CSV</div>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="text-2xl font-bold text-orange-600">
-                        {fileStats?.total_size_mb || 0} MB
-                      </div>
-                      <div className="text-sm text-gray-600">Taille totale</div>
-                    </CardContent>
-                  </Card>
+
                 </>
               )}
             </div>

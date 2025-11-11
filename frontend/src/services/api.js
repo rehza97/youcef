@@ -933,6 +933,61 @@ export const getParkDataStats = () => {
   return api.get("/api/parks/data/stats");
 };
 
+// Revenue Objectives API methods
+export const getRevenueObjectives = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.dot_name) queryParams.append("dot_name", params.dot_name);
+  if (params.file_upload_id) queryParams.append("file_upload_id", params.file_upload_id);
+  
+  const queryString = queryParams.toString();
+  return api.get(
+    `/api/revenue/objectives${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getRevenueObjective = (objectiveId) => {
+  return api.get(`/api/revenue/objectives/${objectiveId}`);
+};
+
+// Account Descriptions API methods
+export const getAccountDescriptions = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.cpt_comptable) queryParams.append("cpt_comptable", params.cpt_comptable);
+  if (params.file_upload_id) queryParams.append("file_upload_id", params.file_upload_id);
+  if (params.type_cpte) queryParams.append("type_cpte", params.type_cpte);
+  
+  const queryString = queryParams.toString();
+  return api.get(
+    `/api/revenue/account-descriptions${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getAccountDescription = (accountId) => {
+  return api.get(`/api/revenue/account-descriptions/${accountId}`);
+};
+
+// Revenue Journal API methods
+export const getRevenueJournals = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.org_name) queryParams.append("org_name", params.org_name);
+  if (params.file_upload_id) queryParams.append("file_upload_id", params.file_upload_id);
+  if (params.n_fact) queryParams.append("n_fact", params.n_fact);
+  if (params.cpt_comptable) queryParams.append("cpt_comptable", params.cpt_comptable);
+  if (params.start_date) queryParams.append("start_date", params.start_date);
+  if (params.end_date) queryParams.append("end_date", params.end_date);
+  if (params.page) queryParams.append("page", params.page);
+  if (params.page_size) queryParams.append("page_size", params.page_size);
+  
+  const queryString = queryParams.toString();
+  return api.get(
+    `/api/revenue/journal${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getRevenueJournal = (journalId) => {
+  return api.get(`/api/revenue/journal/${journalId}`);
+};
+
 // ============================================================================
 // Encaissement AR DOT API Methods (COMPLETE - 17 endpoints)
 // ============================================================================
