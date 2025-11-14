@@ -719,6 +719,102 @@ async def get_available_filters(
     }
 
 
+@park_analytics_router.get("/preview-data")
+async def get_preview_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100, description="Number of records to preview"),
+    offset: int = Query(0, ge=0, description="Number of records to skip")
+):
+    """
+    Get sample park records for dashboard preview
+
+    Returns up to `limit` park records from accessible DOTs with full details.
+    Useful for showing data samples in UI without loading all records.
+
+    Parameters:
+        limit: Number of records to return (1-100, default 10)
+        offset: Number of records to skip for pagination (default 0)
+
+    Returns:
+        Dictionary with:
+        - records: List of park records with key fields
+        - total_available: Total records accessible to user
+        - preview_limit: Actual limit applied
+        - preview_offset: Offset applied
+
+    Example:
+        GET /api/parks/preview-data?limit=20&offset=0
+    """
+
+    try:
+        # Apply DOT-based permission filtering
+        query = db.query(Park)
+        accessible_dots = DOTService.get_user_accessible_dots(
+            db=db, user_id=current_user.id)
+
+        if not accessible_dots:
+            logger.warning(f"User {current_user.id} has no accessible DOTs")
+            return {
+                "records": [],
+                "total_available": 0,
+                "preview_limit": limit,
+                "preview_offset": offset,
+                "message": "No accessible data"
+            }
+
+        query = query.filter(Park.dot_id.in_(accessible_dots))
+
+        # Get total count for pagination info
+        total_count = query.count()
+
+        # Apply pagination
+        records = query.order_by(Park.created_at.desc()) \
+            .offset(offset) \
+            .limit(limit) \
+            .all()
+
+        # Format response with key fields
+        preview_records = []
+        for record in records:
+            preview_records.append({
+                "id": record.id,
+                "customer_code": record.customer_code or "",
+                "service_number": record.service_number or "",
+                "customer_full_name": record.customer_full_name or "",
+                "telecom_type": record.telecom_type or "",
+                "offer_name": record.offer_name or "",
+                "subscriber_status": record.subscriber_status or "",
+                "rental_fees": float(record.rental_fees) if record.rental_fees else 0.0,
+                "customer_l1_description": record.customer_l1_description or "",
+                "customer_l2_description": record.customer_l2_description or "",
+                "dot_name": record.dot.name if record.dot else "",
+                "actel_code": record.actel_code or "",
+                "creation_date": record.creation_date.isoformat() if record.creation_date else None,
+                "active_date": record.active_date.isoformat() if record.active_date else None
+            })
+
+        logger.info(
+            f"User {current_user.id} retrieved {len(preview_records)} preview records "
+            f"(offset={offset}, limit={limit}, total={total_count})"
+        )
+
+        return {
+            "records": preview_records,
+            "total_available": total_count,
+            "preview_limit": limit,
+            "preview_offset": offset,
+            "records_returned": len(preview_records)
+        }
+
+    except Exception as e:
+        logger.error(f"Error retrieving preview data: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error retrieving preview data: {str(e)}"
+        )
+
+
 @park_analytics_router.get("/export")
 async def export_data(
     format: str = Query("csv", regex="^(csv|excel)$"),

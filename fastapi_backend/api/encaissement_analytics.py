@@ -1,297 +1,548 @@
+"""
+Encaissement AR DOT Analytics API Endpoints
+Handles data retrieval, filtering, and aggregations for encaissement (collection) data
+"""
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any, Optional
-
+from sqlalchemy import func, and_, or_
+from typing import List, Optional, Dict, Any
 from database.connection import get_db
-from core.security import get_current_user
 from models.user import User
+from models.encaissement import EncaissementARDot
+from services.permission_service import PermissionService
+from core.security import get_current_user
+from pydantic import BaseModel
+from datetime import date
 import logging
 
 logger = logging.getLogger(__name__)
 
-encaissement_analytics_router = APIRouter()
+encaissement_analytics_router = APIRouter(prefix="/api/encaissement", tags=["Encaissement Analytics"])
 
 
-@encaissement_analytics_router.get("/overview")
+# ============================================================================
+# Pydantic Schemas
+# ============================================================================
+
+class EncaissementRecordResponse(BaseModel):
+    """Response schema for individual encaissement records"""
+    id: int
+    organisation: Optional[str]
+    n_fact: Optional[int]
+    typ_fact: Optional[str]
+    date_fact: Optional[date]
+    client: Optional[str]
+    montant_ttc: Optional[float]
+    encaissement: Optional[float]
+    taux_encaissement: Optional[float]
+    montant_restant: Optional[float]
+
+    class Config:
+        from_attributes = True
+
+
+class EncaissementByOrgResponse(BaseModel):
+    """Response schema for organization-level aggregations"""
+    organisation: str
+    nombre_factures: int
+    total_montant_ttc: float
+    total_encaissement: float
+    taux_encaissement_moyen: Optional[float]
+    total_montant_restant: float
+
+
+class EncaissementByMonthResponse(BaseModel):
+    """Response schema for monthly aggregations"""
+    mois: str  # YYYY-MM format
+    nombre_factures: int
+    total_montant_ttc: float
+    total_encaissement: float
+    taux_encaissement_moyen: Optional[float]
+    total_montant_restant: float
+
+
+class EncaissementOverviewResponse(BaseModel):
+    """Response schema for overview analytics"""
+    total_montant_ttc: float
+    total_encaissement: float
+    total_montant_restant: float
+    taux_encaissement_global: float
+    nombre_factures_total: int
+    nombre_organisations: int
+    by_organisation: Dict[str, float]
+    by_month: Dict[str, float]
+
+
+class EncaissementFiltersResponse(BaseModel):
+    """Response schema for available filter values"""
+    organisations: List[str]
+    mois: List[str]
+    types_facture: List[str]
+    taux_ranges: List[Dict[str, Any]]
+
+
+class EncaissementPivotResponse(BaseModel):
+    """Response schema for pivot table aggregations"""
+    dimensions: List[str]
+    aggregations: List[str]
+    data: Dict[str, Any]
+    summary: Dict[str, float]
+
+
+# ============================================================================
+# Overview Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/overview", response_model=EncaissementOverviewResponse)
 async def get_overview(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get overview analytics data (ADMIN, SUPER_USER, or DOT_USER with restrictions)"""
-    # RBAC: Check user has appropriate access
-    from services.permission_service import PermissionService
+    """
+    Get overview analytics for encaissement data
 
-    # Ensure user has at least DOT_USER access
-    PermissionService.check_dot_user_permissions(current_user, db)
+    Returns key metrics including total amounts, collection rate, and distributions
+    by organization and month.
 
-    # Get user's DOT region for filtering
-    user_dot = PermissionService.get_user_dot_region(current_user, db)
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
 
-    logger.info(f"Overview data requested by user {current_user.id} (DOT: {user_dot or 'ALL'})")
+    try:
+        # Build query
+        query = db.query(EncaissementARDot)
 
-    return {
-        'total_organisations': 15,
-        'total_factures': 1250,
-        'total_montant_ttc': 1500000.00,
-        'total_encaissement': 1200000.00,
-        'avg_encaisse_rate': 80.5,
-        'best_performing_org': 'DOT ORAN',
-        'worst_performing_org': 'DOT TLEMCEN',
-        'trend': 'improving'  # improving, declining, stable
-    }
+        # Get totals
+        total_montant_ttc = query.with_entities(
+            func.sum(EncaissementARDot.montant_ttc)
+        ).scalar() or 0.0
+
+        total_encaissement = query.with_entities(
+            func.sum(EncaissementARDot.encaissement)
+        ).scalar() or 0.0
+
+        total_montant_restant = total_montant_ttc - total_encaissement
+
+        # Global collection rate
+        taux_global = (total_encaissement / total_montant_ttc * 100) if total_montant_ttc > 0 else 0.0
+
+        # Number of records
+        nombre_factures = query.count()
+
+        # Number of unique organizations
+        nombre_organisations = query.with_entities(
+            func.count(func.distinct(EncaissementARDot.organisation))
+        ).scalar() or 0
+
+        # By organization
+        org_data = db.query(
+            EncaissementARDot.organisation,
+            func.sum(EncaissementARDot.montant_ttc).label('total')
+        ).filter(EncaissementARDot.organisation.isnot(None)).group_by(
+            EncaissementARDot.organisation
+        ).order_by(func.sum(EncaissementARDot.montant_ttc).desc()).all()
+
+        by_organisation = {row.organisation: float(row.total or 0) for row in org_data}
+
+        # By month
+        month_data = db.query(
+            EncaissementARDot.mois,
+            func.sum(EncaissementARDot.montant_ttc).label('total')
+        ).filter(EncaissementARDot.mois.isnot(None)).group_by(
+            EncaissementARDot.mois
+        ).order_by(EncaissementARDot.mois).all()
+
+        by_month = {row.mois: float(row.total or 0) for row in month_data}
+
+        logger.info(f"Overview retrieved: Total TTC={total_montant_ttc}, Collection Rate={taux_global:.2f}%")
+
+        return {
+            "total_montant_ttc": float(total_montant_ttc),
+            "total_encaissement": float(total_encaissement),
+            "total_montant_restant": float(total_montant_restant),
+            "taux_encaissement_global": float(taux_global),
+            "nombre_factures_total": nombre_factures,
+            "nombre_organisations": nombre_organisations,
+            "by_organisation": by_organisation,
+            "by_month": by_month
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement overview: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve overview: {str(e)}")
 
 
-@encaissement_analytics_router.get("/by-organisation")
+# ============================================================================
+# By Organization Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/by-organisation", response_model=List[EncaissementByOrgResponse])
 async def get_by_organisation(
-    limit: Optional[int] = Query(None, ge=1, le=100),
-    sort_by: Optional[str] = Query("encaisse_rate", regex="^(name|factures|montant|encaissement|encaisse_rate)$"),
-    order: Optional[str] = Query("desc", regex="^(asc|desc)$"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    sort_by: str = Query("montant_ttc", regex="^(organisation|factures|montant_ttc|encaissement|taux)$"),
+    order: str = Query("desc", regex="^(asc|desc)$"),
+    limit: Optional[int] = Query(None, ge=1, le=100)
+):
+    """
+    Get encaissement data grouped by organization
+
+    Returns organization-level aggregations with collection rates and outstanding amounts.
+
+    Parameters:
+    - sort_by: Sort field (organisation, factures, montant_ttc, encaissement, taux)
+    - order: Sort order (asc, desc)
+    - limit: Maximum number of results
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        results = db.query(
+            EncaissementARDot.organisation,
+            func.count(EncaissementARDot.id).label('nombre_factures'),
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement'),
+            func.avg(EncaissementARDot.taux_encaissement).label('taux_moyen')
+        ).filter(
+            EncaissementARDot.organisation.isnot(None)
+        ).group_by(
+            EncaissementARDot.organisation
+        ).all()
+
+        # Calculate remaining amounts and build response
+        response = []
+        for row in results:
+            total_ttc = float(row.total_montant_ttc or 0)
+            total_encaissement = float(row.total_encaissement or 0)
+            remaining = total_ttc - total_encaissement
+
+            response.append(EncaissementByOrgResponse(
+                organisation=row.organisation or "Unknown",
+                nombre_factures=int(row.nombre_factures),
+                total_montant_ttc=total_ttc,
+                total_encaissement=total_encaissement,
+                taux_encaissement_moyen=float(row.taux_moyen or 0),
+                total_montant_restant=remaining
+            ))
+
+        # Apply sorting
+        sort_map = {
+            "organisation": lambda x: x.organisation,
+            "factures": lambda x: x.nombre_factures,
+            "montant_ttc": lambda x: x.total_montant_ttc,
+            "encaissement": lambda x: x.total_encaissement,
+            "taux": lambda x: x.taux_encaissement_moyen or 0
+        }
+
+        if sort_by in sort_map:
+            response.sort(key=sort_map[sort_by], reverse=(order == "desc"))
+
+        # Apply limit
+        if limit:
+            response = response[:limit]
+
+        logger.info(f"By organisation retrieved: {len(response)} organisations")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement by organisation: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by organisation: {str(e)}")
+
+
+# ============================================================================
+# By Month Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/by-month", response_model=List[EncaissementByMonthResponse])
+async def get_by_month(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisation: Optional[List[str]] = Query(None),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None
+):
+    """
+    Get encaissement data grouped by month
+
+    Returns monthly aggregations of collection data with rates and outstanding amounts.
+
+    Parameters:
+    - organisation: Optional list of organizations to filter
+    - start_date: Optional start date
+    - end_date: Optional end date
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(EncaissementARDot)
+
+        # Apply filters
+        if organisation:
+            query = query.filter(EncaissementARDot.organisation.in_(organisation))
+        if start_date:
+            query = query.filter(EncaissementARDot.date_fact >= start_date)
+        if end_date:
+            query = query.filter(EncaissementARDot.date_fact <= end_date)
+
+        # Group by month
+        results = query.with_entities(
+            EncaissementARDot.mois,
+            func.count(EncaissementARDot.id).label('nombre_factures'),
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement'),
+            func.avg(EncaissementARDot.taux_encaissement).label('taux_moyen')
+        ).filter(
+            EncaissementARDot.mois.isnot(None)
+        ).group_by(
+            EncaissementARDot.mois
+        ).order_by(
+            EncaissementARDot.mois
+        ).all()
+
+        # Build response
+        response = []
+        for row in results:
+            total_ttc = float(row.total_montant_ttc or 0)
+            total_encaissement = float(row.total_encaissement or 0)
+            remaining = total_ttc - total_encaissement
+
+            response.append(EncaissementByMonthResponse(
+                mois=row.mois or "Unknown",
+                nombre_factures=int(row.nombre_factures),
+                total_montant_ttc=total_ttc,
+                total_encaissement=total_encaissement,
+                taux_encaissement_moyen=float(row.taux_moyen or 0),
+                total_montant_restant=remaining
+            ))
+
+        logger.info(f"By month retrieved: {len(response)} months")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement by month: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by month: {str(e)}")
+
+
+# ============================================================================
+# Filters Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/filters", response_model=EncaissementFiltersResponse)
+async def get_filters(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get data grouped by organisation with filtering and sorting (DOT-scoped)"""
-    # RBAC: Check user has appropriate access
-    from services.permission_service import PermissionService
+    """
+    Get available filter values for encaissement analytics UI
 
-    # Ensure user has at least DOT_USER access
-    PermissionService.check_dot_user_permissions(current_user, db)
+    Returns unique organizations, months, invoice types, and predefined collection rate ranges.
 
-    # Get user's DOT region for filtering
-    user_dot = PermissionService.get_user_dot_region(current_user, db)
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
 
-    logger.info(f"Organisation analytics requested by user {current_user.id} (DOT: {user_dot or 'ALL'})")
+    try:
+        # Get unique organisations
+        org_results = db.query(
+            EncaissementARDot.organisation
+        ).distinct().filter(
+            EncaissementARDot.organisation.isnot(None)
+        ).order_by(EncaissementARDot.organisation).all()
 
-    # Sample data - in production, this would query the database with DOT filtering
-    all_data = [
-        {
-            'Org Name': 'DOT ALGER',
-            'N FACT': 150,
-            'Montant Ttc': 250000.00,
-            'Encaissement': 200000.00,
-            'Taux d\'encaissement': 80.0
-        },
-        {
-            'Org Name': 'DOT ORAN',
-            'N FACT': 120,
-            'Montant Ttc': 180000.00,
-            'Encaissement': 162000.00,
-            'Taux d\'encaissement': 90.0
-        },
-        {
-            'Org Name': 'DOT CONSTANTINE',
-            'N FACT': 100,
-            'Montant Ttc': 150000.00,
-            'Encaissement': 120000.00,
-            'Taux d\'encaissement': 80.0
-        },
-        {
-            'Org Name': 'DOT SETIF',
-            'N FACT': 80,
-            'Montant Ttc': 120000.00,
-            'Encaissement': 84000.00,
-            'Taux d\'encaissement': 70.0
-        },
-        {
-            'Org Name': 'DOT TLEMCEN',
-            'N FACT': 60,
-            'Montant Ttc': 90000.00,
-            'Encaissement': 54000.00,
-            'Taux d\'encaissement': 60.0
-        }
-    ]
+        organisations = [row.organisation for row in org_results]
 
-    # Filter data based on user's DOT access
-    if user_dot:  # DOT_USER - only show their DOT
-        data = [org for org in all_data if user_dot.upper() in org['Org Name'].upper()]
-    else:  # ADMIN/SUPER_USER - show all data
-        data = all_data
+        # Get unique months
+        month_results = db.query(
+            EncaissementARDot.mois
+        ).distinct().filter(
+            EncaissementARDot.mois.isnot(None)
+        ).order_by(EncaissementARDot.mois).all()
 
-    # Apply sorting
-    sort_key_map = {
-        'name': 'Org Name',
-        'factures': 'N FACT',
-        'montant': 'Montant Ttc',
-        'encaissement': 'Encaissement',
-        'encaisse_rate': 'Taux d\'encaissement'
-    }
+        mois = [row.mois for row in month_results if row.mois]
 
-    if sort_by in sort_key_map:
-        data.sort(
-            key=lambda x: x[sort_key_map[sort_by]],
-            reverse=(order == "desc")
-        )
+        # Get unique invoice types
+        type_results = db.query(
+            EncaissementARDot.typ_fact
+        ).distinct().filter(
+            EncaissementARDot.typ_fact.isnot(None)
+        ).order_by(EncaissementARDot.typ_fact).all()
 
-    # Apply limit
-    if limit:
-        data = data[:limit]
+        types_facture = [row.typ_fact for row in type_results]
 
-    return {
-        'organisations': data,
-        'total_count': len(data),
-        'filters_applied': {
-            'limit': limit,
-            'sort_by': sort_by,
-            'order': order
-        }
-    }
-
-
-@encaissement_analytics_router.get("/by-date")
-async def get_by_date(
-    period: Optional[str] = Query("month", regex="^(day|week|month|quarter|year)$"),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get data grouped by time period (DOT-scoped, requires can_view_encaissement_data)"""
-    # RBAC: Check user has permission to view encaissement data
-    from services.permission_service import PermissionService
-    PermissionService.require_permission(current_user, db, "can_view_encaissement_data")
-
-    logger.info(f"Date analytics requested by user {current_user.id} for period: {period}")
-
-    # Sample monthly data
-    monthly_data = [
-        {
-            'period': 'January 2024',
-            'total_montant_ttc': 450000.00,
-            'total_encaissement': 360000.00,
-            'encaisse_rate': 80.0,
-            'organisations_count': 12
-        },
-        {
-            'period': 'February 2024',
-            'total_montant_ttc': 520000.00,
-            'total_encaissement': 432000.00,
-            'encaisse_rate': 83.1,
-            'organisations_count': 14
-        },
-        {
-            'period': 'March 2024',
-            'total_montant_ttc': 530000.00,
-            'total_encaissement': 408000.00,
-            'encaisse_rate': 77.0,
-            'organisations_count': 15
-        }
-    ]
-
-    return {
-        'period_type': period,
-        'data': monthly_data,
-        'total_periods': len(monthly_data)
-    }
-
-
-@encaissement_analytics_router.get("/by-encaisse-rate")
-async def get_by_encaisse_rate(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get data grouped by encaissement rate buckets (DOT-scoped, requires can_view_encaissement_data)"""
-    # RBAC: Check user has permission to view encaissement data
-    from services.permission_service import PermissionService
-    PermissionService.require_permission(current_user, db, "can_view_encaissement_data")
-
-    logger.info(f"Rate analytics requested by user {current_user.id}")
-
-    return {
-        'rate_buckets': [
-            {
-                'Rate Bucket': '0-25%',
-                'N FACT': 25,
-                'Montant Ttc': 45000.00,
-                'Encaissement': 9000.00,
-                'organisations_count': 2
-            },
-            {
-                'Rate Bucket': '25-50%',
-                'N FACT': 80,
-                'Montant Ttc': 120000.00,
-                'Encaissement': 48000.00,
-                'organisations_count': 3
-            },
-            {
-                'Rate Bucket': '50-75%',
-                'N FACT': 200,
-                'Montant Ttc': 350000.00,
-                'Encaissement': 245000.00,
-                'organisations_count': 5
-            },
-            {
-                'Rate Bucket': '75-100%',
-                'N FACT': 300,
-                'Montant Ttc': 485000.00,
-                'Encaissement': 436500.00,
-                'organisations_count': 5
-            }
+        # Predefined collection rate ranges
+        taux_ranges = [
+            {"label": "0-25%", "min": 0, "max": 25},
+            {"label": "25-50%", "min": 25, "max": 50},
+            {"label": "50-75%", "min": 50, "max": 75},
+            {"label": "75-100%", "min": 75, "max": 100},
+            {"label": "100%+", "min": 100, "max": 200}
         ]
-    }
 
+        logger.info(f"Filters retrieved: {len(organisations)} orgs, {len(mois)} months, {len(types_facture)} types")
 
-@encaissement_analytics_router.get("/performance-metrics")
-async def get_performance_metrics(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Get key performance indicators and metrics (DOT-scoped)"""
-    # RBAC: Check user has appropriate access
-    from services.permission_service import PermissionService
-
-    # Ensure user has at least DOT_USER access
-    PermissionService.check_dot_user_permissions(current_user, db)
-
-    # Get user's DOT region for filtering
-    user_dot = PermissionService.get_user_dot_region(current_user, db)
-
-    logger.info(f"Performance metrics requested by user {current_user.id} (DOT: {user_dot or 'ALL'})")
-
-    return {
-        'kpis': {
-            'overall_collection_rate': 78.5,
-            'target_collection_rate': 85.0,
-            'performance_vs_target': -6.5,
-            'total_outstanding': 300000.00,
-            'collections_this_month': 120000.00,
-            'collections_last_month': 108000.00,
-            'month_over_month_growth': 11.1
-        },
-        'top_performers': [
-            {'org': 'DOT ORAN', 'rate': 90.0},
-            {'org': 'DOT ALGER', 'rate': 85.5},
-            {'org': 'DOT CONSTANTINE', 'rate': 82.0}
-        ],
-        'underperformers': [
-            {'org': 'DOT TLEMCEN', 'rate': 60.0},
-            {'org': 'DOT OUARGLA', 'rate': 65.2},
-            {'org': 'DOT BATNA', 'rate': 68.5}
-        ],
-        'trends': {
-            'improving': ['DOT ORAN', 'DOT SETIF'],
-            'declining': ['DOT TLEMCEN'],
-            'stable': ['DOT ALGER', 'DOT CONSTANTINE']
+        return {
+            "organisations": organisations,
+            "mois": mois,
+            "types_facture": types_facture,
+            "taux_ranges": taux_ranges
         }
-    }
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement filters: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve filters: {str(e)}")
 
 
-@encaissement_analytics_router.get("/export-report")
-async def export_analytics_report(
-    format: str = Query("excel", regex="^(excel|csv|pdf)$"),
-    include_charts: bool = Query(True),
+# ============================================================================
+# Pivot Table Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/pivot", response_model=EncaissementPivotResponse)
+async def get_pivot(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    group_by: str = Query("organisation", regex="^(organisation|month|type|org_month)$"),
+    metric: str = Query("montant_ttc", regex="^(montant_ttc|encaissement|taux|count)$"),
+    organisation: Optional[List[str]] = Query(None),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None
 ):
-    """Export analytics report in various formats (Requires can_export_analytics permission)"""
-    # RBAC: Require can_export_analytics permission
-    from services.permission_service import PermissionService
-    PermissionService.require_permission(current_user, db, "can_export_analytics")
+    """
+    Get encaissement data as a pivot table with dynamic grouping
 
-    logger.info(f"Analytics report export requested by user {current_user.id} in {format} format")
+    Supports pivot operations on encaissement data with flexible grouping dimensions.
 
-    # This would generate actual files in production
-    return {
-        'message': f'Report export initiated in {format} format',
-        'format': format,
-        'include_charts': include_charts,
-        'estimated_completion': '2-3 minutes',
-        'download_url': f'/api/encaissement/download-report/{current_user.id}',
-        'expires_at': '2024-01-01T23:59:59Z'
-    }
+    Parameters:
+    - group_by: Grouping dimension (organisation, month, type, org_month)
+    - metric: Metric to aggregate (montant_ttc, encaissement, taux, count)
+    - organisation: Optional list of organizations to filter
+    - start_date: Optional start date
+    - end_date: Optional end date
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build base query
+        query = db.query(EncaissementARDot)
+
+        # Apply filters
+        if organisation:
+            query = query.filter(EncaissementARDot.organisation.in_(organisation))
+        if start_date:
+            query = query.filter(EncaissementARDot.date_fact >= start_date)
+        if end_date:
+            query = query.filter(EncaissementARDot.date_fact <= end_date)
+
+        records = query.all()
+
+        # Initialize pivot data structure
+        pivot_data = {}
+        summary = {}
+
+        # Metric definitions
+        metric_config = {
+            "montant_ttc": lambda x: sum(float(r.montant_ttc or 0) for r in x),
+            "encaissement": lambda x: sum(float(r.encaissement or 0) for r in x),
+            "taux": lambda x: sum(float(r.taux_encaissement or 0) for r in x) / len(x) if x else 0,
+            "count": lambda x: len(x)
+        }
+
+        metric_func = metric_config[metric]
+
+        # Group by organisation
+        if group_by == "organisation":
+            dimensions = ["organisation"]
+            grouped = {}
+            for record in records:
+                key = record.organisation or "Unknown"
+                if key not in grouped:
+                    grouped[key] = []
+                grouped[key].append(record)
+
+            for key in sorted(grouped.keys()):
+                value = metric_func(grouped[key])
+                pivot_data[key] = float(value) if not isinstance(value, float) else value
+
+            all_values = [metric_func(v) for v in grouped.values()]
+            summary[metric] = sum(all_values) if metric != "taux" else (sum(all_values) / len(all_values) if all_values else 0)
+
+        # Group by month
+        elif group_by == "month":
+            from collections import defaultdict
+            dimensions = ["month"]
+            grouped = defaultdict(list)
+
+            for record in records:
+                if record.mois:
+                    grouped[record.mois].append(record)
+
+            for month in sorted(grouped.keys()):
+                value = metric_func(grouped[month])
+                pivot_data[month] = float(value) if not isinstance(value, float) else value
+
+            all_values = [metric_func(v) for v in grouped.values()]
+            summary[metric] = sum(all_values) if metric != "taux" else (sum(all_values) / len(all_values) if all_values else 0)
+
+        # Group by type
+        elif group_by == "type":
+            dimensions = ["type"]
+            grouped = {}
+            for record in records:
+                key = record.typ_fact or "Unknown"
+                if key not in grouped:
+                    grouped[key] = []
+                grouped[key].append(record)
+
+            for key in sorted(grouped.keys()):
+                value = metric_func(grouped[key])
+                pivot_data[key] = float(value) if not isinstance(value, float) else value
+
+            all_values = [metric_func(v) for v in grouped.values()]
+            summary[metric] = sum(all_values) if metric != "taux" else (sum(all_values) / len(all_values) if all_values else 0)
+
+        # Group by org AND month (two-dimensional pivot)
+        elif group_by == "org_month":
+            from collections import defaultdict
+            dimensions = ["organisation", "month"]
+            grouped = defaultdict(lambda: defaultdict(list))
+
+            for record in records:
+                org = record.organisation or "Unknown"
+                if record.mois:
+                    grouped[org][record.mois].append(record)
+
+            for org in sorted(grouped.keys()):
+                pivot_data[org] = {}
+                for month in sorted(grouped[org].keys()):
+                    value = metric_func(grouped[org][month])
+                    pivot_data[org][month] = float(value) if not isinstance(value, float) else value
+
+            all_values = []
+            for org_data in pivot_data.values():
+                if isinstance(org_data, dict):
+                    all_values.extend(org_data.values())
+
+            summary[metric] = sum(all_values) if metric != "taux" else (sum(all_values) / len(all_values) if all_values else 0)
+
+        logger.info(f"Generated pivot: group_by={group_by}, metric={metric}")
+
+        return {
+            "dimensions": dimensions,
+            "aggregations": [metric],
+            "data": pivot_data,
+            "summary": summary
+        }
+
+    except Exception as e:
+        logger.error(f"Error generating encaissement pivot: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate pivot: {str(e)}")

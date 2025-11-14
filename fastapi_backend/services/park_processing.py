@@ -357,17 +357,18 @@ class ParkDataProcessor:
                     pd.to_datetime(
                         df[col], format='%d.%m.%Y %H:%M:%S', errors='coerce')
                 )
-                # Finally, flexible parsing without dayfirst for remaining values
+                # Finally, flexible parsing with dayfirst=True for European date format (DD.MM.YYYY)
                 df[col] = parsed.fillna(
-                    pd.to_datetime(df[col], errors='coerce', dayfirst=False)
+                    pd.to_datetime(df[col], errors='coerce', dayfirst=True)
                 )
 
         # Clean numeric columns
         rental_fees_column = self._find_column(
             df, ['Rental Fees', 'abonnement'])
         if rental_fees_column:
+            # Convert comma to dot for decimal separator before converting to numeric
             df[rental_fees_column] = pd.to_numeric(
-                df[rental_fees_column], errors='coerce')
+                df[rental_fees_column].astype(str).str.replace(",", "."), errors='coerce')
 
         # Remove rows with missing critical data
         customer_code_column = self._find_column(df, ['Customer code', 'NCLI'])
@@ -632,12 +633,15 @@ class ParkDataProcessor:
             return None
         try:
             if isinstance(value, str):
+                # Handle "UNKNOWN" string values
+                if value.strip().upper() == "UNKNOWN":
+                    return None
                 # Try standard ISO format first
                 try:
                     return pd.to_datetime(value, format='%Y-%m-%d', errors='raise').date()
                 except:
-                    # Fallback to flexible parsing
-                    return pd.to_datetime(value, dayfirst=False, errors='raise').date()
+                    # Fallback to flexible parsing with dayfirst=True for European format (DD.MM.YYYY)
+                    return pd.to_datetime(value, dayfirst=True, errors='raise').date()
             elif hasattr(value, 'date'):
                 return value.date()
             return None
@@ -649,6 +653,9 @@ class ParkDataProcessor:
         if pd.isna(value) or value is None:
             return None
         try:
+            # Convert string value, handling comma as decimal separator
+            if isinstance(value, str):
+                value = value.strip().replace(",", ".")
             return float(value)
         except:
             return None
