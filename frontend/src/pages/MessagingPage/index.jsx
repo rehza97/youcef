@@ -250,6 +250,7 @@ const MessagingPage = () => {
 
       console.log("🔍 Creating conversation with data:", conversationData);
       console.log("🔍 Selected user:", selectedUser);
+      console.log("🔍 User ID type:", typeof selectedUser.id, "Value:", selectedUser.id);
 
       const response = await apiCreateConversation(conversationData);
 
@@ -259,8 +260,23 @@ const MessagingPage = () => {
       toast.success("Conversation créée avec succès");
     } catch (error) {
       console.error("🚨 Create conversation error:", error);
-      console.error("🚨 Error response:", error.response?.data);
+      console.error("🚨 Full error response:", error.response?.data);
       console.error("🚨 Error status:", error.response?.status);
+
+      // Extract detailed validation errors
+      if (error.response?.data?.detail) {
+        const details = error.response.data.detail;
+        if (Array.isArray(details)) {
+          details.forEach((detail) => {
+            console.error("🚨 Validation Error:", {
+              field: detail.loc?.[1] || detail.loc?.join('.'),
+              message: detail.msg,
+              type: detail.type,
+              input: detail.input
+            });
+          });
+        }
+      }
 
       handleApiError(error, {
         showToast: true,

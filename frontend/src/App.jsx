@@ -23,12 +23,14 @@ import GlobalProcessingIndicator from "./components/GlobalProcessingIndicator";
 
 // Lazy-loaded Pages for code splitting
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 const RolesPage = lazy(() => import("./pages/RolesPage"));
 const ProtectedPage = lazy(() => import("./pages/ProtectedPage"));
 const ProfilePage = lazy(() => import("./pages/ProfilePage"));
 const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
 const MessagingPage = lazy(() => import("./pages/MessagingPage"));
+const SecureMessagingPage = lazy(() => import("./pages/SecureMessagingPage"));
 const ChangePasswordPage = lazy(() => import("./pages/ChangePasswordPage"));
 const FilesPage = lazy(() => import("./pages/FilesPage"));
 const FilePreviewPage = lazy(() => import("./pages/FilePreviewPage"));
@@ -144,6 +146,16 @@ const AppContent = () => {
             }
           />
           <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <PermissionRoute permission="can_manage_rbac">
+                  <AdminDashboard />
+                </PermissionRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/users"
             element={
               <ProtectedRoute>
@@ -196,6 +208,14 @@ const AppContent = () => {
             element={
               <ProtectedRoute>
                 <MessagingPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/secure-messaging"
+            element={
+              <ProtectedRoute>
+                <SecureMessagingPage />
               </ProtectedRoute>
             }
           />

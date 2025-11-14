@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MultiSelect } from "@/components/ui/multi-select";
 import {
   EnhancedMultiSeriesBarChart,
   CombinedBarChart,
@@ -11,6 +12,7 @@ import {
   getRevenueOverview,
   getRevenueByAccount,
   getRevenueByOrg,
+  getRevenueFilters,
   exportRevenueData,
 } from "../../services/api";
 import { Download, RefreshCw } from "lucide-react";
@@ -43,7 +45,12 @@ const RevenuePage = () => {
   });
   const [byAccount, setByAccount] = useState([]);
   const [byOrg, setByOrg] = useState([]);
-  const [filters, setFilters] = useState({ start_date: "", end_date: "" });
+  const [filters, setFilters] = useState({
+    start_date: "",
+    end_date: "",
+    org_name: []
+  });
+  const [availableDots, setAvailableDots] = useState([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -61,7 +68,21 @@ const RevenuePage = () => {
     }
   };
 
+  const fetchFilters = async () => {
+    try {
+      const res = await getRevenueFilters();
+      const dots = res.data.dots || [];
+      setAvailableDots(dots.map((dot) => ({
+        id: typeof dot === 'string' ? dot : dot.name || dot,
+        name: typeof dot === 'string' ? dot : dot.name || dot,
+      })));
+    } catch (err) {
+      console.error("Error fetching available DOTs:", err);
+    }
+  };
+
   useEffect(() => {
+    fetchFilters();
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -95,19 +116,30 @@ const RevenuePage = () => {
     }));
   }, [byOrg]);
 
-  const exportXlsx = async () => {
-    const res = await exportRevenueData({ ...filters, format: "xlsx" });
-    const blob = new Blob([res.data], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `revenue_export_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+  const exportData = async (format = "csv") => {
+    try {
+      const filterParams = { ...filters, format };
+      // Convert array to comma-separated string for API
+      if (Array.isArray(filterParams.org_name) && filterParams.org_name.length > 0) {
+        filterParams.org_name = filterParams.org_name.join(",");
+      }
+
+      const res = await exportRevenueData(filterParams);
+      const mimeType = format === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "text/csv";
+      const blob = new Blob([res.data], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `revenue_export_${new Date().toISOString().slice(0, 10)}.${format === 'xlsx' ? 'xlsx' : 'csv'}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Export error:", err);
+    }
   };
 
   return (
@@ -124,18 +156,39 @@ const RevenuePage = () => {
             Actualiser
           </Button>
           <Button
-            onClick={exportXlsx}
+            onClick={() => exportData("csv")}
+            className="bg-green-600 hover:bg-green-700"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            CSV
+          </Button>
+          <Button
+            onClick={() => exportData("xlsx")}
             className="bg-blue-600 hover:bg-blue-700"
           >
             <Download className="h-4 w-4 mr-2" />
-            Export Excel
+            Excel
           </Button>
         </div>
       </div>
 
       {/* Filters */}
       <Card>
-        <CardContent className="pt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <CardContent className="pt-6 grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div>
+            <Label>DOT (Organisation)</Label>
+            <MultiSelect
+              options={availableDots.map((dot) => ({
+                label: dot.name,
+                value: dot.id,
+              }))}
+              selected={filters.org_name}
+              onChange={(values) =>
+                setFilters((f) => ({ ...f, org_name: values }))
+              }
+              placeholder="Tous les DOTs"
+            />
+          </div>
           <div>
             <Label>Date début</Label>
             <Input

@@ -67,6 +67,16 @@ class CreanceByProductResponse(BaseModel):
     taux_creance: Optional[float]
 
 
+class CreanceByCustLevelResponse(BaseModel):
+    """Response schema for customer level (CUST_LEV2) aggregations"""
+    cust_lev2: str
+    nombre_lignes: int
+    total_creance_brut: float
+    total_creance_net: float
+    total_invoice_amt: float
+    taux_creance: Optional[float]
+
+
 class CreanceOverviewResponse(BaseModel):
     """Response schema for overview analytics"""
     total_creance_brut: float
@@ -403,6 +413,75 @@ async def get_by_product(
     except Exception as e:
         logger.error(f"Error getting créance by product: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve by product: {str(e)}")
+
+
+@creance_analytics_router.get("/by-cust-level", response_model=List[CreanceByCustLevelResponse])
+async def get_by_cust_level(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    dot: Optional[List[str]] = Query(None),
+    year: Optional[str] = None
+):
+    """
+    Get créance data grouped by customer level (CUST_LEV2)
+
+    Returns customer-level aggregations with créance amounts and rates.
+
+    Parameters:
+    - dot: Optional list of DOTs to filter
+    - year: Optional year to filter
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(CreancePeriodiqueDot)
+
+        # Apply filters
+        if dot:
+            query = query.filter(CreancePeriodiqueDot.dot.in_(dot))
+        if year:
+            query = query.filter(CreancePeriodiqueDot.annee == year)
+
+        # Group by customer level 2
+        results = query.with_entities(
+            CreancePeriodiqueDot.cust_lev2,
+            func.count(CreancePeriodiqueDot.id).label('nombre_lignes'),
+            func.sum(CreancePeriodiqueDot.creance_brut).label('total_creance_brut'),
+            func.sum(CreancePeriodiqueDot.creance_net).label('total_creance_net'),
+            func.sum(CreancePeriodiqueDot.invoice_amt).label('total_invoice_amt')
+        ).filter(
+            CreancePeriodiqueDot.cust_lev2.isnot(None)
+        ).group_by(
+            CreancePeriodiqueDot.cust_lev2
+        ).order_by(
+            func.sum(CreancePeriodiqueDot.creance_net).desc()
+        ).all()
+
+        # Build response
+        response = []
+        for row in results:
+            total_invoice = float(row.total_invoice_amt or 1)
+            taux = (float(row.total_creance_net or 0) / total_invoice * 100) if total_invoice > 0 else 0
+
+            response.append(CreanceByCustLevelResponse(
+                cust_lev2=row.cust_lev2 or "Unknown",
+                nombre_lignes=int(row.nombre_lignes),
+                total_creance_brut=float(row.total_creance_brut or 0),
+                total_creance_net=float(row.total_creance_net or 0),
+                total_invoice_amt=float(row.total_invoice_amt or 0),
+                taux_creance=float(taux)
+            ))
+
+        logger.info(f"By customer level retrieved: {len(response)} customer levels")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting créance by customer level: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by customer level: {str(e)}")
 
 
 # ============================================================================

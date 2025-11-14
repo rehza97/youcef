@@ -10,7 +10,17 @@
       "Bash(docker-compose ps:*)",
       "Bash(docker-compose restart:*)",
       "Bash(tree:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(find:*)",
+      "Bash(python3 -m py_compile:*)",
+      "Bash(done)",
+      "Bash(/tmp/all_endpoints_detailed.json)",
+      "Bash(cat:*)",
+      "Bash(/Users/fathallah/projects/youcef/DETAILED_USED_ENDPOINTS.md)",
+      "Bash(/Users/fathallah/projects/youcef/DETAILED_UNUSED_ENDPOINTS.md)",
+      "Bash(python3:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

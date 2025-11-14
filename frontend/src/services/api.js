@@ -467,6 +467,83 @@ export const addReaction = (messageId, reactionType) => {
   });
 };
 
+// Get Message with Reactions
+export const getMessageWithReactions = (messageId) => {
+  if (!messageId) return Promise.reject(new Error("Message ID is required"));
+  return api.get(`/api/messages/messages/${messageId}/with-reactions`);
+};
+
+// Get all reactions for a message
+export const getMessageReactions = (messageId) => {
+  if (!messageId) return Promise.reject(new Error("Message ID is required"));
+  return api.get(`/api/messages/messages/${messageId}/reactions`);
+};
+
+// Remove a specific reaction
+export const removeReaction = (messageId, reactionId) => {
+  if (!messageId || !reactionId) {
+    return Promise.reject(new Error("Message ID and reaction ID are required"));
+  }
+  return api.delete(`/api/messages/messages/${messageId}/reactions/${reactionId}`);
+};
+
+// Download file from message
+export const downloadMessageFile = (messageId) => {
+  if (!messageId) return Promise.reject(new Error("Message ID is required"));
+  return api.get(`/api/messages/messages/${messageId}/download-file`, {
+    responseType: "blob",
+  });
+};
+
+// Get file info from message
+export const getMessageFileInfo = (messageId) => {
+  if (!messageId) return Promise.reject(new Error("Message ID is required"));
+  return api.get(`/api/messages/messages/${messageId}/file-info`);
+};
+
+// Broadcast message to all users
+export const broadcastMessage = (broadcastData) => {
+  if (!broadcastData || !broadcastData.content) {
+    return Promise.reject(new Error("Broadcast data and content are required"));
+  }
+  return api.post("/api/admin/broadcast/messages/all-users", broadcastData);
+};
+
+// Secure Messaging endpoints
+export const editMessage = (messageId, data) => {
+  if (!messageId || !data) {
+    return Promise.reject(new Error("Message ID and data are required"));
+  }
+  return api.put(`/api/secure-messaging/messages/${messageId}`, data);
+};
+
+export const getSecureConversationMessages = (conversationId, params = {}) => {
+  if (!conversationId) {
+    return Promise.reject(new Error("Conversation ID is required"));
+  }
+  return api.get(
+    `/api/secure-messaging/conversations/${conversationId}/messages`,
+    { params }
+  );
+};
+
+export const getConversationParticipants = (conversationId) => {
+  if (!conversationId) {
+    return Promise.reject(new Error("Conversation ID is required"));
+  }
+  return api.get(
+    `/api/secure-messaging/conversations/${conversationId}/participants`
+  );
+};
+
+// WebSocket Conversation Subscribers
+export const getConversationSubscribers = (conversationId) => {
+  if (!conversationId) {
+    return Promise.reject(new Error("Conversation ID is required"));
+  }
+  return api.get(`/ws/conversations/${conversationId}/subscribers`);
+};
+
 // Block/Unblock Users
 export const blockUser = async (blockedId, reason = "") => {
   const response = await api.post("/api/blocks/", {
@@ -639,6 +716,89 @@ export const getAllFiles = (params = {}) => {
 export const adminDeleteFile = (fileId) => {
   if (!fileId) return Promise.reject(new Error("File ID is required"));
   return api.delete(`/api/files/admin/${fileId}`);
+};
+
+// Broadcast Analytics API methods (NEW)
+export const getBroadcastAnalytics = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.start_date) queryParams.append("start_date", params.start_date);
+  if (params.end_date) queryParams.append("end_date", params.end_date);
+  return api.get(`/api/admin/broadcast/analytics/summary?${queryParams.toString()}`);
+};
+
+// Broadcast Files API methods (NEW)
+export const getBroadcastFiles = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.skip) queryParams.append("skip", params.skip);
+  if (params.limit) queryParams.append("limit", params.limit);
+  return api.get(`/api/admin/broadcast/files?${queryParams.toString()}`);
+};
+
+export const uploadBroadcastFile = (formData) => {
+  if (!formData) return Promise.reject(new Error("Form data is required"));
+  return api.post("/api/admin/broadcast/files", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 60000,
+  });
+};
+
+export const deleteBroadcastFile = (fileId) => {
+  if (!fileId) return Promise.reject(new Error("File ID is required"));
+  return api.delete(`/api/admin/broadcast/files/${fileId}`);
+};
+
+export const downloadBroadcastFile = (fileId) => {
+  if (!fileId) return Promise.reject(new Error("File ID is required"));
+  return api.get(`/api/admin/broadcast/files/${fileId}/download`, {
+    responseType: "blob",
+  });
+};
+
+// File Distribution API methods (NEW)
+export const broadcastFileToAllUsers = (data) => {
+  if (!data || !data.file_id) {
+    return Promise.reject(new Error("File ID is required"));
+  }
+  return api.post("/api/admin/broadcast/files/all-users", data);
+};
+
+export const broadcastFileToDot = (dotId, data) => {
+  if (!dotId) return Promise.reject(new Error("DOT ID is required"));
+  if (!data || !data.file_id) {
+    return Promise.reject(new Error("File ID is required"));
+  }
+  return api.post(`/api/admin/broadcast/files/dot/${dotId}`, data);
+};
+
+export const broadcastFileToUsers = (data) => {
+  if (!data || !data.file_id || !data.user_ids) {
+    return Promise.reject(new Error("File ID and user IDs are required"));
+  }
+  return api.post("/api/admin/broadcast/files/users", data);
+};
+
+// Secure Files Admin API methods (NEW)
+export const getAllAdminFiles = (params = {}) => {
+  const queryParams = new URLSearchParams();
+  if (params.skip) queryParams.append("skip", params.skip);
+  if (params.limit) queryParams.append("limit", params.limit);
+  if (params.security_level) queryParams.append("security_level", params.security_level);
+  return api.get(`/api/secure-files/admin/all-files?${queryParams.toString()}`);
+};
+
+export const downloadAdminFile = (fileId) => {
+  if (!fileId) return Promise.reject(new Error("File ID is required"));
+  return api.get(`/api/secure-files/admin/all-files/${fileId}/download`, {
+    responseType: "blob",
+  });
+};
+
+// Helper function to get available DOTs
+export const getAllDots = () => {
+  return api.get("/api/parks/").catch(() => {
+    // Fallback if parks endpoint not available
+    return Promise.resolve({ data: [] });
+  });
 };
 
 // Health and general API methods
@@ -820,6 +980,23 @@ export const getRevenueByAccount = (params = {}) => {
   return api.get(
     `/api/revenue/by-account${query.toString() ? `?${query.toString()}` : ""}`
   );
+};
+
+export const getRevenueFilters = async () => {
+  // Return available filter options for revenue dashboard
+  // Returns available DOTs/organizations for filtering
+  try {
+    const response = await api.get("/api/parks/");
+    // Wrap the parks array in a dots property for compatibility
+    return {
+      data: {
+        dots: response.data || []
+      }
+    };
+  } catch (error) {
+    // Fallback if parks endpoint not available
+    return { data: { dots: [] } };
+  }
 };
 
 export const exportRevenueData = (params = {}) => {

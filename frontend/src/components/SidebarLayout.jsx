@@ -26,6 +26,7 @@ import {
   BarChart3,
   Bell,
   MessageSquare,
+  Lock,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -124,6 +125,17 @@ export default function SidebarLayout() {
                           </Link>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
+                      <SidebarMenuSubItem>
+                        <SidebarMenuSubButton
+                          asChild
+                          isActive={location.pathname === "/admin"}
+                        >
+                          <Link to="/admin">
+                            <Shield className="h-4 w-4" />
+                            <span>Admin Dashboard</span>
+                          </Link>
+                        </SidebarMenuSubButton>
+                      </SidebarMenuSubItem>
                     </SidebarMenuSub>
                   </SidebarGroupContent>
                 </SidebarGroup>
@@ -168,6 +180,17 @@ export default function SidebarLayout() {
                         <Link to="/messaging">
                           <MessageSquare className="h-4 w-4" />
                           <span>Messagerie</span>
+                        </Link>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                    <SidebarMenuSubItem>
+                      <SidebarMenuSubButton
+                        asChild
+                        isActive={location.pathname === "/secure-messaging"}
+                      >
+                        <Link to="/secure-messaging">
+                          <Lock className="h-4 w-4" />
+                          <span>Messagerie Sécurisée</span>
                         </Link>
                       </SidebarMenuSubButton>
                     </SidebarMenuSubItem>

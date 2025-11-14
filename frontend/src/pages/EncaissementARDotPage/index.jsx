@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MultiSelect } from "@/components/ui/multi-select";
 import {
   Select,
   SelectContent,
@@ -116,6 +117,7 @@ const EncaissementARDotPage = () => {
   // Filters
   const [filters, setFilters] = useState({
     year: new Date().getFullYear(),
+    organisations: [],
   });
 
   // Available metadata
@@ -216,16 +218,28 @@ const EncaissementARDotPage = () => {
   }, [dotAggregates]);
 
   /**
-   * Export data to Excel
+   * Export data to CSV or Excel
    */
-  const exportExcel = async () => {
+  const exportData = async (format = "csv") => {
     try {
-      const response = await exportEncaissementRecords({ format: "csv", year: filters.year });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const exportParams = {
+        format: format,
+        year: filters.year,
+      };
+      // Add organisations filter if selected
+      if (filters.organisations && filters.organisations.length > 0) {
+        exportParams.organisations = filters.organisations.join(",");
+      }
+
+      const response = await exportEncaissementRecords(exportParams);
+      const mimeType = format === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "text/csv";
+      const blob = new Blob([response.data], { type: mimeType });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `encaissement_ar_dot_export_${filters.year}_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `encaissement_ar_dot_export_${filters.year}_${new Date().toISOString().slice(0, 10)}.${format === 'xlsx' ? 'xlsx' : 'csv'}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -309,11 +323,18 @@ const EncaissementARDotPage = () => {
             Actualiser
           </Button>
           <Button
-            onClick={exportExcel}
+            onClick={() => exportData("csv")}
+            className="bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            CSV
+          </Button>
+          <Button
+            onClick={() => exportData("xlsx")}
             className="bg-blue-600 hover:bg-blue-700 text-white"
           >
             <Download className="h-4 w-4 mr-2" />
-            Export CSV
+            Excel
           </Button>
         </div>
       </div>
@@ -321,7 +342,7 @@ const EncaissementARDotPage = () => {
       {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
             <div>
               <Label>Année</Label>
               <Select
@@ -340,7 +361,23 @@ const EncaissementARDotPage = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="sm:col-span-3 flex items-end">
+            <div className="sm:col-span-3">
+              <Label>Organisation (DOT)</Label>
+              <MultiSelect
+                options={
+                  availableOrganisations.map((org) => ({
+                    label: org,
+                    value: org,
+                  })) || []
+                }
+                selected={filters.organisations}
+                onChange={(values) =>
+                  setFilters((f) => ({ ...f, organisations: values }))
+                }
+                placeholder="Toutes les organisations"
+              />
+            </div>
+            <div className="flex items-end">
               <Button onClick={() => fetchData()} className="w-full sm:w-auto">
                 Appliquer les filtres
               </Button>

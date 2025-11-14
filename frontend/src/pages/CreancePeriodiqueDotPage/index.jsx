@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MultiSelect } from "@/components/ui/multi-select";
 import {
   Select,
   SelectContent,
@@ -105,6 +106,8 @@ const CreancePeriodiqueDotPage = () => {
   // Filters
   const [filters, setFilters] = useState({
     year: new Date().getFullYear(),
+    dots: [],
+    products: [],
   });
 
   // Available metadata
@@ -213,16 +216,33 @@ const CreancePeriodiqueDotPage = () => {
   }, [byCustLev2Aggregates]);
 
   /**
-   * Export data to CSV
+   * Export data to CSV or Excel
    */
-  const exportCSV = async () => {
+  const exportData = async (format = "csv") => {
     try {
-      const response = await exportCreanceRecords({ format: "csv" });
-      const blob = new Blob([response.data], { type: "text/csv" });
+      const exportParams = {
+        format: format,
+      };
+      // Add filter parameters if selected
+      if (filters.dots && filters.dots.length > 0) {
+        exportParams.dots = filters.dots.join(",");
+      }
+      if (filters.products && filters.products.length > 0) {
+        exportParams.products = filters.products.join(",");
+      }
+      if (filters.year) {
+        exportParams.year = filters.year;
+      }
+
+      const response = await exportCreanceRecords(exportParams);
+      const mimeType = format === "xlsx"
+        ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        : "text/csv";
+      const blob = new Blob([response.data], { type: mimeType });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `creance_periodique_dot_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      a.download = `creance_periodique_dot_export_${new Date().toISOString().slice(0, 10)}.${format === 'xlsx' ? 'xlsx' : 'csv'}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -286,14 +306,89 @@ const CreancePeriodiqueDotPage = () => {
             Actualiser
           </Button>
           <Button
-            onClick={exportCSV}
+            onClick={() => exportData("csv")}
+            className="bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Download className="h-4 w-4 mr-2" />
+            CSV
+          </Button>
+          <Button
+            onClick={() => exportData("xlsx")}
             className="bg-blue-600 hover:bg-blue-700 text-white"
           >
             <Download className="h-4 w-4 mr-2" />
-            Export CSV
+            Excel
           </Button>
         </div>
       </div>
+
+      {/* Filters */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+            <div>
+              <Label>Année</Label>
+              <Select
+                value={filters.year.toString()}
+                onValueChange={(value) =>
+                  setFilters((f) => ({ ...f, year: parseInt(value) }))
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableYears.map((year) => (
+                    <SelectItem key={year} value={year.toString()}>
+                      {year}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>DOT</Label>
+              <MultiSelect
+                options={
+                  availableDots.map((dot) => ({
+                    label: dot,
+                    value: dot,
+                  })) || []
+                }
+                selected={filters.dots}
+                onChange={(values) =>
+                  setFilters((f) => ({ ...f, dots: values }))
+                }
+                placeholder="Tous les DOTs"
+              />
+            </div>
+
+            <div>
+              <Label>Produit</Label>
+              <MultiSelect
+                options={
+                  availableProducts.map((prod) => ({
+                    label: prod,
+                    value: prod,
+                  })) || []
+                }
+                selected={filters.products}
+                onChange={(values) =>
+                  setFilters((f) => ({ ...f, products: values }))
+                }
+                placeholder="Tous les produits"
+              />
+            </div>
+
+            <div className="flex items-end">
+              <Button onClick={() => fetchData()} className="w-full">
+                Appliquer les filtres
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* VISUALIZATION 1: OVERVIEW - KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
