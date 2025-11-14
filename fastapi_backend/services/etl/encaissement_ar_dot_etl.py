@@ -461,14 +461,19 @@ class EncaissementARDotETL(BaseETLProcessor):
             duplicate_count = duplicates_mask.sum()
 
             if duplicate_count > 0:
-                # Set amounts to 0.00 for duplicates
-                amount_columns = ['montant_ht', 'montant_taxe', 'montant_ttc', 'chiffre_aff_exe']
+                # Set amounts to 0.00 for duplicates (including encaissement - critical for collection tracking)
+                amount_columns = ['montant_ht', 'montant_taxe', 'montant_ttc', 'chiffre_aff_exe', 'encaissement']
                 for col in amount_columns:
                     if col in transformed_df.columns:
                         transformed_df.loc[duplicates_mask, col] = 0.00
 
-                logger.info(f"🔍 Found {duplicate_count} duplicate entries (set amounts to 0.00)")
+                # Mark duplicates for tracking
+                transformed_df['is_duplicate'] = duplicates_mask
+
+                logger.info(f"🔍 Found {duplicate_count} duplicate entries (set all amounts to 0.00)")
+                logger.info(f"   ✅ Encaissement amounts zeroed out for duplicates to prevent double-counting")
                 step.add_warning(f"Found {duplicate_count} duplicate entries based on composite key")
+                step.add_warning(f"Encaissement amounts zeroed out for all duplicate entries")
 
             # RULE 7: Calculate Taux d'encaissement
             if 'montant_ttc' in transformed_df.columns and 'encaissement' in transformed_df.columns:
