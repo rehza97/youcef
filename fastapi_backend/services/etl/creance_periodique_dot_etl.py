@@ -108,18 +108,23 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
             result["steps_completed"].append("transform")
             logger.info(f"Transform complete: {len(df)} rows")
 
-            # Step 5: Generate Aggregates
+            # Step 5: Detect Anomalies (empty/null field detection)
+            df = self._detect_anomalies_step(df, result)
+            result["steps_completed"].append("detect_anomalies")
+            logger.info(f"Anomaly detection complete: {len(df)} rows")
+
+            # Step 6: Generate Aggregates
             aggregates = self._generate_aggregates_step(df, result)
             result["steps_completed"].append("generate_aggregates")
             result["statistics"]["aggregates_generated"] = len(aggregates)
             logger.info(f"Generated {len(aggregates)} aggregate views")
 
-            # Step 6: Output
+            # Step 7: Output
             output_path = self._output_step(df, result)
             result["output_file"] = output_path
             result["steps_completed"].append("output")
 
-            # Step 7: Save to Database (if session provided)
+            # Step 8: Save to Database (if session provided)
             if db_session:
                 save_result = self.save_to_database(df, aggregates, file_upload_id, db_session, result)
                 result["database_save"] = save_result
@@ -488,9 +493,77 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
 
         return transformed_df
 
+    def _detect_anomalies_step(self, df: pd.DataFrame, result: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Step 5: Detect empty/null field anomalies in Créance data
+
+        Identifies records with missing critical fields and marks them for review.
+        Critical fields: DOT, CREANCE_NET, INVOICE_AMT, CUST_LEV1, PRODUIT
+        """
+        logger.info("🔍 Starting anomaly detection for empty/null fields")
+
+        anomaly_df = df.copy()
+        anomalies_count = 0
+
+        # Define critical fields that should not be empty
+        critical_fields = ['dot', 'creance_net', 'invoice_amt', 'cust_lev1', 'produit']
+
+        # Convert column names to lowercase for consistency
+        anomaly_df.columns = [col.lower() for col in anomaly_df.columns]
+
+        # Initialize anomaly flag column
+        anomaly_df['is_anomaly'] = False
+        anomaly_df['anomaly_reason'] = ''
+
+        # Check for missing critical fields
+        for critical_field in critical_fields:
+            if critical_field in anomaly_df.columns:
+                # Identify rows with null/empty values in this critical field
+                missing_mask = anomaly_df[critical_field].isna() | (anomaly_df[critical_field].astype(str).str.strip() == '')
+
+                # Update anomaly flag and reason
+                anomaly_df.loc[missing_mask, 'is_anomaly'] = True
+                anomaly_df.loc[missing_mask, 'anomaly_reason'] = anomaly_df.loc[missing_mask, 'anomaly_reason'].apply(
+                    lambda x: f"{x}; Missing {critical_field}" if x else f"Missing {critical_field}"
+                )
+
+                anomalies_count += missing_mask.sum()
+
+                if missing_mask.sum() > 0:
+                    logger.warning(f"⚠️ Found {missing_mask.sum()} records with missing '{critical_field}'")
+
+        # Additional anomaly checks
+        # Check for negative amounts
+        amount_fields = ['creance_net', 'creance_brut', 'invoice_amt', 'open_amt']
+        for amount_field in amount_fields:
+            if amount_field in anomaly_df.columns:
+                negative_mask = (anomaly_df[amount_field].astype(float, errors='ignore') < 0)
+
+                if isinstance(negative_mask, pd.Series):
+                    anomaly_df.loc[negative_mask, 'is_anomaly'] = True
+                    anomaly_df.loc[negative_mask, 'anomaly_reason'] = anomaly_df.loc[negative_mask, 'anomaly_reason'].apply(
+                        lambda x: f"{x}; Negative {amount_field}" if x else f"Negative {amount_field}"
+                    )
+
+                    if negative_mask.sum() > 0:
+                        logger.warning(f"⚠️ Found {negative_mask.sum()} records with negative '{amount_field}'")
+
+        # Log summary
+        total_anomalies = anomaly_df['is_anomaly'].sum()
+        result['statistics']['anomalies_detected'] = int(total_anomalies)
+
+        logger.info(f"✓ Anomaly detection complete:")
+        logger.info(f"  Total anomalies found: {total_anomalies}")
+        logger.info(f"  Anomaly rate: {(total_anomalies / len(anomaly_df) * 100):.2f}%")
+
+        if total_anomalies > 0:
+            result['warnings'].append(f"Found {total_anomalies} anomalous records during processing")
+
+        return anomaly_df
+
     def _generate_aggregates_step(self, df: pd.DataFrame, result: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Step 5: Generate aggregate views for dashboard
+        Step 6: Generate aggregate views for dashboard
 
         Creates 5 aggregate types:
         1. overview - Global KPIs
