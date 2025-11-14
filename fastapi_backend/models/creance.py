@@ -114,6 +114,7 @@ class CreanceAggregateView(Base):
     total_creance_brut = Column(Numeric(15, 2), nullable=True)
     total_creance_net = Column(Numeric(15, 2), nullable=True)  # Main KPI
     total_creance_ht = Column(Numeric(15, 2), nullable=True)
+    total_avoir_amt = Column(Numeric(15, 2), nullable=True)  # Credit note amounts
     nombre_lignes = Column(Integer, nullable=True)  # Number of records
 
     # For percentage calculations
