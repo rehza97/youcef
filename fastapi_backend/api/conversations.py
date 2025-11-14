@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 from pydantic import BaseModel
 
 from database.connection import get_db
@@ -92,9 +91,7 @@ async def create_conversation(
         conversation = Conversation(
             name=conversation_data.name,
             conversation_type=conversation_data.conversation_type,
-            conversation_metadata=conversation_data.conversation_metadata,
-            created_by=current_user.id,
-            created_at=datetime.utcnow()
+            conversation_metadata=conversation_data.conversation_metadata
         )
 
         db.add(conversation)
@@ -104,8 +101,7 @@ async def create_conversation(
         # Add creator as participant
         creator_participant = ConversationParticipant(
             conversation_id=conversation.id,
-            user_id=current_user.id,
-            joined_at=datetime.utcnow()
+            user_id=current_user.id
         )
         db.add(creator_participant)
 
@@ -114,8 +110,7 @@ async def create_conversation(
             if participant_id != current_user.id:  # Don't add creator twice
                 participant = ConversationParticipant(
                     conversation_id=conversation.id,
-                    user_id=participant_id,
-                    joined_at=datetime.utcnow()
+                    user_id=participant_id
                 )
                 db.add(participant)
 
@@ -138,8 +133,8 @@ async def create_conversation(
             "id": conversation.id,
             "name": conversation.name,
             "conversation_type": conversation.conversation_type,
-            "created_by": conversation.created_by,
-            "created_at": conversation.created_at.isoformat()
+            "created_by": current_user.id,
+            "created_at": conversation.created_at.isoformat() if conversation.created_at else None
         }
 
     except Exception as e:
@@ -212,10 +207,16 @@ async def update_conversation(
                 detail="Conversation not found"
             )
 
-        if conversation.created_by != current_user.id:
+        # Check if user is a participant and admin (or the only participant for direct conversations)
+        user_participant = db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == conversation_id,
+            ConversationParticipant.user_id == current_user.id
+        ).first()
+
+        if not user_participant or (conversation.conversation_type == "group" and not user_participant.is_admin):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only conversation creator can update"
+                detail="Only conversation admin can update this conversation"
             )
 
         # Update fields
@@ -223,8 +224,6 @@ async def update_conversation(
             conversation.name = conversation_data.name
         if conversation_data.conversation_metadata is not None:
             conversation.conversation_metadata = conversation_data.conversation_metadata
-
-        conversation.updated_at = datetime.utcnow()
 
         db.commit()
         db.refresh(conversation)
@@ -260,10 +259,16 @@ async def delete_conversation(
                 detail="Conversation not found"
             )
 
-        if conversation.created_by != current_user.id:
+        # Check if user is a participant
+        user_participant = db.query(ConversationParticipant).filter(
+            ConversationParticipant.conversation_id == conversation_id,
+            ConversationParticipant.user_id == current_user.id
+        ).first()
+
+        if not user_participant:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only conversation creator can delete"
+                detail="You are not a participant in this conversation"
             )
 
         # Delete conversation (cascades to participants and messages)
