@@ -199,8 +199,8 @@ const CreancePeriodiqueDotPage = () => {
   const produitChartData = useMemo(() => {
     return byProduitAggregates.map((item) => ({
       produit: item.produit || "N/A",
-      creance_net: item.total_creance_net,
-      creance_brut: item.total_creance_brut,
+      creance_net: parseFloat(item.total_creance_net) || 0,
+      creance_brut: parseFloat(item.total_creance_brut) || 0,
     }));
   }, [byProduitAggregates]);
 
@@ -210,8 +210,8 @@ const CreancePeriodiqueDotPage = () => {
   const custLev2ChartData = useMemo(() => {
     return byCustLev2Aggregates.map((item) => ({
       cust_lev2: item.cust_lev2 || "N/A",
-      creance_net: item.total_creance_net,
-      creance_brut: item.total_creance_brut,
+      creance_net: parseFloat(item.total_creance_net) || 0,
+      creance_brut: parseFloat(item.total_creance_brut) || 0,
     }));
   }, [byCustLev2Aggregates]);
 
@@ -482,11 +482,11 @@ const CreancePeriodiqueDotPage = () => {
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={produitChartData} layout="horizontal">
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="produit" type="category" width={120} />
+                <XAxis type="number" domain={[0, 'auto']} />
+                <YAxis dataKey="produit" type="category" width={150} />
                 <Tooltip content={renderBarTooltip} />
                 <Legend />
-                <Bar dataKey="creance_net" fill="#FFBB28" name="Créance NET" />
+                <Bar dataKey="creance_net" fill="#FFBB28" name="Créance NET" barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -504,11 +504,11 @@ const CreancePeriodiqueDotPage = () => {
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={custLev2ChartData} layout="horizontal">
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" />
-                <YAxis dataKey="cust_lev2" type="category" width={120} />
+                <XAxis type="number" domain={[0, 'auto']} />
+                <YAxis dataKey="cust_lev2" type="category" width={150} />
                 <Tooltip content={renderBarTooltip} />
                 <Legend />
-                <Bar dataKey="creance_net" fill="#FF8042" name="Créance NET" />
+                <Bar dataKey="creance_net" fill="#FF8042" name="Créance NET" barSize={20} />
               </BarChart>
             </ResponsiveContainer>
           </CardContent>

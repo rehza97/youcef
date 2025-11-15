@@ -575,15 +575,17 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
         aggregates = []
 
         # 1. Overview aggregate
+        # Note: Using keys WITHOUT 'total_' prefix to match database save expectations
         overview = {
             'view_type': 'overview',
-            'total_invoice_amt': float(df['invoice_amt'].sum() if 'invoice_amt' in df.columns else 0),
-            'total_open_amt': float(df['open_amt'].sum() if 'open_amt' in df.columns else 0),
-            'total_tax_amt': float(df['tax_amt'].sum() if 'tax_amt' in df.columns else 0),
-            'total_invoice_amt_ht': float(df['invoice_amt_ht'].sum() if 'invoice_amt_ht' in df.columns else 0),
-            'total_creance_brut': float(df['creance_brut'].sum() if 'creance_brut' in df.columns else 0),
-            'total_creance_net': float(df['creance_net'].sum() if 'creance_net' in df.columns else 0),
-            'total_creance_ht': float(df['creance_ht'].sum() if 'creance_ht' in df.columns else 0),
+            'invoice_amt': float(df['invoice_amt'].sum() if 'invoice_amt' in df.columns else 0),
+            'open_amt': float(df['open_amt'].sum() if 'open_amt' in df.columns else 0),
+            'tax_amt': float(df['tax_amt'].sum() if 'tax_amt' in df.columns else 0),
+            'invoice_amt_ht': float(df['invoice_amt_ht'].sum() if 'invoice_amt_ht' in df.columns else 0),
+            'creance_brut': float(df['creance_brut'].sum() if 'creance_brut' in df.columns else 0),
+            'creance_net': float(df['creance_net'].sum() if 'creance_net' in df.columns else 0),
+            'creance_ht': float(df['creance_ht'].sum() if 'creance_ht' in df.columns else 0),
+            'total_avoir_amt': float(df['avoir_amt'].sum() if 'avoir_amt' in df.columns else 0),
             'nombre_lignes': len(df)
         }
         aggregates.append(overview)
@@ -592,7 +594,9 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
         if 'dot' in df.columns and 'creance_net' in df.columns:
             by_dot = df.groupby('dot').agg({
                 'invoice_amt': 'sum',
+                'invoice_amt_ht': 'sum',
                 'open_amt': 'sum',
+                'tax_amt': 'sum',
                 'creance_brut': 'sum',
                 'creance_net': 'sum',
                 'creance_ht': 'sum'
@@ -605,8 +609,12 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
         if 'annee' in df.columns and 'creance_net' in df.columns:
             by_annee = df.groupby('annee').agg({
                 'invoice_amt': 'sum',
+                'invoice_amt_ht': 'sum',
+                'open_amt': 'sum',
+                'tax_amt': 'sum',
                 'creance_brut': 'sum',
-                'creance_net': 'sum'
+                'creance_net': 'sum',
+                'creance_ht': 'sum'
             }).reset_index(drop=False)
             by_annee['nombre_lignes'] = df.groupby('annee').size().values
             by_annee['view_type'] = 'by_annee'
@@ -616,8 +624,12 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
         if 'produit' in df.columns and 'creance_net' in df.columns:
             by_produit = df.groupby('produit').agg({
                 'invoice_amt': 'sum',
+                'invoice_amt_ht': 'sum',
+                'open_amt': 'sum',
+                'tax_amt': 'sum',
                 'creance_brut': 'sum',
-                'creance_net': 'sum'
+                'creance_net': 'sum',
+                'creance_ht': 'sum'
             }).reset_index(drop=False)
             by_produit['nombre_lignes'] = df.groupby('produit').size().values
             by_produit['view_type'] = 'by_produit'
@@ -627,8 +639,12 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
         if 'cust_lev2' in df.columns and 'creance_net' in df.columns:
             by_cust = df.groupby('cust_lev2').agg({
                 'invoice_amt': 'sum',
+                'invoice_amt_ht': 'sum',
+                'open_amt': 'sum',
+                'tax_amt': 'sum',
                 'creance_brut': 'sum',
-                'creance_net': 'sum'
+                'creance_net': 'sum',
+                'creance_ht': 'sum'
             }).reset_index(drop=False)
             by_cust['nombre_lignes'] = df.groupby('cust_lev2').size().values
             by_cust['view_type'] = 'by_cust_lev2'
@@ -780,6 +796,7 @@ class CreancePeriodiqueDotETL(BaseETLProcessor):
                         total_creance_brut=float(agg.get('creance_brut', 0)) if pd.notna(agg.get('creance_brut')) else None,
                         total_creance_net=float(agg.get('creance_net', 0)) if pd.notna(agg.get('creance_net')) else None,
                         total_creance_ht=float(agg.get('creance_ht', 0)) if pd.notna(agg.get('creance_ht')) else None,
+                        total_avoir_amt=float(agg.get('total_avoir_amt', 0)) if pd.notna(agg.get('total_avoir_amt')) else None,
                         nombre_lignes=int(agg.get('nombre_lignes', 0)) if pd.notna(agg.get('nombre_lignes')) else None,
                     )
 

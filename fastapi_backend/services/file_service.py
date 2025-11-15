@@ -474,6 +474,22 @@ class FileService:
         except Exception as e:
             logger.warning(f"Error deleting park records: {e}")
 
+        # Delete related creance aggregate views first (due to foreign key constraint)
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'creance_aggregate_views')"
+            )).scalar()
+
+            if result:
+                creance_agg_count = db.execute(text(
+                    "DELETE FROM creance_aggregate_views WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if creance_agg_count > 0:
+                    logger.info(
+                        f"Deleted {creance_agg_count} creance aggregate view records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting creance aggregate view records: {e}")
+
         # Delete related creance periodique records if table exists
         try:
             # Check if table exists first
@@ -491,6 +507,38 @@ class FileService:
                         f"Deleted {creance_count} creance records related to file {file_id}")
         except Exception as e:
             logger.warning(f"Error deleting creance records: {e}")
+
+        # Delete related encaissement aggregate views first (due to foreign key constraint)
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'encaissement_aggregate_views')"
+            )).scalar()
+
+            if result:
+                agg_views_count = db.execute(text(
+                    "DELETE FROM encaissement_aggregate_views WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if agg_views_count > 0:
+                    logger.info(
+                        f"Deleted {agg_views_count} encaissement aggregate view records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting encaissement aggregate view records: {e}")
+
+        # Delete related encaissement anomalies (due to foreign key constraint)
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'encaissement_anomalies')"
+            )).scalar()
+
+            if result:
+                anomalies_count = db.execute(text(
+                    "DELETE FROM encaissement_anomalies WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if anomalies_count > 0:
+                    logger.info(
+                        f"Deleted {anomalies_count} encaissement anomaly records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting encaissement anomaly records: {e}")
 
         # Delete related encaissement records if table exists
         try:

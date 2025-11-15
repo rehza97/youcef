@@ -72,10 +72,39 @@ const RevenuePage = () => {
     try {
       const res = await getRevenueFilters();
       const dots = res.data.dots || [];
-      setAvailableDots(dots.map((dot) => ({
-        id: typeof dot === 'string' ? dot : dot.name || dot,
-        name: typeof dot === 'string' ? dot : dot.name || dot,
-      })));
+
+      // Extract unique DOT names from the data
+      // The API returns park objects with a 'dot' field containing the DOT relationship
+      const uniqueDots = new Set();
+      dots.forEach((item) => {
+        let dotName = null;
+
+        // Handle different possible structures
+        if (typeof item === 'string') {
+          dotName = item;
+        } else if (item && item.dot && typeof item.dot === 'object' && item.dot.name) {
+          // If dot is an object with a name property
+          dotName = item.dot.name;
+        } else if (item && item.name) {
+          // If the item itself has a name property
+          dotName = item.name;
+        } else if (item && item.org_name) {
+          // If it's using org_name instead
+          dotName = item.org_name;
+        }
+
+        if (dotName && typeof dotName === 'string') {
+          uniqueDots.add(dotName);
+        }
+      });
+
+      // Convert to array and create option objects
+      const dotOptions = Array.from(uniqueDots).map((dotName) => ({
+        id: dotName,
+        name: dotName,
+      }));
+
+      setAvailableDots(dotOptions);
     } catch (err) {
       console.error("Error fetching available DOTs:", err);
     }

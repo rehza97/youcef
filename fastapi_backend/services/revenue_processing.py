@@ -526,11 +526,13 @@ class RevenueDataProcessor:
         return df
 
     def _clean_org_name_dot(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Remove 'DOT_' prefix from Org Name"""
+        """Remove 'DOT_' and 'DOT ' prefix from Org Name"""
         org_name_col = self._find_column(df, ['Org Name', 'organisation'])
         if org_name_col:
-            df.loc[:, org_name_col] = df[org_name_col].astype(
-                str).str.replace('DOT_', '', case=False)
+            # Remove both "DOT_" and "DOT " (with underscore or space)
+            # Use regex to match at the beginning of the string
+            df.loc[:, org_name_col] = df[org_name_col].astype(str).str.replace(
+                r'^DOT[_\s]+', '', case=False, regex=True).str.strip()
         return df
 
     def _clean_org_name_separators(self, df: pd.DataFrame) -> pd.DataFrame:
