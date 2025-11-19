@@ -6,6 +6,8 @@ import {
   CommandEmpty,
   CommandGroup,
   CommandInput,
+  CommandItem,
+  CommandList,
 } from "@/components/ui/command";
 import {
   Popover,
@@ -30,6 +32,7 @@ interface MultiSelectProps {
   onChange: (values: string[]) => void;
   placeholder?: string;
   className?: string;
+  showSelectAll?: boolean;
 }
 
 export function MultiSelect({
@@ -38,6 +41,7 @@ export function MultiSelect({
   onChange,
   placeholder = "Sélectionner...",
   className,
+  showSelectAll = true,
 }: MultiSelectProps) {
   const [open, setOpen] = React.useState(false);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
@@ -54,7 +58,20 @@ export function MultiSelect({
     } else {
       onChange([...selected, value]);
     }
+    // Don't close the popover for multi-select - keep it open
   };
+
+  const handleSelectAll = () => {
+    if (selected.length === options.length) {
+      // Deselect all
+      onChange([]);
+    } else {
+      // Select all
+      onChange(options.map((opt) => opt.value));
+    }
+  };
+
+  const allSelected = options.length > 0 && selected.length === options.length;
 
   const selectedOptions = options.filter((option) =>
     selected.includes(option.value)
@@ -84,15 +101,26 @@ export function MultiSelect({
                 className="mr-1 mb-1"
               >
                 {option.label}
-                <button
-                  type="button"
+                <span
+                  role="button"
+                  tabIndex={0}
                   aria-label={`Retirer ${option.label}`}
-                  className="ml-1 ring-offset-background rounded-full outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                  onMouseDown={(e) => handleUnselect(e, option.value)}
-                  onClick={(e) => e.stopPropagation()}
+                  className="ml-1 ring-offset-background rounded-full outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 cursor-pointer inline-flex items-center"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleUnselect(e, option.value);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleUnselect(e as any, option.value);
+                    }
+                  }}
                 >
                   <X className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                </button>
+                </span>
               </Badge>
             ))}
             {selected.length > 3 && (
@@ -107,39 +135,103 @@ export function MultiSelect({
         className="p-0"
         align="start"
         style={{ width: buttonRef.current?.offsetWidth }}
+        onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <Command>
+        <Command shouldFilter={true}>
           <CommandInput placeholder="Rechercher..." />
-          <CommandEmpty>Aucun résultat trouvé.</CommandEmpty>
-          <CommandGroup className="max-h-64 overflow-auto">
-            {options.map((option) => (
-              <div
-                key={option.value}
-                className="relative flex cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleSelect(option.value)}
-              >
-                <div
-                  className={cn(
-                    "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
-                    selected.includes(option.value)
-                      ? "bg-primary text-primary-foreground"
-                      : "opacity-50 [&_svg]:invisible"
-                  )}
+          <CommandList>
+            <CommandEmpty>Aucun résultat trouvé.</CommandEmpty>
+            <CommandGroup className="max-h-64 overflow-auto">
+              {showSelectAll && options.length > 0 && (
+                <CommandItem
+                  value="select-all"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    handleSelectAll();
+                    setTimeout(() => setOpen(true), 0);
+                  }}
+                  onMouseDown={(e) => {
+                    if (e.button === 0) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleSelectAll();
+                      setTimeout(() => setOpen(true), 0);
+                    }
+                  }}
+                  className="cursor-pointer font-semibold border-b"
                 >
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    viewBox="0 0 24 24"
+                  <div
+                    className={cn(
+                      "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
+                      allSelected
+                        ? "bg-primary text-primary-foreground"
+                        : "opacity-50 [&_svg]:invisible"
+                    )}
                   >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-                <span className="flex-1">{option.label}</span>
-              </div>
-            ))}
-          </CommandGroup>
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                  <span className="flex-1">
+                    {allSelected ? "Tout désélectionner" : "Tout sélectionner"}
+                  </span>
+                </CommandItem>
+              )}
+              {options.map((option) => {
+                const isSelected = selected.includes(option.value);
+                return (
+                  <CommandItem
+                    key={option.value}
+                    value={option.label}
+                    onSelect={(currentValue) => {
+                      // This fires on keyboard (Enter/Space) and sometimes on click
+                      handleSelect(option.value);
+                      setTimeout(() => setOpen(true), 0);
+                    }}
+                    onMouseDown={(e) => {
+                      // Explicitly handle mouse clicks - onSelect doesn't always fire on click
+                      if (e.button === 0) {
+                        // Left mouse button only
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleSelect(option.value);
+                        setTimeout(() => setOpen(true), 0);
+                      }
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <div
+                      className={cn(
+                        "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
+                        isSelected
+                          ? "bg-primary text-primary-foreground"
+                          : "opacity-50 [&_svg]:invisible"
+                      )}
+                    >
+                      <svg
+                        className="h-4 w-4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        viewBox="0 0 24 24"
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </div>
+                    <span className={cn("flex-1", isSelected && "font-medium")}>
+                      {option.label}
+                    </span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
         </Command>
       </PopoverContent>
     </Popover>

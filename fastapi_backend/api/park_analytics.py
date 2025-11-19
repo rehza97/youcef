@@ -39,6 +39,25 @@ def apply_filters_to_query(
     date_to: Optional[str] = None
 ):
     """Helper function to apply filters to a query"""
+    
+    # Log all filter parameters
+    filters_dict = {
+        "dot_ids": dot_ids,
+        "actel_codes": actel_codes,
+        "subscriber_statuses": subscriber_statuses,
+        "telecom_types": telecom_types,
+        "offer_names": offer_names,
+        "offer_types": offer_types,
+        "customer_l2_codes": customer_l2_codes,
+        "customer_l3_codes": customer_l3_codes,
+        "search": search,
+        "date_from": date_from,
+        "date_to": date_to
+    }
+    # Only log non-empty filters
+    active_filters = {k: v for k, v in filters_dict.items() if v}
+    if active_filters:
+        logger.info(f"🔍 Applying filters: {active_filters}")
 
     # Apply multiple value filters (comma-separated)
     if dot_ids:
@@ -142,6 +161,16 @@ async def get_park_overview(
         None, description="Filter to date (YYYY-MM-DD)")
 ):
     """Get overview analytics for Parc Corporate NGBSS with filtering support"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📊 GET /overview - User {current_user.id} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Check if any filters are applied
     has_filters = any([
@@ -261,6 +290,16 @@ async def get_by_telecom_type(
         None, description="Filter to date (YYYY-MM-DD)")
 ):
     """Get distribution by Telecom Type with filtering support"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📊 GET /by-telecom-type - User {current_user.id} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Apply DOT-based permission filtering
     query = db.query(Park)
@@ -334,6 +373,16 @@ async def get_by_subscriber_status(
         None, description="Filter to date (YYYY-MM-DD)")
 ):
     """Get subscriber status distribution with filtering support"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📊 GET /by-subscriber-status - User {current_user.id} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Check if any filters are applied
     has_filters = any([
@@ -442,6 +491,16 @@ async def get_by_customer_l2(
         None, description="Filter to date (YYYY-MM-DD)")
 ):
     """Get customer L2 distribution with filtering support"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📊 GET /by-customer-l2 - User {current_user.id} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Check if any filters are applied
     has_filters = any([
@@ -530,6 +589,16 @@ async def get_by_customer_l3(
         None, description="Filter to date (YYYY-MM-DD)")
 ):
     """Get customer L3 distribution with filtering support"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📊 GET /by-customer-l3 - User {current_user.id} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Check if any filters are applied
     has_filters = any([
@@ -618,6 +687,16 @@ async def get_by_dot(
         None, description="Filter to date (YYYY-MM-DD)")
 ):
     """Get distribution by DOT with filtering support"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📊 GET /by-dot - User {current_user.id} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Apply DOT-based permission filtering
     accessible_dots = DOTService.get_user_accessible_dots(
@@ -687,6 +766,7 @@ async def get_available_filters(
             "subscriber_statuses": [],
             "telecom_types": [],
             "offer_names": [],
+            "offer_types": [],
             "customer_l2_codes": [],
             "customer_l3_codes": []
         }
@@ -703,6 +783,8 @@ async def get_available_filters(
         None)).with_entities(Park.telecom_type).distinct().all()
     offer_names = query.filter(Park.offer_name.isnot(None)).with_entities(
         Park.offer_name).distinct().limit(100).all()
+    offer_types = query.filter(Park.offer_type.isnot(None)).with_entities(
+        Park.offer_type).distinct().all()
     customer_l2_codes = query.filter(Park.customer_l2_code.isnot(None)).with_entities(
         Park.customer_l2_code, Park.customer_l2_description).distinct().limit(50).all()
     customer_l3_codes = query.filter(Park.customer_l3_code.isnot(None)).with_entities(
@@ -714,6 +796,7 @@ async def get_available_filters(
         "subscriber_statuses": [status[0] for status in subscriber_statuses if status[0]],
         "telecom_types": [type[0] for type in telecom_types if type[0]],
         "offer_names": [name[0] for name in offer_names if name[0]],
+        "offer_types": [type[0] for type in offer_types if type[0]],
         "customer_l2_codes": [{"code": item[0], "description": item[1]} for item in customer_l2_codes if item[0]],
         "customer_l3_codes": [{"code": item[0], "description": item[1]} for item in customer_l3_codes if item[0]]
     }
@@ -724,28 +807,64 @@ async def get_preview_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(10, ge=1, le=100, description="Number of records to preview"),
-    offset: int = Query(0, ge=0, description="Number of records to skip")
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)")
 ):
     """
-    Get sample park records for dashboard preview
+    Get sample park records for dashboard preview with filtering support
 
     Returns up to `limit` park records from accessible DOTs with full details.
-    Useful for showing data samples in UI without loading all records.
+    All filters are applied to the preview data.
 
     Parameters:
         limit: Number of records to return (1-100, default 10)
         offset: Number of records to skip for pagination (default 0)
+        All filter parameters are supported
 
     Returns:
         Dictionary with:
         - records: List of park records with key fields
-        - total_available: Total records accessible to user
+        - total_available: Total records accessible to user (after filters)
         - preview_limit: Actual limit applied
         - preview_offset: Offset applied
 
     Example:
-        GET /api/parks/preview-data?limit=20&offset=0
+        GET /api/park-analytics/preview-data?limit=20&offset=0&dot_ids=1,2
     """
+    
+    # Log received filter parameters
+    logger.info(
+        f"📋 GET /preview-data - User {current_user.id} - Limit: {limit}, Offset: {offset} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     try:
         # Apply DOT-based permission filtering
@@ -765,7 +884,23 @@ async def get_preview_data(
 
         query = query.filter(Park.dot_id.in_(accessible_dots))
 
-        # Get total count for pagination info
+        # Apply all filters using the shared helper function
+        query = apply_filters_to_query(
+            query=query,
+            dot_ids=dot_ids,
+            actel_codes=actel_codes,
+            subscriber_statuses=subscriber_statuses,
+            telecom_types=telecom_types,
+            offer_names=offer_names,
+            offer_types=offer_types,
+            customer_l2_codes=customer_l2_codes,
+            customer_l3_codes=customer_l3_codes,
+            search=search,
+            date_from=date_from,
+            date_to=date_to
+        )
+
+        # Get total count for pagination info (after filters)
         total_count = query.count()
 
         # Apply pagination
@@ -774,24 +909,58 @@ async def get_preview_data(
             .limit(limit) \
             .all()
 
-        # Format response with key fields
+        # Format response with all fields
         preview_records = []
         for record in records:
             preview_records.append({
                 "id": record.id,
-                "customer_code": record.customer_code or "",
-                "service_number": record.service_number or "",
-                "customer_full_name": record.customer_full_name or "",
-                "telecom_type": record.telecom_type or "",
-                "offer_name": record.offer_name or "",
-                "subscriber_status": record.subscriber_status or "",
-                "rental_fees": float(record.rental_fees) if record.rental_fees else 0.0,
-                "customer_l1_description": record.customer_l1_description or "",
-                "customer_l2_description": record.customer_l2_description or "",
+                "file_upload_id": record.file_upload_id,
+                "extraction_date": record.extraction_date.isoformat() if record.extraction_date else None,
+                "dot_id": record.dot_id,
                 "dot_name": record.dot.name if record.dot else "",
                 "actel_code": record.actel_code or "",
+                "customer_l1_code": record.customer_l1_code or "",
+                "customer_l1_description": record.customer_l1_description or "",
+                "customer_l2_code": record.customer_l2_code or "",
+                "customer_l2_description": record.customer_l2_description or "",
+                "customer_l3_code": record.customer_l3_code or "",
+                "customer_l3_description": record.customer_l3_description or "",
+                "telecom_type": record.telecom_type or "",
+                "offer_type": record.offer_type or "",
+                "offer_name": record.offer_name or "",
+                "rental_fees": float(record.rental_fees) if record.rental_fees else 0.0,
+                "customer_code": record.customer_code or "",
+                "service_number": record.service_number or "",
+                "related_service_number": record.related_service_number or "",
+                "username": record.username or "",
+                "subscriber_status": record.subscriber_status or "",
+                "status_date": record.status_date.isoformat() if record.status_date else None,
                 "creation_date": record.creation_date.isoformat() if record.creation_date else None,
-                "active_date": record.active_date.isoformat() if record.active_date else None
+                "active_date": record.active_date.isoformat() if record.active_date else None,
+                "csr_name": record.csr_name or "",
+                "department_name": record.department_name or "",
+                "state": record.state or "",
+                "area": record.area or "",
+                "town": record.town or "",
+                "grid": record.grid or "",
+                "street": record.street or "",
+                "street_number": record.street_number or "",
+                "building_no": record.building_no or "",
+                "unit": record.unit or "",
+                "floor": record.floor or "",
+                "house_no": record.house_no or "",
+                "additional_address_info": record.additional_address_info or "",
+                "customer_full_name": record.customer_full_name or "",
+                "province": record.province or "",
+                "district": record.district or "",
+                "city": record.city or "",
+                "postal_code": record.postal_code or "",
+                "expiry_date": record.expiry_date.isoformat() if record.expiry_date else None,
+                "iccid": record.iccid or "",
+                "imsi": record.imsi or "",
+                "contact_number": record.contact_number or "",
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
             })
 
         logger.info(
@@ -852,6 +1021,16 @@ async def export_data(
     db: Session = Depends(get_db)
 ):
     """Export park data with comprehensive filtering support - NO LIMIT"""
+    
+    # Log received filter parameters
+    logger.info(
+        f"📤 GET /export - User {current_user.id} - Format: {format} - Filters: "
+        f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
+        f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
+        f"offer_names={offer_names}, offer_types={offer_types}, "
+        f"customer_l2_codes={customer_l2_codes}, customer_l3_codes={customer_l3_codes}, "
+        f"search={search}, date_from={date_from}, date_to={date_to}"
+    )
 
     # Apply DOT-based permission filtering
     query = db.query(Park)
@@ -862,95 +1041,52 @@ async def export_data(
     else:
         raise HTTPException(status_code=403, detail="No accessible data")
 
-    # Apply single value filters (backward compatibility)
+    # Apply single value filters (backward compatibility) - merge into dot_ids if needed
     if dot_filter:
-        query = query.filter(Park.dot_id == int(dot_filter))
-    if actel_code_filter:
+        if dot_ids:
+            # Merge with existing dot_ids
+            dot_id_list = [int(id.strip()) for id in dot_ids.split(',') if id.strip()]
+            if int(dot_filter) not in dot_id_list:
+                dot_id_list.append(int(dot_filter))
+            dot_ids = ','.join(map(str, dot_id_list))
+        else:
+            dot_ids = dot_filter
+
+    # Apply all filters using the shared helper function for consistency
+    query = apply_filters_to_query(
+        query=query,
+        dot_ids=dot_ids,
+        actel_codes=actel_codes,
+        subscriber_statuses=subscriber_statuses,
+        telecom_types=telecom_types,
+        offer_names=offer_names,
+        offer_types=offer_types,
+        customer_l2_codes=customer_l2_codes,
+        customer_l3_codes=customer_l3_codes,
+        search=search,
+        date_from=date_from,
+        date_to=date_to
+    )
+
+    # Apply backward compatibility single value filters (if not already handled)
+    if actel_code_filter and not actel_codes:
         query = query.filter(Park.actel_code.ilike(f"%{actel_code_filter}%"))
-    if subscriber_status_filter:
-        query = query.filter(Park.subscriber_status ==
-                             subscriber_status_filter)
-    if telecom_type_filter:
+    if subscriber_status_filter and not subscriber_statuses:
+        query = query.filter(Park.subscriber_status == subscriber_status_filter)
+    if telecom_type_filter and not telecom_types:
         query = query.filter(Park.telecom_type == telecom_type_filter)
-
-    # Apply multiple value filters (comma-separated)
-    if dot_ids:
-        dot_id_list = [int(id.strip())
-                       for id in dot_ids.split(',') if id.strip()]
-        query = query.filter(Park.dot_id.in_(dot_id_list))
-
-    if actel_codes:
-        actel_list = [code.strip()
-                      for code in actel_codes.split(',') if code.strip()]
-        query = query.filter(Park.actel_code.in_(actel_list))
-
-    if subscriber_statuses:
-        status_list = [status.strip()
-                       for status in subscriber_statuses.split(',') if status.strip()]
-        query = query.filter(Park.subscriber_status.in_(status_list))
-
-    if telecom_types:
-        telecom_list = [ttype.strip()
-                        for ttype in telecom_types.split(',') if ttype.strip()]
-        query = query.filter(Park.telecom_type.in_(telecom_list))
-
-    if offer_names:
-        offer_list = [offer.strip()
-                      for offer in offer_names.split(',') if offer.strip()]
-        query = query.filter(Park.offer_name.in_(offer_list))
-
-    if offer_types:
-        offer_type_list = [otype.strip()
-                           for otype in offer_types.split(',') if otype.strip()]
-        query = query.filter(Park.offer_type.in_(offer_type_list))
-
-    if customer_l2_codes:
-        l2_list = [code.strip()
-                   for code in customer_l2_codes.split(',') if code.strip()]
-        query = query.filter(Park.customer_l2_code.in_(l2_list))
-
-    if customer_l3_codes:
-        l3_list = [code.strip()
-                   for code in customer_l3_codes.split(',') if code.strip()]
-        query = query.filter(Park.customer_l3_code.in_(l3_list))
-
-    # Apply search filter
-    if search:
-        search_term = f"%{search}%"
-        query = query.filter(
-            or_(
-                Park.customer_code.ilike(search_term),
-                Park.service_number.ilike(search_term),
-                Park.customer_full_name.ilike(search_term),
-                Park.username.ilike(search_term)
-            )
-        )
-
-    # Apply date range filters
-    if date_from:
-        try:
-            from_date = datetime.strptime(date_from, "%Y-%m-%d").date()
-            query = query.filter(Park.created_at >= from_date)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid date_from format. Use YYYY-MM-DD")
-
-    if date_to:
-        try:
-            to_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-            query = query.filter(Park.created_at <= to_date)
-        except ValueError:
-            raise HTTPException(
-                status_code=400, detail="Invalid date_to format. Use YYYY-MM-DD")
 
     # Get total count first for better error handling
     total_count = query.count()
 
     if total_count == 0:
-        raise HTTPException(
-            status_code=404,
-            detail="No data found with applied filters. Please adjust your filter criteria."
-        )
+        # Return empty result instead of 404 - filters are valid, just no matching data
+        return {
+            "data": [],
+            "total_records": 0,
+            "format": format,
+            "message": "No data found with applied filters"
+        }
 
     # Get ALL data - no limit
     parks = query.all()

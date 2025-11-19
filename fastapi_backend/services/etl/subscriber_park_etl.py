@@ -393,15 +393,15 @@ class SubscriberParkETL:
 
         actel_code = str(row.get('actel_code_code_d_actel', ''))
         if 'CONSTANTINE' in actel_code.upper():
-            return 'DOT CONSTANTINE'
+            return 'CONSTANTINE'
         elif 'HASSI MESSAOUD' in actel_code.upper():
-            return 'DOT OUARGLA'  # Hassi Messaoud is under Ouargla DOT
+            return 'OUARGLA'  # Hassi Messaoud is under Ouargla DOT
         elif 'ALGER' in actel_code.upper():
-            return 'DOT ALGER'
+            return 'ALGER'
         elif 'ORAN' in actel_code.upper():
-            return 'DOT ORAN'
+            return 'ORAN'
 
-        return 'DOT UNKNOWN'
+        return 'UNKNOWN'
 
     def _clean_actel_code(self, actel_code: str) -> str:
         """Extract numeric part from Actel code"""
@@ -463,13 +463,13 @@ class SubscriberParkETL:
 
         # Standardize common DOT names
         if 'CONSTANTINE' in dot_name:
-            return 'DOT CONSTANTINE'
+            return 'CONSTANTINE'
         elif 'OUARGLA' in dot_name or 'HASSI MESSAOUD' in dot_name:
-            return 'DOT OUARGLA'
+            return 'OUARGLA'
         elif 'ALGER' in dot_name:
-            return 'DOT ALGER'
+            return 'ALGER'
         elif 'ORAN' in dot_name:
-            return 'DOT ORAN'
+            return 'ORAN'
 
         return dot_name
 

@@ -34,8 +34,8 @@ class ParcCorporateNGBSSETL:
 
         # Business rules mapping
         self.dot_actel_mapping = {
-            "2B|Centre Algérie Télécom pour les Entreprises HASSI MESSAOUD (2B)": "DOT OUARGLA",
-            "99|Grand Compte": "DOT SIEGE"
+            "2B|Centre Algérie Télécom pour les Entreprises HASSI MESSAOUD (2B)": "OUARGLA",
+            "99|Grand Compte": "SIEGE"
         }
 
         # Categories to remove
@@ -78,16 +78,28 @@ class ParcCorporateNGBSSETL:
             # Step 3: Apply business rules and relationships
             processed_df = self._apply_business_rules_step(cleaned_df, result)
 
-            # Step 4: Filter out excluded records
+            # Step 4: Detect Moohtarif anomalies BEFORE filtering (to mark them as anomalies)
+            processed_df, moohtarif_anomalies = self._detect_moohtarif_anomalies_step(processed_df, result)
+
+            # Step 5: Filter out excluded records (including Moohtarif)
             filtered_df = self._filter_step(processed_df, result)
 
-            # Step 5: Detect anomalies
-            final_df, anomalies_df = self._detect_anomalies_step(filtered_df, result)
+            # Step 6: Detect other anomalies
+            final_df, other_anomalies_df = self._detect_anomalies_step(filtered_df, result)
+            
+            # Combine Moohtarif anomalies with other anomalies
+            if not moohtarif_anomalies.empty:
+                if not other_anomalies_df.empty:
+                    anomalies_df = pd.concat([moohtarif_anomalies, other_anomalies_df], ignore_index=True)
+                else:
+                    anomalies_df = moohtarif_anomalies
+            else:
+                anomalies_df = other_anomalies_df
 
-            # Step 6: Generate views and output
+            # Step 7: Generate views and output
             self._generate_views_step(final_df, result)
 
-            # Step 7: Output results
+            # Step 8: Output results
             self._output_step(final_df, anomalies_df, result)
 
             result.output_records_count = len(final_df)
@@ -226,8 +238,52 @@ class ParcCorporateNGBSSETL:
             step.fail(str(e))
             raise
 
+    def _detect_moohtarif_anomalies_step(self, df: pd.DataFrame, result: ETLResult) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Step 4: Detect Moohtarif anomalies BEFORE filtering them out"""
+        step = ETLStep(
+            step_type=ETLStepType.DETECT_ANOMALIES,
+            name="detect_moohtarif_anomalies",
+            description="Mark Moohtarif offers as anomalies before filtering"
+        )
+        step.start()
+        result.add_step(step)
+
+        try:
+            step.records_processed = len(df)
+            anomalies_list = []
+
+            # Check for Moohtarif patterns in offer names (business anomaly)
+            # This must happen BEFORE filtering to properly mark them as anomalies
+            if 'offer_name' in df.columns:
+                for pattern in self.anomaly_patterns:
+                    anomaly_mask = df['offer_name'].str.contains(pattern, case=False, na=False)
+                    anomaly_records = df[anomaly_mask].copy()
+
+                    if not anomaly_records.empty:
+                        anomaly_records['anomaly_type'] = 'Parc Corporate NGBSS'
+                        anomaly_records['anomaly_description'] = f'Business rule violation: Offer name contains "{pattern}"'
+                        anomalies_list.append(anomaly_records)
+                        step.add_warning(f"Found {len(anomaly_records)} records with '{pattern}' pattern - marked as anomalies")
+
+            if anomalies_list:
+                moohtarif_anomalies = pd.concat(anomalies_list, ignore_index=True)
+            else:
+                moohtarif_anomalies = pd.DataFrame()
+
+            step.metadata["moohtarif_anomalies"] = {
+                "count": len(moohtarif_anomalies),
+                "pattern": "Moohtarif"
+            }
+
+            step.complete(len(df))
+            return df, moohtarif_anomalies
+
+        except Exception as e:
+            step.fail(str(e))
+            raise
+
     def _filter_step(self, df: pd.DataFrame, result: ETLResult) -> pd.DataFrame:
-        """Step 4: Filter out excluded records based on business rules"""
+        """Step 5: Filter out excluded records based on business rules"""
         step = ETLStep(
             step_type=ETLStepType.CLEAN,
             name="filter_excluded_records",
@@ -297,31 +353,19 @@ class ParcCorporateNGBSSETL:
             raise
 
     def _detect_anomalies_step(self, df: pd.DataFrame, result: ETLResult) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Step 5: Detect anomalies in Parc Corporate data"""
+        """Step 6: Detect other anomalies in Parc Corporate data (Moohtarif already detected)"""
         step = ETLStep(
             step_type=ETLStepType.DETECT_ANOMALIES,
             name="detect_parc_corporate_anomalies",
-            description="Identify anomalous Parc Corporate records"
+            description="Identify other anomalous Parc Corporate records (missing data, invalid ranges, etc.)"
         )
         step.start()
         result.add_step(step)
 
         try:
             step.records_processed = len(df)
-            anomalies_list = []
 
-            # Check for Moohtarif patterns in offer names (business anomaly)
-            if 'offer_name' in df.columns:
-                for pattern in self.anomaly_patterns:
-                    anomaly_mask = df['offer_name'].str.contains(pattern, case=False, na=False)
-                    anomaly_records = df[anomaly_mask].copy()
-
-                    if not anomaly_records.empty:
-                        anomaly_records['anomaly_type'] = f'Offer name contains {pattern}'
-                        anomaly_records['anomaly_description'] = f'Business rule violation: Offer name contains "{pattern}"'
-                        anomalies_list.append(anomaly_records)
-                        step.add_warning(f"Found {len(anomaly_records)} records with '{pattern}' pattern")
-
+            # Note: Moohtarif anomalies are detected in a separate step BEFORE filtering
             # Standard anomaly detection rules
             anomaly_rules = {
                 "missing_dot": {
@@ -348,25 +392,14 @@ class ParcCorporateNGBSSETL:
 
             clean_data, system_anomalies = ETLUtils.detect_anomalies(df, anomaly_rules)
 
-            # Combine business anomalies with system anomalies
-            if anomalies_list:
-                business_anomalies = pd.concat(anomalies_list, ignore_index=True)
-                if not system_anomalies.empty:
-                    all_anomalies = pd.concat([business_anomalies, system_anomalies], ignore_index=True)
-                else:
-                    all_anomalies = business_anomalies
-
-                # Remove business anomalies from clean data
-                anomaly_indices = business_anomalies.index
-                clean_data = clean_data.drop(anomaly_indices, errors='ignore').reset_index(drop=True)
-            else:
-                all_anomalies = system_anomalies
+            # All anomalies from this step are system anomalies (Moohtarif already handled)
+            all_anomalies = system_anomalies
 
             step.metadata["anomaly_detection"] = {
-                "business_anomalies": len(anomalies_list),
                 "system_anomalies": len(system_anomalies),
                 "total_anomalies": len(all_anomalies),
-                "clean_records": len(clean_data)
+                "clean_records": len(clean_data),
+                "note": "Moohtarif anomalies detected in separate step before filtering"
             }
 
             step.complete(len(clean_data))

@@ -188,9 +188,9 @@ class ParkDataProcessor:
 
         # Create or get DOTs
         dot_ouargla = self._get_or_create_dot(
-            "DOT OUARGLA", "DOT for Ouargla region")
+            "OUARGLA", "DOT for Ouargla region")
         dot_siege = self._get_or_create_dot(
-            "DOT SIEGE", "DOT for Grand Compte")
+            "SIEGE", "DOT for Grand Compte")
 
         # Map Actel Codes to DOTs
         def map_actel_to_dot(actel_code):
@@ -213,8 +213,8 @@ class ParkDataProcessor:
             logger.info(f"Applied DOT mapping using column: {actel_column}")
         else:
             logger.warning(
-                "No Actel Code column found, assigning default DOT OUARGLA")
-            # Assign default DOT OUARGLA for all records without actel code
+                "No Actel Code column found, assigning default OUARGLA")
+            # Assign default OUARGLA for all records without actel code
             df['dot_id'] = dot_ouargla.id
 
         return df

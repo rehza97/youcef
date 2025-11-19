@@ -1087,7 +1087,7 @@ class BackgroundProcessor:
                     break
 
             # Always get default DOT ID first (fallback)
-            default_dot_id = self._get_dot_id_thread_local("DOT OUARGLA")
+            default_dot_id = self._get_dot_id_thread_local("OUARGLA")
 
             if dot_col:
                 # Vectorized: Get unique DOT names (1 operation instead of 5000 iterations)
@@ -1259,11 +1259,11 @@ class BackgroundProcessor:
                 logger.debug(
                     f"DOT assigned from actel code: {actel_code} -> ID {dot_id}")
 
-            # Fallback: assign to DOT OUARGLA if no DOT is determined
+            # Fallback: assign to OUARGLA if no DOT is determined
             if dot_id is None:
-                dot_id = self._get_or_create_dot_id("DOT OUARGLA")
+                dot_id = self._get_or_create_dot_id("OUARGLA")
                 logger.debug(
-                    f"DOT assigned fallback: DOT OUARGLA -> ID {dot_id}")
+                    f"DOT assigned fallback: OUARGLA -> ID {dot_id}")
 
             park_dict['dot_id'] = dot_id
             # Remove dot_name from park_dict as we now have dot_id
@@ -1299,9 +1299,9 @@ class BackgroundProcessor:
             # Auto-assign DOT based on actel code
             dot_id = self._get_dot_id_from_actel_code(actel_code)
 
-        # Fallback: assign to DOT OUARGLA if no DOT is determined
+        # Fallback: assign to OUARGLA if no DOT is determined
         if dot_id is None:
-            dot_id = self._get_or_create_dot_id("DOT OUARGLA")
+            dot_id = self._get_or_create_dot_id("OUARGLA")
 
         return {
             'file_upload_id': file_upload_id,
@@ -1400,8 +1400,8 @@ class BackgroundProcessor:
         db = SessionLocal()
         try:
             dots_to_create = [
-                ("DOT OUARGLA", "DOT for Ouargla region"),
-                ("DOT SIEGE", "DOT for Grand Compte"),
+                ("OUARGLA", "DOT for Ouargla region"),
+                ("SIEGE", "DOT for Grand Compte"),
             ]
 
             for dot_name, description in dots_to_create:
@@ -1427,8 +1427,8 @@ class BackgroundProcessor:
 
     def _ensure_dot_assignments(self, records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Ensure all records have DOT assignments"""
-        # Get default DOT OUARGLA ID
-        default_dot_id = self._get_or_create_dot_id("DOT OUARGLA")
+        # Get default OUARGLA ID
+        default_dot_id = self._get_or_create_dot_id("OUARGLA")
 
         updated_count = 0
         for record in records:
@@ -1493,16 +1493,16 @@ class BackgroundProcessor:
 
         # Business rules for DOT assignment based on actel code
         if "2B" in actel_str and "HASSI MESSAOUD" in actel_str:
-            return self._get_or_create_dot_id("DOT OUARGLA")
+            return self._get_or_create_dot_id("OUARGLA")
         elif "99" in actel_str and "GRAND COMPTE" in actel_str:
-            return self._get_or_create_dot_id("DOT SIEGE")
+            return self._get_or_create_dot_id("SIEGE")
         elif "2B" in actel_str:
-            return self._get_or_create_dot_id("DOT OUARGLA")
+            return self._get_or_create_dot_id("OUARGLA")
         elif "99" in actel_str:
-            return self._get_or_create_dot_id("DOT SIEGE")
+            return self._get_or_create_dot_id("SIEGE")
 
         # Default fallback
-        return self._get_or_create_dot_id("DOT OUARGLA")
+        return self._get_or_create_dot_id("OUARGLA")
 
     def _safe_date(self, value) -> Optional[datetime]:
         """Safely convert value to date"""

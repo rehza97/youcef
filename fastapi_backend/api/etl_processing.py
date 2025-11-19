@@ -343,8 +343,8 @@ async def process_parc_corporate_ngbss_etl(
                     "Moohtarif and Solutions Hébergements removed"
                 ],
                 "dot_mappings_applied": [
-                    "2B|Centre Algérie Télécom HASSI MESSAOUD → DOT OUARGLA",
-                    "99|Grand Compte → DOT SIEGE"
+                    "2B|Centre Algérie Télécom HASSI MESSAOUD → OUARGLA",
+                    "99|Grand Compte → SIEGE"
                 ]
             },
             "steps": [

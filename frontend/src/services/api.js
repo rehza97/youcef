@@ -917,13 +917,31 @@ export const getParkAnalyticsByDOT = (filters = {}) => {
 export const getParkAnalyticsAvailableFilters = () =>
   api.get("/api/park-analytics/filters");
 
-export const exportParkAnalyticsData = (filters = {}, format = "csv") => {
+export const getParkAnalyticsPreviewData = (filters = {}, limit = 10, offset = 0) => {
   const params = new URLSearchParams({
-    format,
+    limit: limit.toString(),
+    offset: offset.toString(),
     ...filters,
   });
+  return api.get(`/api/park-analytics/preview-data?${params.toString()}`);
+};
 
-  return api.get(`/api/park-analytics/export?${params.toString()}`);
+export const exportParkAnalyticsData = (filters = {}, onDownloadProgress = null) => {
+  // Extract format from filters if present, otherwise default to csv
+  const format = filters.format || "csv";
+  const { format: _, ...filterParams } = filters;
+  
+  const params = new URLSearchParams({
+    format,
+    ...filterParams,
+  });
+
+  const config = {};
+  if (onDownloadProgress) {
+    config.onDownloadProgress = onDownloadProgress;
+  }
+
+  return api.get(`/api/park-analytics/export?${params.toString()}`, config);
 };
 
 // Revenue Analytics API methods

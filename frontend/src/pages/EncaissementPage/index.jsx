@@ -8,12 +8,22 @@ import {
   getParkAnalyticsByCustomerL3,
   getParkAnalyticsAvailableFilters,
   exportParkAnalyticsData,
+  getParkAnalyticsPreviewData,
 } from "../../services/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -114,9 +124,18 @@ const EncaissementPage = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportStatus, setExportStatus] = useState("");
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
+  
+  // Preview data state
+  const [previewData, setPreviewData] = useState([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewTotal, setPreviewTotal] = useState(0);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewPageSize, setPreviewPageSize] = useState(10);
 
   const [filters, setFilters] = useState({
     dot_ids: [], // Changed to array for multi-select
@@ -214,6 +233,50 @@ const EncaissementPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, filters.date_from, filters.date_to]);
 
+  // Fetch preview data
+  const fetchPreviewData = useCallback(async () => {
+    if (activeTab !== "preview") return;
+
+    try {
+      setPreviewLoading(true);
+      
+      // Build filter params - convert arrays to comma-separated strings
+      const filterParams = {};
+      Object.entries(filters).forEach(([key, value]) => {
+        if (Array.isArray(value) && value.length > 0) {
+          filterParams[key] = value.join(",");
+        } else if (typeof value === "string" && value.trim() !== "") {
+          filterParams[key] = value;
+        }
+      });
+
+      const offset = (previewPage - 1) * previewPageSize;
+      const response = await getParkAnalyticsPreviewData(
+        filterParams,
+        previewPageSize,
+        offset
+      );
+
+      setPreviewData(response.data?.records || []);
+      setPreviewTotal(response.data?.total_available || 0);
+    } catch (err) {
+      console.error("Error fetching preview data:", err);
+      handleApiError(err, {
+        showToast: true,
+        fallbackMessage: "Erreur lors du chargement des données de prévisualisation",
+      });
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [activeTab, filters, previewPage, previewPageSize]);
+
+  // Fetch preview data when tab changes or filters/page changes
+  useEffect(() => {
+    if (activeTab === "preview") {
+      fetchPreviewData();
+    }
+  }, [activeTab, fetchPreviewData]);
+
   const handleFilterChange = (key, value) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
   };
@@ -255,6 +318,8 @@ const EncaissementPage = () => {
 
     try {
       setExporting(true);
+      setExportProgress(0);
+      setExportStatus("Préparation de l'export...");
 
       const exportFilters = {};
       Object.entries(filters).forEach(([key, value]) => {
@@ -269,15 +334,47 @@ const EncaissementPage = () => {
 
       console.log("🚀 Exporting with filters:", exportFilters);
 
-      const response = await exportParkAnalyticsData(exportFilters);
-      const { data, total_records } = response.data;
+      // Simulate initial progress
+      setExportProgress(10);
+      setExportStatus("Récupération des données...");
+
+      // Track download progress
+      const progressCallback = (progressEvent) => {
+        if (progressEvent.total) {
+          const percentCompleted = Math.round(
+            (progressEvent.loaded * 90) / progressEvent.total
+          );
+          setExportProgress(Math.min(90, 10 + percentCompleted));
+        } else {
+          // If total is unknown, simulate progress
+          setExportProgress((prev) => Math.min(90, prev + 5));
+        }
+      };
+
+      const response = await exportParkAnalyticsData(
+        exportFilters,
+        progressCallback
+      );
+
+      setExportProgress(95);
+      setExportStatus("Génération du fichier...");
+
+      const { data, total_records, message } = response.data;
 
       if (!data || data.length === 0) {
+        setExportProgress(0);
+        setExportStatus("");
         toast.info(
-          "Aucune donnée disponible à exporter avec les filtres appliqués"
+          message || "Aucune donnée disponible à exporter avec les filtres appliqués"
         );
         return;
       }
+
+      setExportProgress(100);
+      setExportStatus("Téléchargement...");
+
+      // Small delay to show 100% before download
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
       downloadExportFile(data, format);
 
@@ -287,12 +384,19 @@ const EncaissementPage = () => {
       );
     } catch (err) {
       console.error("❌ Export failed:", err);
+      setExportProgress(0);
+      setExportStatus("");
       handleApiError(err, {
         showToast: true,
         fallbackMessage: "Erreur lors de l'export",
       });
     } finally {
       setExporting(false);
+      // Reset progress after a short delay
+      setTimeout(() => {
+        setExportProgress(0);
+        setExportStatus("");
+      }, 1000);
     }
   };
 
@@ -397,13 +501,41 @@ const EncaissementPage = () => {
         </div>
       </div>
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <OverviewCard
-          title="Abonnés Actifs"
-          value={formatNumber(overview.total_active_subscribers)}
-          icon={Building}
-        />
+      {/* Export Progress Bar */}
+      {exporting && (
+        <Card className="border-blue-200 bg-blue-50/50">
+          <CardContent className="pt-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-blue-900">
+                  {exportStatus || "Export en cours..."}
+                </span>
+                <span className="text-blue-700 font-semibold">
+                  {Math.round(exportProgress)}%
+                </span>
+              </div>
+              <Progress value={exportProgress} className="h-2" />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Total Active Subscribers - Hero Card */}
+      <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white">
+        <CardContent className="pt-6">
+          <div className="text-center">
+            <div className="text-6xl font-bold mb-2">
+              {formatNumber(overview.total_active_subscribers || 0)}
+            </div>
+            <div className="text-xl font-medium opacity-90">
+              Total Active Subscribers
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Secondary Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <OverviewCard
           title="DOTs Accessibles"
           value={formatNumber(overview.total_dots)}
@@ -686,10 +818,12 @@ const EncaissementPage = () => {
       {/* Tabs */}
       <div className="flex flex-wrap gap-2 border-b pb-2">
         {[
-          { id: "overview", label: "Aperçu", icon: BarChart3 },
-          { id: "organisation", label: "Par Organisation", icon: Building },
-          { id: "l2", label: "Par Client L2", icon: FileText },
-          { id: "l3", label: "Par Client L3", icon: FileText },
+          { id: "overview", label: "OVERVIEW", icon: BarChart3 },
+          { id: "dot", label: "BY DOT", icon: Building },
+          { id: "telecom", label: "BY Telecom Type", icon: BarChart3 },
+          { id: "l2", label: "BY Code Customer L2", icon: FileText },
+          { id: "l3", label: "BY Code Customer L3", icon: FileText },
+          { id: "preview", label: "PREVIEW DATA", icon: FileText },
         ].map((tab) => (
           <Button
             key={tab.id}
@@ -707,56 +841,122 @@ const EncaissementPage = () => {
       {/* Tab Content */}
       <div className="space-y-6">
         {activeTab === "overview" && (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <>
+            {/* First Row: Telecom Type and Subscriber Status */}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <Card className="overflow-hidden">
+                <CardHeader>
+                  <CardTitle>Distribution by Telecom Type</CardTitle>
+                </CardHeader>
+                <CardContent className="p-2">
+                  {telecomTypeData.length > 0 ? (
+                    <div className="w-full overflow-hidden">
+                      <EnhancedPieChart
+                        data={telecomTypeData.map((d) => ({
+                          label: d.type,
+                          value: d.count,
+                        }))}
+                        height={350}
+                        showLabels={true}
+                        labelPosition="outside"
+                        showPercentages={true}
+                        showValues={true}
+                        minLabelPercentage={1}
+                        showLegendBelow={true}
+                        className="w-full"
+                      />
+                    </div>
+                  ) : (
+                    <EmptyState message="Aucune donnée de type télécom disponible" />
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="overflow-hidden">
+                <CardHeader>
+                  <CardTitle>Distribution by Subscriber Status</CardTitle>
+                </CardHeader>
+                <CardContent className="p-2">
+                  {subscriberStatusData.length > 0 ? (
+                    <div className="w-full overflow-hidden">
+                      <EnhancedPieChart
+                        data={subscriberStatusData.map((d) => ({
+                          label: d.status,
+                          value: d.count,
+                        }))}
+                        height={350}
+                        showLabels={true}
+                        labelPosition="outside"
+                        showPercentages={true}
+                        showValues={true}
+                        minLabelPercentage={0.5}
+                        showLegendBelow={true}
+                        className="w-full"
+                      />
+                    </div>
+                  ) : (
+                    <EmptyState message="Aucune donnée de statut disponible" />
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Second Row: Customer L2 Distribution */}
             <Card className="overflow-hidden">
               <CardHeader>
-                <CardTitle>Distribution par Type Télécom</CardTitle>
+                <CardTitle>Distribution by Code Customer L2</CardTitle>
               </CardHeader>
               <CardContent className="p-2">
-                {telecomTypeData.length > 0 ? (
+                {customerL2Data.length > 0 ? (
                   <div className="w-full overflow-hidden">
                     <EnhancedPieChart
-                      data={telecomTypeData.map((d) => ({
-                        label: d.type,
+                      data={customerL2Data.map((d) => ({
+                        label: d.description,
                         value: d.count,
                       }))}
-                      height={400}
+                      height={450}
                       showLabels={true}
                       labelPosition="outside"
                       showPercentages={true}
                       showValues={true}
-                      minLabelPercentage={2}
+                      minLabelPercentage={1}
+                      showLegendBelow={true}
                       className="w-full"
                     />
                   </div>
                 ) : (
-                  <EmptyState message="Aucune donnée de type télécom disponible" />
+                  <EmptyState message="Aucune donnée Client L2 disponible" />
                 )}
               </CardContent>
             </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Distribution par Statut Abonné</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {subscriberStatusData.length > 0 ? (
-                  <EnhancedBarChart
-                    data={subscriberStatusData.map((d) => ({
-                      label: d.status,
-                      value: d.count,
-                    }))}
-                    height={450}
-                  />
-                ) : (
-                  <EmptyState message="Aucune donnée de statut disponible" />
-                )}
-              </CardContent>
-            </Card>
-          </div>
+          </>
         )}
 
-        {activeTab === "organisation" && (
+        {activeTab === "telecom" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Subscribers by Telecom Type</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {telecomTypeData.length > 0 ? (
+                <EnhancedBarChart
+                  data={telecomTypeData.map((d) => ({
+                    label: d.type,
+                    value: d.count,
+                  }))}
+                  height={450}
+                  showValues={true}
+                  showLegendBelow={true}
+                  showPercentages={true}
+                />
+              ) : (
+                <EmptyState message="Aucune donnée de type télécom disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "dot" && (
           <Card>
             <CardHeader>
               <CardTitle>Abonnés par DOT</CardTitle>
@@ -769,6 +969,8 @@ const EncaissementPage = () => {
                     value: d.count,
                   }))}
                   height={550}
+                  showLegendBelow={true}
+                  showPercentages={true}
                 />
               ) : (
                 <EmptyState message="Aucune donnée DOT disponible" />
@@ -790,6 +992,8 @@ const EncaissementPage = () => {
                     value: d.count,
                   }))}
                   height={550}
+                  showLegendBelow={true}
+                  showPercentages={true}
                 />
               ) : (
                 <EmptyState message="Aucune donnée Client L2 disponible" />
@@ -811,9 +1015,307 @@ const EncaissementPage = () => {
                     value: d.count,
                   }))}
                   height={550}
+                  showLegendBelow={true}
+                  showPercentages={true}
                 />
               ) : (
                 <EmptyState message="Aucune donnée Client L3 disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "preview" && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Preview Data</CardTitle>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="page-size" className="text-sm">
+                      Par page:
+                    </Label>
+                    <Select
+                      value={previewPageSize.toString()}
+                      onValueChange={(value) => {
+                        setPreviewPageSize(parseInt(value));
+                        setPreviewPage(1);
+                      }}
+                    >
+                      <SelectTrigger id="page-size" className="w-20">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="15">15</SelectItem>
+                        <SelectItem value="20">20</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {formatNumber(previewTotal)} enregistrement(s) total
+                  </div>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {previewLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-muted-foreground">Chargement...</div>
+                </div>
+              ) : previewData.length === 0 ? (
+                <EmptyState message="Aucune donnée disponible" />
+              ) : (
+                <>
+                  <div className="rounded-md border overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="sticky left-0 bg-background z-10">ID</TableHead>
+                          <TableHead>Date Extraction</TableHead>
+                          <TableHead>DOT</TableHead>
+                          <TableHead>Code Actel</TableHead>
+                          <TableHead>Code Client</TableHead>
+                          <TableHead>Numéro Service</TableHead>
+                          <TableHead>Service Relié</TableHead>
+                          <TableHead>Nom Client</TableHead>
+                          <TableHead>Username</TableHead>
+                          <TableHead>L1 Code</TableHead>
+                          <TableHead>L1 Description</TableHead>
+                          <TableHead>L2 Code</TableHead>
+                          <TableHead>L2 Description</TableHead>
+                          <TableHead>L3 Code</TableHead>
+                          <TableHead>L3 Description</TableHead>
+                          <TableHead>Type Télécom</TableHead>
+                          <TableHead>Type Offre</TableHead>
+                          <TableHead>Nom Offre</TableHead>
+                          <TableHead>Frais Location</TableHead>
+                          <TableHead>Statut Abonné</TableHead>
+                          <TableHead>Date Statut</TableHead>
+                          <TableHead>Date Création</TableHead>
+                          <TableHead>Date Activation</TableHead>
+                          <TableHead>Date Expiration</TableHead>
+                          <TableHead>CSR</TableHead>
+                          <TableHead>Département</TableHead>
+                          <TableHead>État</TableHead>
+                          <TableHead>Zone</TableHead>
+                          <TableHead>Ville</TableHead>
+                          <TableHead>Grille</TableHead>
+                          <TableHead>Rue</TableHead>
+                          <TableHead>Numéro Rue</TableHead>
+                          <TableHead>Bâtiment</TableHead>
+                          <TableHead>Unité</TableHead>
+                          <TableHead>Étage</TableHead>
+                          <TableHead>Numéro Maison</TableHead>
+                          <TableHead>Info Adresse</TableHead>
+                          <TableHead>Province</TableHead>
+                          <TableHead>District</TableHead>
+                          <TableHead>Code Postal</TableHead>
+                          <TableHead>ICCID</TableHead>
+                          <TableHead>IMSI</TableHead>
+                          <TableHead>Contact</TableHead>
+                          <TableHead>Créé le</TableHead>
+                          <TableHead>Modifié le</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {previewData.map((record) => (
+                          <TableRow key={record.id}>
+                            <TableCell className="font-mono text-xs sticky left-0 bg-background z-10">
+                              {record.id || "-"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {record.extraction_date
+                                ? new Date(record.extraction_date).toLocaleDateString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                            <TableCell>{record.dot_name || "-"}</TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.actel_code || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.customer_code || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.service_number || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.related_service_number || "-"}
+                            </TableCell>
+                            <TableCell className="max-w-[200px] truncate">
+                              {record.customer_full_name || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.username || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.customer_l1_code || "-"}
+                            </TableCell>
+                            <TableCell className="max-w-[150px] truncate">
+                              {record.customer_l1_description || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.customer_l2_code || "-"}
+                            </TableCell>
+                            <TableCell className="max-w-[150px] truncate">
+                              {record.customer_l2_description || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.customer_l3_code || "-"}
+                            </TableCell>
+                            <TableCell className="max-w-[150px] truncate">
+                              {record.customer_l3_description || "-"}
+                            </TableCell>
+                            <TableCell>{record.telecom_type || "-"}</TableCell>
+                            <TableCell>{record.offer_type || "-"}</TableCell>
+                            <TableCell className="max-w-[200px] truncate">
+                              {record.offer_name || "-"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {record.rental_fees
+                                ? formatNumber(record.rental_fees)
+                                : "-"}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="secondary">
+                                {record.subscriber_status || "-"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {record.status_date
+                                ? new Date(record.status_date).toLocaleDateString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {record.creation_date
+                                ? new Date(record.creation_date).toLocaleDateString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {record.active_date
+                                ? new Date(record.active_date).toLocaleDateString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {record.expiry_date
+                                ? new Date(record.expiry_date).toLocaleDateString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                            <TableCell>{record.csr_name || "-"}</TableCell>
+                            <TableCell>{record.department_name || "-"}</TableCell>
+                            <TableCell>{record.state || "-"}</TableCell>
+                            <TableCell>{record.area || "-"}</TableCell>
+                            <TableCell>{record.town || "-"}</TableCell>
+                            <TableCell>{record.grid || "-"}</TableCell>
+                            <TableCell className="max-w-[200px] truncate">
+                              {record.street || "-"}
+                            </TableCell>
+                            <TableCell>{record.street_number || "-"}</TableCell>
+                            <TableCell>{record.building_no || "-"}</TableCell>
+                            <TableCell>{record.unit || "-"}</TableCell>
+                            <TableCell>{record.floor || "-"}</TableCell>
+                            <TableCell>{record.house_no || "-"}</TableCell>
+                            <TableCell className="max-w-[200px] truncate">
+                              {record.additional_address_info || "-"}
+                            </TableCell>
+                            <TableCell>{record.province || "-"}</TableCell>
+                            <TableCell>{record.district || "-"}</TableCell>
+                            <TableCell>{record.postal_code || "-"}</TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.iccid || "-"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {record.imsi || "-"}
+                            </TableCell>
+                            <TableCell>{record.contact_number || "-"}</TableCell>
+                            <TableCell className="text-xs">
+                              {record.created_at
+                                ? new Date(record.created_at).toLocaleString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {record.updated_at
+                                ? new Date(record.updated_at).toLocaleString("fr-FR")
+                                : "-"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  {/* Pagination */}
+                  <div className="flex items-center justify-between mt-4">
+                    <div className="text-sm text-muted-foreground">
+                      Page {previewPage} sur{" "}
+                      {Math.ceil(previewTotal / previewPageSize) || 1} (
+                      {formatNumber(
+                        Math.min(
+                          (previewPage - 1) * previewPageSize + 1,
+                          previewTotal
+                        )
+                      )}{" "}
+                      -{" "}
+                      {formatNumber(
+                        Math.min(previewPage * previewPageSize, previewTotal)
+                      )}{" "}
+                      sur {formatNumber(previewTotal)})
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPreviewPage(1)}
+                        disabled={previewPage === 1 || previewLoading}
+                      >
+                        Première
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                        disabled={previewPage === 1 || previewLoading}
+                      >
+                        Précédent
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setPreviewPage((p) =>
+                            Math.min(
+                              Math.ceil(previewTotal / previewPageSize) || 1,
+                              p + 1
+                            )
+                          )
+                        }
+                        disabled={
+                          previewPage >=
+                            Math.ceil(previewTotal / previewPageSize) ||
+                          previewLoading
+                        }
+                      >
+                        Suivant
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setPreviewPage(
+                            Math.ceil(previewTotal / previewPageSize) || 1
+                          )
+                        }
+                        disabled={
+                          previewPage >=
+                            Math.ceil(previewTotal / previewPageSize) ||
+                          previewLoading
+                        }
+                      >
+                        Dernière
+                      </Button>
+                    </div>
+                  </div>
+                </>
               )}
             </CardContent>
           </Card>

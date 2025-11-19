@@ -71,6 +71,8 @@ interface EnhancedBarChartProps {
   width?: number | string;
   height?: number;
   className?: string;
+  showLegendBelow?: boolean;
+  showPercentages?: boolean;
 }
 
 interface EnhancedPieChartProps {
@@ -85,6 +87,7 @@ interface EnhancedPieChartProps {
   showPercentages?: boolean;
   showValues?: boolean;
   minLabelPercentage?: number;
+  showLegendBelow?: boolean;
 }
 
 // Enhanced Bar Chart with dynamic data
@@ -95,6 +98,8 @@ export const EnhancedBarChart: React.FC<EnhancedBarChartProps> = ({
   width = "100%",
   height = 400,
   className,
+  showLegendBelow = false,
+  showPercentages = false,
 }) => {
   // Transform data for Recharts - memoized to prevent unnecessary recalculations
   const chartData: ChartDataTransformed[] = useMemo(
@@ -105,6 +110,11 @@ export const EnhancedBarChart: React.FC<EnhancedBarChartProps> = ({
         color: item.color || COLOR_PALETTE[index % COLOR_PALETTE.length],
       })),
     [data]
+  );
+
+  const total = useMemo(
+    () => chartData.reduce((sum, item) => sum + item.value, 0),
+    [chartData]
   );
 
   const chartConfig = useMemo(
@@ -182,6 +192,40 @@ export const EnhancedBarChart: React.FC<EnhancedBarChartProps> = ({
             </BarChart>
           </ChartContainer>
         </div>
+
+        {/* Legend below chart */}
+        {showLegendBelow && (
+          <div className="mt-4 flex flex-wrap justify-center gap-2 sm:gap-4">
+            {chartData.map((entry, index) => {
+              const percentage = showPercentages
+                ? (entry.value / total) * 100
+                : 0;
+
+              return (
+                <div
+                  key={index}
+                  className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"
+                >
+                  {/* eslint-disable-next-line react/forbid-dom-props */}
+                  <div
+                    className="w-2 h-2 sm:w-3 sm:h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: entry.color }}
+                    aria-hidden="true"
+                  />
+                  <span className="font-medium truncate max-w-[100px] sm:max-w-none">
+                    {entry.name.length > 15
+                      ? `${entry.name.substring(0, 15)}...`
+                      : entry.name}
+                  </span>
+                  <span className="text-muted-foreground text-xs">
+                    {showPercentages && `${percentage.toFixed(1)}%`}
+                    {` (${compactNumberFormatter.format(entry.value)})`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -199,6 +243,7 @@ export const EnhancedPieChart: React.FC<EnhancedPieChartProps> = ({
   showPercentages = true,
   showValues = false,
   minLabelPercentage = 3,
+  showLegendBelow = false,
 }) => {
   const [isMobile, setIsMobile] = useState(false);
 
@@ -367,8 +412,8 @@ export const EnhancedPieChart: React.FC<EnhancedPieChartProps> = ({
           </ChartContainer>
         </div>
 
-        {/* Legend for legend position or mobile fallback */}
-        {(labelPosition === "legend" || (isMobile && showLabels)) && (
+        {/* Legend for legend position, mobile fallback, or when showLegendBelow is true */}
+        {(labelPosition === "legend" || (isMobile && showLabels) || showLegendBelow) && (
           <div className="mt-4 flex flex-wrap justify-center gap-2 sm:gap-4">
             {chartData.map((entry, index) => {
               const percentage = (entry.value / total) * 100;
@@ -414,11 +459,22 @@ interface EnhancedMultiSeriesBarChartProps {
   width?: number | string;
   height?: number;
   className?: string;
+  showLegendBelow?: boolean;
+  showPercentages?: boolean;
 }
 
 export const EnhancedMultiSeriesBarChart: React.FC<
   EnhancedMultiSeriesBarChartProps
-> = ({ data, title, subtitle, width = "100%", height = 400, className }) => {
+> = ({
+  data,
+  title,
+  subtitle,
+  width = "100%",
+  height = 400,
+  className,
+  showLegendBelow = false,
+  showPercentages = false,
+}) => {
   // Transform data for Recharts with alternating colors - memoized
   const chartData: ChartDataTransformed[] = useMemo(
     () =>
@@ -428,6 +484,11 @@ export const EnhancedMultiSeriesBarChart: React.FC<
         color: item.color || COLOR_PALETTE[index % COLOR_PALETTE.length],
       })),
     [data]
+  );
+
+  const total = useMemo(
+    () => chartData.reduce((sum, item) => sum + item.value, 0),
+    [chartData]
   );
 
   const chartConfig = useMemo(
@@ -505,6 +566,40 @@ export const EnhancedMultiSeriesBarChart: React.FC<
             </BarChart>
           </ChartContainer>
         </div>
+
+        {/* Legend below chart */}
+        {showLegendBelow && (
+          <div className="mt-4 flex flex-wrap justify-center gap-2 sm:gap-4">
+            {chartData.map((entry, index) => {
+              const percentage = showPercentages
+                ? (entry.value / total) * 100
+                : 0;
+
+              return (
+                <div
+                  key={index}
+                  className="flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"
+                >
+                  {/* eslint-disable-next-line react/forbid-dom-props */}
+                  <div
+                    className="w-2 h-2 sm:w-3 sm:h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: entry.color }}
+                    aria-hidden="true"
+                  />
+                  <span className="font-medium truncate max-w-[120px] sm:max-w-none">
+                    {entry.name.length > 20
+                      ? `${entry.name.substring(0, 20)}...`
+                      : entry.name}
+                  </span>
+                  <span className="text-muted-foreground text-xs">
+                    {showPercentages && `${percentage.toFixed(1)}%`}
+                    {` (${compactNumberFormatter.format(entry.value)})`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

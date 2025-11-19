@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import List, Optional, Dict, Any
 import logging
 from models.dot import DOT
@@ -28,14 +28,31 @@ class DOTService:
             
         normalized_name = str(name).strip()
         
+        # Remove "DOT" prefix (case-insensitive) if present
+        import re
+        normalized_name = re.sub(r'^DOT\s+', '', normalized_name, flags=re.IGNORECASE).strip()
+        
         # Additional validation
         if not normalized_name or normalized_name.lower() in ['nan', 'none', 'null', '']:
             raise ValueError(f"Invalid DOT name: '{name}'")
         
         # Try to find existing DOT by name (case-insensitive)
+        # Also search for DOTs that might have the prefix in the database
         existing_dot = db.query(DOT).filter(
-            DOT.name.ilike(normalized_name)
+            or_(
+                DOT.name.ilike(normalized_name),
+                DOT.name.ilike(f"DOT {normalized_name}"),
+                DOT.name.ilike(f"DOT_{normalized_name}")
+            )
         ).first()
+        
+        # If found an existing DOT with prefix, normalize it
+        if existing_dot and re.match(r'^DOT\s+', existing_dot.name, re.IGNORECASE):
+            if existing_dot.name != normalized_name:
+                existing_dot.name = normalized_name
+                db.commit()
+                db.refresh(existing_dot)
+                logger.info(f"Normalized existing DOT name: '{existing_dot.name}' → '{normalized_name}'")
 
         if existing_dot:
             logger.debug(
