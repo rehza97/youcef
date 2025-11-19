@@ -121,6 +121,14 @@ const EncaissementPage = () => {
   const [customerL2Data, setCustomerL2Data] = useState([]);
   const [customerL3Data, setCustomerL3Data] = useState([]);
   const [availableFilters, setAvailableFilters] = useState({});
+  const [dotActelMapping, setDotActelMapping] = useState({});
+  const [l2L3Mapping, setL2L3Mapping] = useState({});
+  const [statusTelecomMapping, setStatusTelecomMapping] = useState({});
+  const [statusOfferMapping, setStatusOfferMapping] = useState({});
+  const [telecomStatusMapping, setTelecomStatusMapping] = useState({});
+  const [telecomOfferMapping, setTelecomOfferMapping] = useState({});
+  const [offerStatusMapping, setOfferStatusMapping] = useState({});
+  const [offerTelecomMapping, setOfferTelecomMapping] = useState({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -200,6 +208,14 @@ const EncaissementPage = () => {
         setCustomerL2Data(l2Res.data?.distribution || []);
         setCustomerL3Data(l3Res.data?.distribution || []);
         setAvailableFilters(filtersRes.data || {});
+        setDotActelMapping(filtersRes.data?.dot_actel_mapping || {});
+        setL2L3Mapping(filtersRes.data?.l2_l3_mapping || {});
+        setStatusTelecomMapping(filtersRes.data?.status_telecom_mapping || {});
+        setStatusOfferMapping(filtersRes.data?.status_offer_mapping || {});
+        setTelecomStatusMapping(filtersRes.data?.telecom_status_mapping || {});
+        setTelecomOfferMapping(filtersRes.data?.telecom_offer_mapping || {});
+        setOfferStatusMapping(filtersRes.data?.offer_status_mapping || {});
+        setOfferTelecomMapping(filtersRes.data?.offer_telecom_mapping || {});
 
         if (isRefresh) {
           toast.success("Données actualisées");
@@ -278,7 +294,135 @@ const EncaissementPage = () => {
   }, [activeTab, fetchPreviewData]);
 
   const handleFilterChange = (key, value) => {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters((prev) => {
+      const newFilters = { ...prev, [key]: value };
+      
+      // When DOTs change, filter out Actel Codes that don't belong to selected DOTs
+      if (key === "dot_ids") {
+        if (value && value.length > 0) {
+          const selectedDotIds = value;
+          const validActelCodes = new Set();
+          
+          selectedDotIds.forEach((dotId) => {
+            const codes = dotActelMapping[dotId] || [];
+            codes.forEach((code) => validActelCodes.add(code));
+          });
+          
+          // Filter out Actel Codes that don't belong to selected DOTs
+          const filteredActelCodes = (prev.actel_codes || []).filter((code) =>
+            validActelCodes.has(code)
+          );
+          
+          newFilters.actel_codes = filteredActelCodes;
+        } else {
+          // If no DOTs selected, keep all selected Actel Codes
+          // (they will be available in the dropdown)
+        }
+      }
+      
+      // When L2 codes change, filter out L3 codes that don't belong to selected L2 codes
+      if (key === "customer_l2_codes") {
+        if (value && value.length > 0) {
+          const selectedL2Codes = value;
+          const validL3Codes = new Set();
+          
+          selectedL2Codes.forEach((l2Code) => {
+            const l3Codes = l2L3Mapping[l2Code] || [];
+            l3Codes.forEach((l3) => validL3Codes.add(l3.code));
+          });
+          
+          // Filter out L3 codes that don't belong to selected L2 codes
+          const filteredL3Codes = (prev.customer_l3_codes || []).filter((l3Code) =>
+            validL3Codes.has(l3Code)
+          );
+          
+          newFilters.customer_l3_codes = filteredL3Codes;
+        } else {
+          // If no L2 codes selected, keep all selected L3 codes
+          // (they will be available in the dropdown)
+        }
+      }
+      
+      // When Subscriber Status changes, filter Telecom Types and Offer Names
+      if (key === "subscriber_statuses") {
+        if (value && value.length > 0) {
+          const selectedStatuses = value;
+          const validTelecoms = new Set();
+          const validOffers = new Set();
+          
+          selectedStatuses.forEach((status) => {
+            (statusTelecomMapping[status] || []).forEach((t) => validTelecoms.add(t));
+            (statusOfferMapping[status] || []).forEach((o) => validOffers.add(o));
+          });
+          
+          // Filter out invalid selections - only keep items that are in the valid set
+          if (validTelecoms.size > 0) {
+            newFilters.telecom_types = (prev.telecom_types || []).filter((t) =>
+              validTelecoms.has(t)
+            );
+          }
+          if (validOffers.size > 0) {
+            newFilters.offer_names = (prev.offer_names || []).filter((o) =>
+              validOffers.has(o)
+            );
+          }
+        }
+      }
+      
+      // When Telecom Type changes, filter Subscriber Statuses and Offer Names
+      if (key === "telecom_types") {
+        if (value && value.length > 0) {
+          const selectedTelecoms = value;
+          const validStatuses = new Set();
+          const validOffers = new Set();
+          
+          selectedTelecoms.forEach((telecom) => {
+            (telecomStatusMapping[telecom] || []).forEach((s) => validStatuses.add(s));
+            (telecomOfferMapping[telecom] || []).forEach((o) => validOffers.add(o));
+          });
+          
+          // Filter out invalid selections - only keep items that are in the valid set
+          if (validStatuses.size > 0) {
+            newFilters.subscriber_statuses = (prev.subscriber_statuses || []).filter((s) =>
+              validStatuses.has(s)
+            );
+          }
+          if (validOffers.size > 0) {
+            newFilters.offer_names = (prev.offer_names || []).filter((o) =>
+              validOffers.has(o)
+            );
+          }
+        }
+      }
+      
+      // When Offer Name changes, filter Subscriber Statuses and Telecom Types
+      if (key === "offer_names") {
+        if (value && value.length > 0) {
+          const selectedOffers = value;
+          const validStatuses = new Set();
+          const validTelecoms = new Set();
+          
+          selectedOffers.forEach((offer) => {
+            (offerStatusMapping[offer] || []).forEach((s) => validStatuses.add(s));
+            (offerTelecomMapping[offer] || []).forEach((t) => validTelecoms.add(t));
+          });
+          
+          // Filter out invalid selections - only keep items that are in the valid set
+          if (validStatuses.size > 0) {
+            newFilters.subscriber_statuses = (prev.subscriber_statuses || []).filter((s) =>
+              validStatuses.has(s)
+            );
+          }
+          if (validTelecoms.size > 0) {
+            newFilters.telecom_types = (prev.telecom_types || []).filter((t) =>
+              validTelecoms.has(t)
+            );
+          }
+        }
+      }
+      
+      return newFilters;
+    });
   };
 
   const applyFilters = () => {
@@ -597,12 +741,35 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Statut Abonné</Label>
                   <MultiSelect
-                    options={
-                      availableFilters.subscriber_statuses?.map((s) => ({
+                    options={(() => {
+                      // Filter based on selected Telecom Types and Offer Names
+                      // Use intersection: show only statuses that exist with BOTH selected telecoms AND offers
+                      let filteredStatuses = availableFilters.subscriber_statuses || [];
+                      
+                      if (filters.telecom_types && filters.telecom_types.length > 0) {
+                        const validStatuses = new Set();
+                        filters.telecom_types.forEach((telecom) => {
+                          const statuses = telecomStatusMapping[telecom] || [];
+                          statuses.forEach((s) => validStatuses.add(s));
+                        });
+                        filteredStatuses = filteredStatuses.filter((s) => validStatuses.has(s));
+                      }
+                      
+                      if (filters.offer_names && filters.offer_names.length > 0) {
+                        const validStatuses = new Set();
+                        filters.offer_names.forEach((offer) => {
+                          const statuses = offerStatusMapping[offer] || [];
+                          statuses.forEach((s) => validStatuses.add(s));
+                        });
+                        // Intersection: keep only statuses that are in both sets
+                        filteredStatuses = filteredStatuses.filter((s) => validStatuses.has(s));
+                      }
+                      
+                      return filteredStatuses.map((s) => ({
                         label: s,
                         value: s,
-                      })) || []
-                    }
+                      }));
+                    })()}
                     selected={filters.subscriber_statuses}
                     onChange={(values) =>
                       handleFilterChange("subscriber_statuses", values)
@@ -614,12 +781,33 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Type Télécom</Label>
                   <MultiSelect
-                    options={
-                      availableFilters.telecom_types?.map((t) => ({
+                    options={(() => {
+                      // Filter based on selected Subscriber Statuses and Offer Names
+                      let filteredTelecoms = availableFilters.telecom_types || [];
+                      
+                      if (filters.subscriber_statuses && filters.subscriber_statuses.length > 0) {
+                        const validTelecoms = new Set();
+                        filters.subscriber_statuses.forEach((status) => {
+                          const telecoms = statusTelecomMapping[status] || [];
+                          telecoms.forEach((t) => validTelecoms.add(t));
+                        });
+                        filteredTelecoms = filteredTelecoms.filter((t) => validTelecoms.has(t));
+                      }
+                      
+                      if (filters.offer_names && filters.offer_names.length > 0) {
+                        const validTelecoms = new Set();
+                        filters.offer_names.forEach((offer) => {
+                          const telecoms = offerTelecomMapping[offer] || [];
+                          telecoms.forEach((t) => validTelecoms.add(t));
+                        });
+                        filteredTelecoms = filteredTelecoms.filter((t) => validTelecoms.has(t));
+                      }
+                      
+                      return filteredTelecoms.map((t) => ({
                         label: t,
                         value: t,
-                      })) || []
-                    }
+                      }));
+                    })()}
                     selected={filters.telecom_types}
                     onChange={(values) =>
                       handleFilterChange("telecom_types", values)
@@ -631,17 +819,42 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Code Actel</Label>
                   <MultiSelect
-                    options={
-                      availableFilters.actel_codes?.map((code) => ({
-                        label: code,
-                        value: code,
-                      })) || []
-                    }
+                    options={(() => {
+                      // If DOTs are selected, filter Actel Codes to show only those belonging to selected DOTs
+                      if (filters.dot_ids && filters.dot_ids.length > 0) {
+                        const selectedDotIds = filters.dot_ids;
+                        const filteredCodes = new Set();
+                        
+                        selectedDotIds.forEach((dotId) => {
+                          const codes = dotActelMapping[dotId] || [];
+                          codes.forEach((code) => filteredCodes.add(code));
+                        });
+                        
+                        return Array.from(filteredCodes)
+                          .sort()
+                          .map((code) => ({
+                            label: code,
+                            value: code,
+                          }));
+                      }
+                      
+                      // If no DOTs selected, show all Actel Codes
+                      return (
+                        availableFilters.actel_codes?.map((code) => ({
+                          label: code,
+                          value: code,
+                        })) || []
+                      );
+                    })()}
                     selected={filters.actel_codes}
                     onChange={(values) =>
                       handleFilterChange("actel_codes", values)
                     }
-                    placeholder="Tous les codes"
+                    placeholder={
+                      filters.dot_ids && filters.dot_ids.length > 0
+                        ? "Codes Actel des DOTs sélectionnés"
+                        : "Tous les codes"
+                    }
                   />
                 </div>
               </div>
@@ -651,12 +864,33 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Nom d'Offre</Label>
                   <MultiSelect
-                    options={
-                      availableFilters.offer_names?.map((offer) => ({
+                    options={(() => {
+                      // Filter based on selected Subscriber Statuses and Telecom Types
+                      let filteredOffers = availableFilters.offer_names || [];
+                      
+                      if (filters.subscriber_statuses && filters.subscriber_statuses.length > 0) {
+                        const validOffers = new Set();
+                        filters.subscriber_statuses.forEach((status) => {
+                          const offers = statusOfferMapping[status] || [];
+                          offers.forEach((o) => validOffers.add(o));
+                        });
+                        filteredOffers = filteredOffers.filter((o) => validOffers.has(o));
+                      }
+                      
+                      if (filters.telecom_types && filters.telecom_types.length > 0) {
+                        const validOffers = new Set();
+                        filters.telecom_types.forEach((telecom) => {
+                          const offers = telecomOfferMapping[telecom] || [];
+                          offers.forEach((o) => validOffers.add(o));
+                        });
+                        filteredOffers = filteredOffers.filter((o) => validOffers.has(o));
+                      }
+                      
+                      return filteredOffers.map((offer) => ({
                         label: offer,
                         value: offer,
-                      })) || []
-                    }
+                      }));
+                    })()}
                     selected={filters.offer_names}
                     onChange={(values) =>
                       handleFilterChange("offer_names", values)
@@ -702,17 +936,45 @@ const EncaissementPage = () => {
                 <div>
                   <Label>Client L3</Label>
                   <MultiSelect
-                    options={
-                      availableFilters.customer_l3_codes?.map((l3) => ({
-                        label: `${l3.code} - ${l3.description}`,
-                        value: l3.code,
-                      })) || []
-                    }
+                    options={(() => {
+                      // If L2 codes are selected, filter L3 codes to show only those belonging to selected L2 codes
+                      if (filters.customer_l2_codes && filters.customer_l2_codes.length > 0) {
+                        const selectedL2Codes = filters.customer_l2_codes;
+                        const filteredL3Codes = new Set();
+                        
+                        selectedL2Codes.forEach((l2Code) => {
+                          const l3Codes = l2L3Mapping[l2Code] || [];
+                          l3Codes.forEach((l3) => filteredL3Codes.add(l3.code));
+                        });
+                        
+                        // Get full L3 info from available filters
+                        return (
+                          availableFilters.customer_l3_codes
+                            ?.filter((l3) => filteredL3Codes.has(l3.code))
+                            .map((l3) => ({
+                              label: `${l3.code} - ${l3.description}`,
+                              value: l3.code,
+                            })) || []
+                        );
+                      }
+                      
+                      // If no L2 codes selected, show all L3 codes
+                      return (
+                        availableFilters.customer_l3_codes?.map((l3) => ({
+                          label: `${l3.code} - ${l3.description}`,
+                          value: l3.code,
+                        })) || []
+                      );
+                    })()}
                     selected={filters.customer_l3_codes}
                     onChange={(values) =>
                       handleFilterChange("customer_l3_codes", values)
                     }
-                    placeholder="Tous L3"
+                    placeholder={
+                      filters.customer_l2_codes && filters.customer_l2_codes.length > 0
+                        ? "Codes L3 des L2 sélectionnés"
+                        : "Tous L3"
+                    }
                   />
                 </div>
               </div>

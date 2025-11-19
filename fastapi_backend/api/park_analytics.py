@@ -775,8 +775,25 @@ async def get_available_filters(
     dots = db.query(DOT).filter(DOT.id.in_(accessible_dots)).all()
 
     # Get unique values for filters
-    actel_codes = query.filter(Park.actel_code.isnot(None)).with_entities(
-        Park.actel_code).distinct().limit(50).all()
+    # Get Actel Codes with their associated DOT IDs
+    actel_codes_with_dots = query.filter(
+        Park.actel_code.isnot(None),
+        Park.dot_id.isnot(None)
+    ).with_entities(
+        Park.actel_code, Park.dot_id
+    ).distinct().limit(200).all()
+    
+    # Build mapping of DOT ID to Actel Codes
+    dot_actel_mapping = {}
+    all_actel_codes = set()
+    for actel_code, dot_id in actel_codes_with_dots:
+        if actel_code and dot_id:
+            all_actel_codes.add(actel_code)
+            if dot_id not in dot_actel_mapping:
+                dot_actel_mapping[dot_id] = []
+            if actel_code not in dot_actel_mapping[dot_id]:
+                dot_actel_mapping[dot_id].append(actel_code)
+    
     subscriber_statuses = query.filter(Park.subscriber_status.isnot(
         None)).with_entities(Park.subscriber_status).distinct().all()
     telecom_types = query.filter(Park.telecom_type.isnot(
@@ -785,20 +802,108 @@ async def get_available_filters(
         Park.offer_name).distinct().limit(100).all()
     offer_types = query.filter(Park.offer_type.isnot(None)).with_entities(
         Park.offer_type).distinct().all()
+    
+    # Get relationships between Subscriber Status, Telecom Type, and Offer Name
+    status_telecom_offer_relationships = query.filter(
+        Park.subscriber_status.isnot(None),
+        Park.telecom_type.isnot(None),
+        Park.offer_name.isnot(None)
+    ).with_entities(
+        Park.subscriber_status, Park.telecom_type, Park.offer_name
+    ).distinct().limit(500).all()
+    
+    # Build mappings for filtering
+    # Map: subscriber_status -> set of telecom_types
+    status_to_telecom = {}
+    # Map: subscriber_status -> set of offer_names
+    status_to_offers = {}
+    # Map: telecom_type -> set of subscriber_statuses
+    telecom_to_status = {}
+    # Map: telecom_type -> set of offer_names
+    telecom_to_offers = {}
+    # Map: offer_name -> set of subscriber_statuses
+    offer_to_status = {}
+    # Map: offer_name -> set of telecom_types
+    offer_to_telecom = {}
+    
+    for status, telecom, offer in status_telecom_offer_relationships:
+        if status and telecom and offer:
+            # Status -> Telecom
+            if status not in status_to_telecom:
+                status_to_telecom[status] = set()
+            status_to_telecom[status].add(telecom)
+            
+            # Status -> Offer
+            if status not in status_to_offers:
+                status_to_offers[status] = set()
+            status_to_offers[status].add(offer)
+            
+            # Telecom -> Status
+            if telecom not in telecom_to_status:
+                telecom_to_status[telecom] = set()
+            telecom_to_status[telecom].add(status)
+            
+            # Telecom -> Offer
+            if telecom not in telecom_to_offers:
+                telecom_to_offers[telecom] = set()
+            telecom_to_offers[telecom].add(offer)
+            
+            # Offer -> Status
+            if offer not in offer_to_status:
+                offer_to_status[offer] = set()
+            offer_to_status[offer].add(status)
+            
+            # Offer -> Telecom
+            if offer not in offer_to_telecom:
+                offer_to_telecom[offer] = set()
+            offer_to_telecom[offer].add(telecom)
     customer_l2_codes = query.filter(Park.customer_l2_code.isnot(None)).with_entities(
         Park.customer_l2_code, Park.customer_l2_description).distinct().limit(50).all()
+    
+    # Get Customer L2 and L3 codes with their relationships
+    l2_l3_relationships = query.filter(
+        Park.customer_l2_code.isnot(None),
+        Park.customer_l3_code.isnot(None)
+    ).with_entities(
+        Park.customer_l2_code, Park.customer_l3_code, Park.customer_l3_description
+    ).distinct().limit(200).all()
+    
+    # Build mapping of L2 Code to L3 Codes
+    l2_l3_mapping = {}
+    all_l3_codes = set()
+    for l2_code, l3_code, l3_description in l2_l3_relationships:
+        if l2_code and l3_code:
+            all_l3_codes.add((l3_code, l3_description))
+            if l2_code not in l2_l3_mapping:
+                l2_l3_mapping[l2_code] = []
+            # Check if this L3 code is already in the list for this L2 code
+            if not any(item["code"] == l3_code for item in l2_l3_mapping[l2_code]):
+                l2_l3_mapping[l2_code].append({
+                    "code": l3_code,
+                    "description": l3_description or "N/A"
+                })
+    
+    # Get all unique L3 codes (for when no L2 is selected)
     customer_l3_codes = query.filter(Park.customer_l3_code.isnot(None)).with_entities(
         Park.customer_l3_code, Park.customer_l3_description).distinct().limit(50).all()
 
     return {
         "dots": [{"id": dot.id, "name": dot.name} for dot in dots],
-        "actel_codes": [code[0] for code in actel_codes if code[0]],
+        "actel_codes": sorted(list(all_actel_codes)),
+        "dot_actel_mapping": {str(dot_id): codes for dot_id, codes in dot_actel_mapping.items()},
         "subscriber_statuses": [status[0] for status in subscriber_statuses if status[0]],
         "telecom_types": [type[0] for type in telecom_types if type[0]],
         "offer_names": [name[0] for name in offer_names if name[0]],
         "offer_types": [type[0] for type in offer_types if type[0]],
         "customer_l2_codes": [{"code": item[0], "description": item[1]} for item in customer_l2_codes if item[0]],
-        "customer_l3_codes": [{"code": item[0], "description": item[1]} for item in customer_l3_codes if item[0]]
+        "customer_l3_codes": [{"code": item[0], "description": item[1]} for item in customer_l3_codes if item[0]],
+        "l2_l3_mapping": {str(l2_code): l3_list for l2_code, l3_list in l2_l3_mapping.items()},
+        "status_telecom_mapping": {status: list(telecoms) for status, telecoms in status_to_telecom.items()},
+        "status_offer_mapping": {status: list(offers) for status, offers in status_to_offers.items()},
+        "telecom_status_mapping": {telecom: list(statuses) for telecom, statuses in telecom_to_status.items()},
+        "telecom_offer_mapping": {telecom: list(offers) for telecom, offers in telecom_to_offers.items()},
+        "offer_status_mapping": {offer: list(statuses) for offer, statuses in offer_to_status.items()},
+        "offer_telecom_mapping": {offer: list(telecoms) for offer, telecoms in offer_to_telecom.items()}
     }
 
 
