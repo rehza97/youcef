@@ -140,8 +140,8 @@ export function MultiSelect({
         <Command shouldFilter={true}>
           <CommandInput placeholder="Rechercher..." />
           <CommandList>
-            <CommandEmpty>Aucun résultat trouvé.</CommandEmpty>
-            <CommandGroup className="max-h-64 overflow-auto">
+          <CommandEmpty>Aucun résultat trouvé.</CommandEmpty>
+          <CommandGroup className="max-h-64 overflow-auto">
               {showSelectAll && options.length > 0 && (
                 <CommandItem
                   value="select-all"
@@ -187,7 +187,7 @@ export function MultiSelect({
                 const isSelected = selected.includes(option.value);
                 return (
                   <CommandItem
-                    key={option.value}
+                key={option.value}
                     value={option.label}
                     onSelect={(currentValue) => {
                       // This fires on keyboard (Enter/Space) and sometimes on click
@@ -205,32 +205,32 @@ export function MultiSelect({
                       }
                     }}
                     className="cursor-pointer"
-                  >
-                    <div
-                      className={cn(
-                        "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
+              >
+                <div
+                  className={cn(
+                    "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
                         isSelected
-                          ? "bg-primary text-primary-foreground"
-                          : "opacity-50 [&_svg]:invisible"
-                      )}
-                    >
-                      <svg
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    </div>
+                      ? "bg-primary text-primary-foreground"
+                      : "opacity-50 [&_svg]:invisible"
+                  )}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
                     <span className={cn("flex-1", isSelected && "font-medium")}>
                       {option.label}
                     </span>
                   </CommandItem>
                 );
               })}
-            </CommandGroup>
+          </CommandGroup>
           </CommandList>
         </Command>
       </PopoverContent>

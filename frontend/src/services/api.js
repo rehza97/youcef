@@ -926,17 +926,21 @@ export const getParkAnalyticsPreviewData = (filters = {}, limit = 10, offset = 0
   return api.get(`/api/park-analytics/preview-data?${params.toString()}`);
 };
 
-export const exportParkAnalyticsData = (filters = {}, onDownloadProgress = null) => {
+export const exportParkAnalyticsData = (filters = {}, exportType = "normal", onDownloadProgress = null) => {
   // Extract format from filters if present, otherwise default to csv
   const format = filters.format || "csv";
   const { format: _, ...filterParams } = filters;
-  
+
   const params = new URLSearchParams({
     format,
+    export_type: exportType,
     ...filterParams,
   });
 
-  const config = {};
+  const config = {
+    responseType: 'blob', // Important: tell axios we're expecting a blob
+  };
+
   if (onDownloadProgress) {
     config.onDownloadProgress = onDownloadProgress;
   }
@@ -969,9 +973,19 @@ export const listRevenueJournals = (params = {}) => {
       : [params.org_name]
     ).forEach((v) => query.append("org_name", v));
   }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
   if (params.cpt_comptable) query.append("cpt_comptable", params.cpt_comptable);
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact) query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min !== undefined) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max !== undefined) query.append("taux_ca_max", params.taux_ca_max);
   if (params.search) query.append("search", params.search);
   return api.get(`/api/revenue/list?${query.toString()}`);
 };
@@ -1000,20 +1014,73 @@ export const getRevenueByAccount = (params = {}) => {
   );
 };
 
+export const getRevenueByTypeFact = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  return api.get(
+    `/api/revenue/by-type-fact${query.toString() ? `?${query.toString()}` : ""}`
+  );
+};
+
+export const getRevenueByTauxCA = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  return api.get(
+    `/api/revenue/by-taux-ca${query.toString() ? `?${query.toString()}` : ""}`
+  );
+};
+
+export const getRevenueByMonth = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  return api.get(
+    `/api/revenue/by-month${query.toString() ? `?${query.toString()}` : ""}`
+  );
+};
+
 export const getRevenueFilters = async () => {
   // Return available filter options for revenue dashboard
-  // Returns available DOTs/organizations for filtering
+  // Returns org_names, months, and achievement_rate_ranges
   try {
-    const response = await api.get("/api/parks/");
-    // Wrap the parks array in a dots property for compatibility
+    const response = await api.get("/api/revenue/filters");
+    return response;
+  } catch (error) {
+    console.error("Error fetching revenue filters:", error);
+    // Fallback structure
     return {
       data: {
-        dots: response.data || []
+        org_names: [],
+        months: [],
+        achievement_rate_ranges: [
+          { label: "0-25%", min: 0, max: 25 },
+          { label: "25-50%", min: 25, max: 50 },
+          { label: "50-75%", min: 50, max: 75 },
+          { label: "75-100%", min: 75, max: 100 },
+          { label: "100%+", min: 100, max: 999999 },
+        ]
       }
     };
-  } catch (error) {
-    // Fallback if parks endpoint not available
-    return { data: { dots: [] } };
   }
 };
 
@@ -1031,6 +1098,93 @@ export const exportRevenueData = (params = {}) => {
   return api.get(`/api/revenue/export?${query.toString()}`, {
     responseType: params.format === "csv" ? undefined : "blob",
   });
+};
+
+export const getRevenuePreviewData = (filters = {}, limit = 10, offset = 0) => {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  
+  // Add all column filters - support ALL columns
+  const allColumns = [
+    "id", "file_upload_id", "dot_id", "org_name", "origine", "n_fact", "typ_fact",
+    "n_client", "client", "delai_paie", "devise", "cpt_comptable", 
+    "periode_de_facturation", "creer_par", "uom", "tax", "n_ligne", "memo_line_id",
+    "reference", "account_description_id", "revenue_objective_id"
+  ];
+  
+  allColumns.forEach((col) => {
+    if (filters[col]) {
+      (Array.isArray(filters[col])
+        ? filters[col]
+        : [filters[col]]
+      ).forEach((v) => params.append(col, v));
+    }
+  });
+  
+  // Date filters
+  if (filters.start_date) params.append("start_date", filters.start_date);
+  if (filters.end_date) params.append("end_date", filters.end_date);
+  if (filters.start_date_fact) params.append("start_date_fact", filters.start_date_fact);
+  if (filters.end_date_fact) params.append("end_date_fact", filters.end_date_fact);
+  
+  // Numeric range filters
+  if (filters.taux_ca_min) params.append("taux_ca_min", filters.taux_ca_min);
+  if (filters.taux_ca_max) params.append("taux_ca_max", filters.taux_ca_max);
+  if (filters.chiffre_aff_exe_dzd_min) params.append("chiffre_aff_exe_dzd_min", filters.chiffre_aff_exe_dzd_min);
+  if (filters.chiffre_aff_exe_dzd_max) params.append("chiffre_aff_exe_dzd_max", filters.chiffre_aff_exe_dzd_max);
+  
+  // Boolean filters - convert to string
+  if (filters.termine_flag !== undefined) {
+    const boolVal = Array.isArray(filters.termine_flag) ? filters.termine_flag : [filters.termine_flag];
+    boolVal.forEach((v) => {
+      if (v === "Oui" || v === true || v === "true") params.append("termine_flag", "true");
+      else if (v === "Non" || v === false || v === "false") params.append("termine_flag", "false");
+    });
+  }
+  if (filters.is_anomaly !== undefined) {
+    const boolVal = Array.isArray(filters.is_anomaly) ? filters.is_anomaly : [filters.is_anomaly];
+    boolVal.forEach((v) => {
+      if (v === "Oui" || v === true || v === "true") params.append("is_anomaly", "true");
+      else if (v === "Non" || v === false || v === "false") params.append("is_anomaly", "false");
+    });
+  }
+  
+  // Search
+  if (filters.search) params.append("search", filters.search);
+  
+  // Ordering
+  if (filters.order_by) params.append("order_by", filters.order_by);
+  if (filters.order_direction) params.append("order_direction", filters.order_direction);
+  
+  return api.get(`/api/revenue/preview-data?${params.toString()}`);
+};
+
+export const getRevenueColumnValues = (column) => {
+  return api.get(`/api/revenue/preview-data/column-values?column=${column}`);
+};
+
+export const getRevenueObjectivesPreview = (filters = {}, limit = 10, offset = 0) => {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  
+  if (filters.dot_name) params.append("dot_name", filters.dot_name);
+  
+  return api.get(`/api/revenue/preview-objectives?${params.toString()}`);
+};
+
+export const getAccountDescriptionsPreview = (filters = {}, limit = 10, offset = 0) => {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  
+  if (filters.search) params.append("search", filters.search);
+  
+  return api.get(`/api/revenue/preview-account-descriptions?${params.toString()}`);
 };
 
 // ETL Processing API methods

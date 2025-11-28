@@ -497,20 +497,20 @@ const EncaissementPage = () => {
 
       const response = await exportParkAnalyticsData(
         exportFilters,
+        "normal", // exportType - always normal for Encaissement page
         progressCallback
       );
 
       setExportProgress(95);
       setExportStatus("Génération du fichier...");
 
-      const { data, total_records, message } = response.data;
+      // Response is now a blob from the backend
+      const blob = response.data;
 
-      if (!data || data.length === 0) {
+      if (blob.size === 0) {
         setExportProgress(0);
         setExportStatus("");
-        toast.info(
-          message || "Aucune donnée disponible à exporter avec les filtres appliqués"
-        );
+        toast.info("Aucune donnée disponible à exporter avec les filtres appliqués");
         return;
       }
 
@@ -520,12 +520,29 @@ const EncaissementPage = () => {
       // Small delay to show 100% before download
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      downloadExportFile(data, format);
+      // Extract filename from Content-Disposition header or use default
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = `parc_data_${new Date().toISOString().split("T")[0]}.${format === 'excel' ? 'xlsx' : 'csv'}`;
 
-      // Simple success message - no limits!
-      toast.success(
-        `Export réussi: ${formatNumber(total_records)} enregistrements exportés`
-      );
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename=(.+)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1].replace(/['"]/g, '');
+        }
+      }
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      // Simple success message
+      toast.success(`Export réussi en ${format.toUpperCase()}`);
     } catch (err) {
       console.error("❌ Export failed:", err);
       setExportProgress(0);

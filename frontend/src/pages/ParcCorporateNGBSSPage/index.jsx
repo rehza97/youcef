@@ -155,45 +155,42 @@ const ParcCorporateNGBSSPage = () => {
     }
   };
 
-  const handleExport = async (format = "csv") => {
+  const handleExport = async (format = "csv", exportType = "normal") => {
     try {
-      const response = await exportParkAnalyticsData(filters, format);
+      const filterParams = { ...filters, format };
+      const response = await exportParkAnalyticsData(filterParams, exportType);
 
-      // Create and download file
-      const data = response.data.data || response.data.distribution || [];
+      // Response is now a blob directly from the backend
+      const blob = response.data;
 
-      if (data.length === 0) {
+      if (blob.size === 0) {
         toast.info("Aucune donnée disponible à exporter");
         return;
       }
 
-      const headers = Object.keys(data[0] || {});
+      // Extract filename from Content-Disposition header or use default
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = `parc_corporate_ngbss_${new Date().toISOString().split("T")[0]}.${format}`;
 
-      let content = "";
-      if (format === "csv") {
-        content = headers.join(",") + "\n";
-        content += data
-          .map((row) =>
-            headers.map((header) => `"${row[header] || ""}"`).join(",")
-          )
-          .join("\n");
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename=(.+)/);
+        if (filenameMatch && filenameMatch[1]) {
+          filename = filenameMatch[1].replace(/['"]/g, '');
+        }
       }
 
-      const blob = new Blob([content], {
-        type: format === "csv" ? "text/csv" : "application/vnd.ms-excel",
-      });
+      // Create download link
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `parc_corporate_ngbss_${
-        new Date().toISOString().split("T")[0]
-      }.${format}`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      toast.success(`Données exportées en ${format.toUpperCase()}`);
+      const exportTypeLabel = exportType === "anomalies" ? "Anomalie Parc NGBSS" : "Parc Corporate NGBSS";
+      toast.success(`${exportTypeLabel} exporté en ${format.toUpperCase()}`);
     } catch (error) {
       handleApiError(error, {
         showToast: true,
@@ -212,7 +209,10 @@ const ParcCorporateNGBSSPage = () => {
             cx="50%"
             cy="50%"
             labelLine={false}
-            label={({ name, percentage }) => `${name}: ${percentage}%`}
+            label={({ name, percentage }) => {
+              // Only show percentage on pie slices, not full names
+              return percentage > 3 ? `${percentage}%` : "";
+            }}
             dataKey={dataKey}
             nameKey={nameKey}
           >
@@ -223,8 +223,17 @@ const ParcCorporateNGBSSPage = () => {
               />
             ))}
           </Pie>
-          <Tooltip />
-          <Legend />
+          <Tooltip formatter={(value, name) => [value.toLocaleString(), name]} />
+          <Legend
+            wrapperStyle={{ fontSize: '12px' }}
+            formatter={(value, entry) => {
+              const item = data.find(d => d[nameKey] === value);
+              if (item) {
+                return `${value} (${item.percentage}% - ${item[dataKey].toLocaleString()})`;
+              }
+              return value;
+            }}
+          />
         </PieChart>
       </ResponsiveContainer>
     </div>
@@ -292,11 +301,20 @@ const ParcCorporateNGBSSPage = () => {
             <span>Actualiser</span>
           </Button>
           <Button
-            onClick={() => handleExport("csv")}
+            onClick={() => handleExport("excel", "normal")}
             className="flex items-center space-x-2"
+            variant="default"
           >
             <Download className="h-4 w-4" />
-            <span>Exporter CSV</span>
+            <span>Parc Corporate NGBSS</span>
+          </Button>
+          <Button
+            onClick={() => handleExport("excel", "anomalies")}
+            className="flex items-center space-x-2"
+            variant="destructive"
+          >
+            <Download className="h-4 w-4" />
+            <span>Anomalie Parc NGBSS</span>
           </Button>
         </div>
       </div>
@@ -322,11 +340,14 @@ const ParcCorporateNGBSSPage = () => {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Tous</SelectItem>
-                    {availableFilters.dots?.map((dot) => (
-                      <SelectItem key={dot.id} value={dot.id.toString()}>
-                        {dot.name}
-                      </SelectItem>
-                    ))}
+                    {availableFilters.dots
+                      ?.slice()
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((dot) => (
+                        <SelectItem key={dot.id} value={dot.id.toString()}>
+                          {dot.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -406,7 +427,7 @@ const ParcCorporateNGBSSPage = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">
-                  Total Abonnés Actifs
+                  Total Parc Abonnés
                 </p>
                 <p className="text-3xl font-bold text-blue-600">
                   {overview.total_active_subscribers?.toLocaleString() || "0"}

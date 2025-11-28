@@ -50,6 +50,8 @@ class FileUpload(Base):
                                       cascade="all, delete-orphan")
     revenue_anomalies = relationship("RevenueAnomaly", back_populates="file_upload",
                                      cascade="all, delete-orphan")
+    revenue_pivot_cache = relationship("RevenuePivotCache", back_populates="file_upload",
+                                       cascade="all, delete-orphan")
     encaissement_ar_records = relationship("EncaissementARDot", back_populates="file_upload",
                                           cascade="all, delete-orphan")
     encaissement_anomaly_records = relationship("EncaissementAnomaly", back_populates="file_upload",

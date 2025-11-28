@@ -53,9 +53,38 @@ class RevenueDataProcessor:
             stats = self._generate_statistics(df_processed)
 
             # Save to database
+            # Log Taux Change column before converting to dict
+            taux_change_col = self._find_column(df_processed, ['Taux Change', 'taux change', 'taux_change', 'TauxChange', 'Exchange Rate'])
+            if taux_change_col:
+                logger.info(f"📊 Found 'Taux Change' column: '{taux_change_col}'")
+                non_null_count = df_processed[taux_change_col].notna().sum()
+                logger.info(f"📊 Taux Change non-null values in processed DataFrame: {non_null_count}/{len(df_processed)}")
+                if non_null_count > 0:
+                    sample_values = df_processed[df_processed[taux_change_col].notna()][taux_change_col].head(10).tolist()
+                    logger.info(f"📊 Sample Taux Change values from DataFrame: {sample_values}")
+                else:
+                    logger.warning(f"⚠️ All Taux Change values are NaN in processed DataFrame!")
+            else:
+                logger.warning(f"⚠️ 'Taux Change' column not found in processed DataFrame!")
+                logger.info(f"   Available columns: {list(df_processed.columns)}")
+            
             processed_data = df_processed.to_dict('records')
+            
+            # Log Taux Change values after converting to dict
+            if taux_change_col:
+                taux_in_dict = [r.get(taux_change_col) for r in processed_data[:100] if taux_change_col in r and r.get(taux_change_col) is not None and not pd.isna(r.get(taux_change_col))]
+                logger.info(f"📊 Taux Change values in dict (first 100 records): {len(taux_in_dict)} non-null values found")
+                if taux_in_dict:
+                    logger.info(f"📊 Sample Taux Change values from dict: {taux_in_dict[:10]}")
+            
             save_result = self._save_journal_to_database(
                 processed_data, file_upload_id, progress_callback)
+
+            # RÈGLE 18: Generate export files
+            export_result = self._generate_export_files(df_processed, file_upload_id)
+
+            # RÈGLE 19: Generate TCD (Tableau Croisé Dynamique) 
+            pivot_result = self._generate_pivot_tables(file_upload_id)
 
             return {
                 "success": True,
@@ -64,7 +93,9 @@ class RevenueDataProcessor:
                 "filtered_rows": len(df) - len(df_processed),
                 "anomalies": self.anomalies,
                 "statistics": stats,
-                "database_save": save_result
+                "database_save": save_result,
+                "export_files": export_result,  # Export file generation result
+                "pivot_tables": pivot_result  # TCD generation result
             }
 
         except Exception as e:
@@ -463,11 +494,18 @@ class RevenueDataProcessor:
         df = self._filter_at_siege(df)
         logger.info(f"After AT_SIEGE filter: {len(df)} rows")
 
+        # 2bis. Supprimer toutes les lignes contenant 'reprise' (case-insensitive)
+        df = self._filter_reprise(df)
+        logger.info(f"After 'reprise' filter: {len(df)} rows")
+
         # 3. Org Name: Remplacer DOT_ par vide
         df = self._clean_org_name_dot(df)
 
         # 4. Org Name: Remplacer – et _ par espace
         df = self._clean_org_name_separators(df)
+
+        # 4bis. Corriger DOT BORD-BOU-ARRERIDJ en BORD BOU ARRERIDJ
+        df = self._fix_specific_dot_names(df)
 
         # 5. Trier par Org Name, Type Fact et N Fact
         df = self._sort_by_org_type_invoice(df)
@@ -541,6 +579,52 @@ class RevenueDataProcessor:
         if org_name_col:
             df.loc[:, org_name_col] = df[org_name_col].astype(str).str.replace(
                 '–', ' ').str.replace('_', ' ').str.replace('  ', ' ').str.strip()
+        return df
+
+    def _filter_reprise(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        NOUVELLE RÈGLE: Supprimer toutes les lignes contenant 'reprise' (case-insensitive)
+        Recherche dans toutes les colonnes textuelles
+        """
+        original = len(df)
+
+        # Columns to search for 'reprise'
+        text_columns = []
+        for col in df.columns:
+            if df[col].dtype == 'object':  # String columns
+                text_columns.append(col)
+
+        if text_columns:
+            # Create mask to filter rows containing 'reprise' in ANY column
+            mask = pd.Series([False] * len(df), index=df.index)
+            for col in text_columns:
+                mask |= df[col].astype(str).str.contains('reprise', case=False, na=False)
+
+            # Keep rows that DON'T contain 'reprise'
+            df = df[~mask]
+
+            filtered = original - len(df)
+            if filtered > 0:
+                logger.info(f"Filtered {filtered} rows containing 'reprise'")
+
+        return df
+
+    def _fix_specific_dot_names(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        NOUVELLE RÈGLE: Corriger des noms de DOT spécifiques
+        - BORD-BOU-ARRERIDJ → BORD BOU ARRERIDJ
+        """
+        org_name_col = self._find_column(df, ['Org Name', 'organisation'])
+        if org_name_col:
+            # Fix specific DOT name
+            df.loc[:, org_name_col] = df[org_name_col].astype(str).str.replace(
+                'BORD-BOU-ARRERIDJ', 'BORD BOU ARRERIDJ', case=False, regex=False
+            )
+            # Also fix with underscores
+            df.loc[:, org_name_col] = df[org_name_col].astype(str).str.replace(
+                'BORD_BOU_ARRERIDJ', 'BORD BOU ARRERIDJ', case=False, regex=False
+            )
+            logger.info("Fixed specific DOT names (BORD-BOU-ARRERIDJ)")
         return df
 
     def _sort_by_org_type_invoice(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -679,6 +763,120 @@ class RevenueDataProcessor:
             return RevenueProcessingHelpers.calculate_achievement_rate(df, ca_col)
         return df
 
+    def _generate_export_files(self, df: pd.DataFrame, file_upload_id: int = None) -> Dict[str, Any]:
+        """
+        RÈGLE 18: Générer deux fichiers d'exportation
+        1. Chiffre d'Affaires AR DOT (données normales)
+        2. Anomalie Chiffre d'Affaires AR DOT (Cpt Comptable contenant A)
+        """
+        try:
+            from datetime import datetime
+            import os
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            export_dir = "fastapi_backend/output/"
+            os.makedirs(export_dir, exist_ok=True)
+            
+            # File 1: Chiffre d'Affaires AR DOT (normal data)
+            normal_file = f"{export_dir}Chiffre_Affaires_AR_DOT_{timestamp}.xlsx"
+            df_export = df.copy()
+            
+            # Format monetary columns with proper formatting
+            monetary_cols = ['Prix Uni', 'Mnt Ht', 'Mnt Tax', 'Mnt Ttc', 'Chiffre Aff Exe Dzd']
+            for col in monetary_cols:
+                if col in df_export.columns:
+                    # Convert to numeric and format with 2 decimal places
+                    df_export[col] = pd.to_numeric(df_export[col], errors='coerce').round(2)
+            
+            # Add calculated columns if not present
+            if 'TVA' not in df_export.columns:
+                mnt_ttc_col = self._find_column(df_export, ['Mnt Ttc'])
+                mnt_ht_col = self._find_column(df_export, ['Mnt Ht'])
+                if mnt_ttc_col and mnt_ht_col:
+                    df_export['TVA'] = df_export.apply(
+                        lambda row: (row[mnt_ttc_col] / row[mnt_ht_col] if row[mnt_ht_col] and row[mnt_ht_col] != 0 else 0), 
+                        axis=1
+                    ).round(4)
+            
+            if 'Chiffre Aff Exe Dzd TTC' not in df_export.columns:
+                ca_col = self._find_column(df_export, ['Chiffre Aff Exe Dzd'])
+                if ca_col and 'TVA' in df_export.columns:
+                    df_export['Chiffre Aff Exe Dzd TTC'] = (df_export[ca_col] * df_export['TVA']).round(2)
+            
+            # Save normal data file
+            with pd.ExcelWriter(normal_file, engine='openpyxl') as writer:
+                df_export.to_excel(writer, sheet_name='Chiffre Affaires AR DOT', index=False)
+            
+            logger.info(f"✅ Generated normal export file: {normal_file} ({len(df_export)} rows)")
+            
+            # File 2: Anomalie Chiffre d'Affaires AR DOT (anomalies)
+            anomaly_file = f"{export_dir}Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}.xlsx"
+            
+            # Create anomalies DataFrame from detected anomalies
+            anomalies_data = []
+            for anomaly in self.anomalies:
+                anomalies_data.append({
+                    'Type Anomalie': anomaly.get('type', 'Chiffre d\'Affaires AR DOT'),
+                    'DOT (Org Name)': anomaly.get('org_name', 'N/A'),
+                    'N Fact': anomaly.get('n_fact', 'N/A'),
+                    'Cpt Comptable': anomaly.get('cpt_comptable', 'N/A'),
+                    'Description': anomaly.get('description', 'N/A'),
+                    'Raison Anomalie': anomaly.get('reason', 'N/A'),
+                    'Date Detection': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
+            
+            df_anomalies = pd.DataFrame(anomalies_data)
+            
+            # Save anomalies file
+            with pd.ExcelWriter(anomaly_file, engine='openpyxl') as writer:
+                df_anomalies.to_excel(writer, sheet_name='Anomalies CA AR DOT', index=False)
+            
+            logger.info(f"✅ Generated anomaly export file: {anomaly_file} ({len(df_anomalies)} rows)")
+            
+            # Save anomalies to database as well
+            if file_upload_id and anomalies_data:
+                self._save_anomalies_to_database(anomalies_data, file_upload_id)
+            
+            return {
+                "success": True,
+                "normal_file": normal_file,
+                "anomaly_file": anomaly_file,
+                "normal_rows": len(df_export),
+                "anomaly_rows": len(df_anomalies),
+                "export_directory": export_dir
+            }
+            
+        except Exception as e:
+            logger.error(f"Error generating export files: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "normal_file": None,
+                "anomaly_file": None
+            }
+    
+    def _save_anomalies_to_database(self, anomalies_data: List[Dict], file_upload_id: int):
+        """Save anomalies to RevenueAnomaly table"""
+        try:
+            for anomaly_data in anomalies_data:
+                revenue_anomaly = RevenueAnomaly(
+                    file_upload_id=file_upload_id,
+                    org_name=anomaly_data.get('DOT (Org Name)'),
+                    n_fact=anomaly_data.get('N Fact'),
+                    cpt_comptable=anomaly_data.get('Cpt Comptable'),
+                    description_ligne_de_produit=anomaly_data.get('Description'),
+                    anomaly_type=anomaly_data.get('Type Anomalie'),
+                    anomaly_reason=anomaly_data.get('Raison Anomalie'),
+                    original_data=str(anomaly_data)  # Store full data as JSON string
+                )
+                self.db.add(revenue_anomaly)
+            
+            self.db.flush()
+            logger.info(f"✅ Saved {len(anomalies_data)} anomalies to database")
+            
+        except Exception as e:
+            logger.error(f"Error saving anomalies to database: {e}")
+
     def _process_account_descriptions_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process account descriptions data"""
         logger.info(f"📋 Processing account descriptions data: {len(df)} rows")
@@ -782,11 +980,66 @@ class RevenueDataProcessor:
             from revenue_column_mapping import map_revenue_journal_record
             saved_count = 0
             errors = []
-
+            
+            logger.info(f"💾 Starting to save {len(records)} revenue journal records to database (file_upload_id={file_upload_id})")
+            if records:
+                logger.info(f"   📊 First record sample keys: {list(records[0].keys())[:20]}")
+            
+            # Log all Taux Change values from the file
+            taux_change_values = []
+            taux_change_column_names = ['Taux Change', 'Taux Change', 'taux_change', 'taux change', 'TauxChange', 'Exchange Rate', 'exchange rate']
+            for i, record in enumerate(records):
+                for col_name in taux_change_column_names:
+                    if col_name in record:
+                        value = record[col_name]
+                        if not pd.isna(value) and value is not None and str(value).strip() not in ['', 'nan', 'None', 'null']:
+                            taux_change_values.append((i+1, col_name, value, type(value).__name__))
+                        break
+            
+            if taux_change_values:
+                logger.info(f"📊 Found {len(taux_change_values)} records with Taux Change values:")
+                for idx, (row_num, col_name, val, val_type) in enumerate(taux_change_values[:50]):  # Log first 50
+                    logger.info(f"   Row {row_num}: '{col_name}' = {val} (type: {val_type})")
+                if len(taux_change_values) > 50:
+                    logger.info(f"   ... and {len(taux_change_values) - 50} more records with Taux Change values")
+            else:
+                logger.warning(f"⚠️ No Taux Change values found in any of the {len(records)} records!")
+                # Log what columns are actually available
+                if records:
+                    available_cols = [k for k in records[0].keys() if 'taux' in k.lower() or 'change' in k.lower() or 'rate' in k.lower() or 'exchange' in k.lower()]
+                    logger.info(f"   Available columns containing 'taux', 'change', 'rate', or 'exchange': {available_cols}")
+                    # Also check first few records for any column that might be Taux Change
+                    logger.info(f"   All columns in first record: {list(records[0].keys())}")
+            
             for i, record in enumerate(records):
                 try:
+                    # Log original record data for first few records
+                    if i < 5:
+                        logger.info(f"📋 Processing record {i+1}/{len(records)}")
+                        logger.info(f"   Raw record keys: {list(record.keys())[:15]}")
+                        # Log critical fields from raw record
+                        for key in ['Date Fact', 'Date facture GL', 'Date GL', 'Periode de facturation', 
+                                   'Taux Change', 'Memo Line Id', 'Cpt Comptable']:
+                            if key in record:
+                                raw_val = record[key]
+                                # Check if it's NaN
+                                if pd.isna(raw_val):
+                                    logger.info(f"   {key}: NaN/empty (type: {type(raw_val).__name__})")
+                                else:
+                                    logger.info(f"   {key}: {raw_val} (type: {type(raw_val).__name__})")
+                    
                     mapped = map_revenue_journal_record(
                         record, file_upload_id)
+
+                    # Log mapped values for first few records
+                    if i < 5:
+                        logger.info(f"   ✅ Mapped values for record {i+1}:")
+                        date_fields = ['date_fact', 'date_facture_gl', 'date_gl']
+                        other_fields = ['periode_de_facturation', 'taux_change', 'memo_line_id', 'account_description_id']
+                        for field in date_fields + other_fields:
+                            value = mapped.get(field)
+                            status = "✅" if value is not None else "❌ MISSING"
+                            logger.info(f"      {status} {field}: {value}")
 
                     # Get or create DOT
                     if mapped.get('org_name'):
@@ -794,11 +1047,62 @@ class RevenueDataProcessor:
                             self.db, mapped['org_name'])
                         mapped['dot_id'] = dot.id
 
+                        # Match revenue objective by org_name
+                        objective = self.db.query(RevenueObjective).filter(
+                            RevenueObjective.dot_name.ilike(mapped['org_name'])
+                        ).first()
+                        if objective:
+                            mapped['revenue_objective_id'] = objective.id
+                            # Calculate achievement rate (CA / Objectif)
+                            if mapped.get('chiffre_aff_exe_dzd') and objective.objectif_ca:
+                                try:
+                                    ca = float(mapped['chiffre_aff_exe_dzd'])
+                                    objectif = float(objective.objectif_ca)
+                                    if objectif != 0:
+                                        mapped['taux_realisation_ca'] = (ca / objectif) * 100
+                                except (ValueError, TypeError):
+                                    pass
+
+                    # Extract account_description_id from matched Account_Description object
+                    account_desc = record.get('Account_Description')
+                    if account_desc and hasattr(account_desc, 'id'):
+                        mapped['account_description_id'] = account_desc.id
+                        if i < 5:
+                            logger.info(f"   ✅ Matched AccountDescription ID: {account_desc.id} from Account_Description object")
+                    elif account_desc is None:
+                        # Try to match by cpt_comptable if Account_Description wasn't matched
+                        if mapped.get('cpt_comptable'):
+                            account = self.db.query(AccountDescription).filter(
+                                AccountDescription.cpt_comptable == mapped['cpt_comptable']
+                            ).first()
+                            if account:
+                                mapped['account_description_id'] = account.id
+                                if i < 5:
+                                    logger.info(f"   ✅ Matched AccountDescription ID: {account.id} by cpt_comptable query")
+                            else:
+                                if i < 5:
+                                    logger.warning(f"   ⚠️ No AccountDescription found for cpt_comptable: {mapped.get('cpt_comptable')}")
+
+                    # Log missing fields for debugging
+                    missing_fields = []
+                    for field in ['date_fact', 'date_facture_gl', 'date_gl', 'periode_de_facturation', 'taux_change', 'memo_line_id', 'account_description_id']:
+                        if field not in mapped or mapped[field] is None:
+                            missing_fields.append(field)
+                    
+                    if missing_fields:
+                        if i < 5:
+                            logger.warning(f"   ⚠️ Record {i+1} missing fields: {missing_fields}")
+                        else:
+                            # Log periodically for records beyond first 5
+                            if i % 100 == 0:
+                                logger.warning(f"   ⚠️ Record {i+1} missing fields: {missing_fields}")
+
                     journal_entry = RevenueJournal(**mapped)
                     self.db.add(journal_entry)
                     saved_count += 1
-
-                    if progress_callback and i % 100 == 0:
+                    
+                    # Progress callback every 100 records
+                    if progress_callback and (i + 1) % 100 == 0:
                         progress_callback({
                             "status": "saving",
                             "progress": int((i + 1) / len(records) * 100),
@@ -810,29 +1114,63 @@ class RevenueDataProcessor:
 
             # Commit transaction
             try:
+                # Check if there are any pending changes
+                if self.db.new or self.db.dirty or self.db.deleted:
+                    logger.info(f"🔄 Preparing to commit: {len(self.db.new)} new, {len(self.db.dirty)} dirty, {len(self.db.deleted)} deleted")
+                else:
+                    logger.warning(f"⚠️ No pending changes detected before commit! saved_count={saved_count}")
+                
                 self.db.flush()
                 logger.info(f"🔄 Flushed session: {saved_count} records to save")
                 
+                # Verify objects are still in session before commit
+                pending_count = len([obj for obj in self.db.new if isinstance(obj, RevenueJournal)])
+                logger.info(f"📊 RevenueJournal objects pending in session: {pending_count}")
+                
+                if pending_count == 0 and saved_count > 0:
+                    logger.error(f"❌ CRITICAL: No RevenueJournal objects in session but saved_count={saved_count}! This indicates objects were lost.")
+                
                 self.db.commit()
                 logger.info(f"✅ Transaction committed successfully")
+                
+                # Refresh session to ensure we can query
+                self.db.expire_all()
                 
                 # Verify save by counting records in DB
                 total_in_db = self.db.query(RevenueJournal).count()
                 logger.info(f"📊 Total revenue journal entries in database after commit: {total_in_db}")
                 
-                # Show journal entries from the file we just processed
+                # Show journal entries from the file we just processed with detailed field logging
                 if file_upload_id:
                     recent_journals = self.db.query(RevenueJournal).filter(
                         RevenueJournal.file_upload_id == file_upload_id
                     ).limit(5).all()
-                    logger.info(f"📋 Found {len(recent_journals)} journal entries with file_upload_id={file_upload_id}:")
+                    logger.info(f"📋 Sample journal entries saved (file_upload_id={file_upload_id}): {len(recent_journals)} found")
+                    
+                    # Count records with taux_change values
+                    taux_change_count = self.db.query(RevenueJournal).filter(
+                        RevenueJournal.file_upload_id == file_upload_id,
+                        RevenueJournal.taux_change.isnot(None)
+                    ).count()
+                    logger.info(f"📊 Taux Change statistics: {taux_change_count}/{saved_count} records have taux_change values")
+                    
                     for journal in recent_journals:
-                        logger.info(f"   ✅ ID={journal.id}, org_name='{journal.org_name}', n_fact='{journal.n_fact}', cpt_comptable='{journal.cpt_comptable}', chiffre_aff_exe_dzd={journal.chiffre_aff_exe_dzd}")
-                        logger.debug(f"      All fields: origine='{journal.origine}', typ_fact='{journal.typ_fact}', client='{journal.client}', mnt_ht={journal.mnt_ht}, mnt_ttc={journal.mnt_ttc}")
+                        logger.info(f"   ✅ ID={journal.id}, org_name='{journal.org_name}', n_fact='{journal.n_fact}'")
+                        logger.info(f"      📅 Dates - date_fact={journal.date_fact}, date_facture_gl={journal.date_facture_gl}, date_gl={journal.date_gl}")
+                        logger.info(f"      📝 Other - periode_de_facturation='{journal.periode_de_facturation}', taux_change={journal.taux_change}, memo_line_id='{journal.memo_line_id}'")
+                        logger.info(f"      🔗 Relationships - account_description_id={journal.account_description_id}, revenue_objective_id={journal.revenue_objective_id}")
+                        logger.info(f"      💰 Financial - cpt_comptable='{journal.cpt_comptable}', chiffre_aff_exe_dzd={journal.chiffre_aff_exe_dzd}, mnt_ht={journal.mnt_ht}, mnt_ttc={journal.mnt_ttc}")
+                else:
+                    logger.warning(f"⚠️ No file_upload_id provided, cannot verify saved records")
                 
             except Exception as commit_error:
                 logger.error(f"❌ Error committing transaction: {commit_error}")
                 logger.exception(commit_error)
+                # Log more details about the error
+                if hasattr(commit_error, 'orig'):
+                    logger.error(f"   Original error: {commit_error.orig}")
+                if hasattr(commit_error, 'statement'):
+                    logger.error(f"   SQL Statement: {commit_error.statement}")
                 self.db.rollback()
                 raise
             
@@ -887,3 +1225,32 @@ class RevenueDataProcessor:
                                   for k, v in month_stats.to_dict().items()}
 
         return stats
+
+    def _generate_pivot_tables(self, file_upload_id: int = None) -> Dict[str, Any]:
+        """
+        RÈGLE 18: Generate TCD (Tableau Croisé Dynamique)
+        Creates pre-calculated pivot tables for fast dashboard queries
+        """
+        try:
+            from services.revenue_pivot_service import RevenuePivotService
+
+            logger.info("📊 RÈGLE 18: Génération des TCD (Tableaux Croisés Dynamiques)...")
+
+            pivot_service = RevenuePivotService(self.db)
+            result = pivot_service.generate_all_pivots(file_upload_id)
+
+            logger.info(f"✅ TCD générés avec succès: {sum(result.values())} enregistrements")
+
+            return {
+                "success": True,
+                "pivot_counts": result,
+                "total_pivots": sum(result.values())
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de la génération des TCD: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "pivot_counts": {}
+            }

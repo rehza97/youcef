@@ -93,6 +93,11 @@ const FilePreviewPage = () => {
   const [sortColumn, setSortColumn] = useState("");
   const [sortDirection, setSortDirection] = useState("asc");
 
+  // Saved data table (database preview) sorting and column filters
+  const [savedSortColumn, setSavedSortColumn] = useState("");
+  const [savedSortDirection, setSavedSortDirection] = useState("asc");
+  const [savedColumnFilters, setSavedColumnFilters] = useState({});
+
   // Processing state
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
@@ -144,27 +149,35 @@ const FilePreviewPage = () => {
   const fileType = useMemo(() => {
     return fileData?.data?.detected_kpi_type || fileData?.data?.file_type || "";
   }, [fileData?.data?.detected_kpi_type, fileData?.data?.file_type]);
-  
+
   const isRevenueObjectiveFile = useMemo(() => {
-    return fileType === "chiffre_affaires_objective" || fileType === "revenue_objectives";
+    return (
+      fileType === "chiffre_affaires_objective" ||
+      fileType === "revenue_objectives"
+    );
   }, [fileType]);
-  
+
   const isAccountDescriptionFile = useMemo(() => {
-    return fileType === "chiffre_affaires_account_desc" || fileType === "account_descriptions";
+    return (
+      fileType === "chiffre_affaires_account_desc" ||
+      fileType === "account_descriptions"
+    );
   }, [fileType]);
-  
+
   const isRevenueJournalFile = useMemo(() => {
     return fileType === "chiffre_affaires" || fileType === "revenue_journal";
   }, [fileType]);
-  
+
   const isEncaissementArDotFile = useMemo(() => {
     return fileType === "encaissement_ar_dot" || fileType === "encaissement";
   }, [fileType]);
-  
+
   const isCreancePeriodiqueDotFile = useMemo(() => {
-    return fileType === "creance_periodique_dot" || fileType === "creance_periodique";
+    return (
+      fileType === "creance_periodique_dot" || fileType === "creance_periodique"
+    );
   }, [fileType]);
-  
+
   const isParkFile = useMemo(() => {
     return fileType === "parc_corporate_ngbss" || fileType === "park";
   }, [fileType]);
@@ -177,7 +190,17 @@ const FilePreviewPage = () => {
     refetch: refetchSavedData,
   } = useQuery({
     queryKey: [
-      isRevenueObjectiveFile ? "revenueObjectives" : isAccountDescriptionFile ? "accountDescriptions" : isRevenueJournalFile ? "revenueJournals" : isEncaissementArDotFile ? "encaissementRecords" : isCreancePeriodiqueDotFile ? "creanceRecords" : "savedParkData",
+      isRevenueObjectiveFile
+        ? "revenueObjectives"
+        : isAccountDescriptionFile
+        ? "accountDescriptions"
+        : isRevenueJournalFile
+        ? "revenueJournals"
+        : isEncaissementArDotFile
+        ? "encaissementRecords"
+        : isCreancePeriodiqueDotFile
+        ? "creanceRecords"
+        : "savedParkData",
       savedDataPage,
       savedDataPageSize,
       savedDataSearch,
@@ -235,7 +258,8 @@ const FilePreviewPage = () => {
           const total = response.data?.total || journals.length;
           const page = response.data?.page || savedDataPage;
           const page_size = response.data?.page_size || savedDataPageSize;
-          const total_pages = response.data?.total_pages || Math.ceil(total / page_size);
+          const total_pages =
+            response.data?.total_pages || Math.ceil(total / page_size);
           return {
             data: {
               data: journals,
@@ -259,7 +283,8 @@ const FilePreviewPage = () => {
           const total = response.data?.total || records.length;
           const page = response.data?.page || savedDataPage;
           const page_size = response.data?.page_size || savedDataPageSize;
-          const total_pages = response.data?.total_pages || Math.ceil(total / page_size);
+          const total_pages =
+            response.data?.total_pages || Math.ceil(total / page_size);
           return {
             data: {
               data: records,
@@ -283,7 +308,8 @@ const FilePreviewPage = () => {
           const total = response.data?.total || records.length;
           const page = response.data?.page || savedDataPage;
           const page_size = response.data?.page_size || savedDataPageSize;
-          const total_pages = response.data?.total_pages || Math.ceil(total / page_size);
+          const total_pages =
+            response.data?.total_pages || Math.ceil(total / page_size);
           return {
             data: {
               data: records,
@@ -494,29 +520,25 @@ const FilePreviewPage = () => {
   // Get all available columns from the first record
   const getAvailableColumns = () => {
     if (!savedData?.data?.data || savedData.data.data.length === 0) return [];
-    
+
     if (isRevenueObjectiveFile) {
       // For revenue objectives, show specific columns
       return ["dot_name", "objectif_ca"];
     } else if (isAccountDescriptionFile) {
       // For account descriptions, show all columns
-      return ["cpt_comptable", "description_cpt_comptable", "type_cpte", "aut_bdg", "aut_imp", "auxil", "let"];
-    } else if (isRevenueJournalFile) {
-      // For revenue journals, show key columns
       return [
-        "org_name", 
-        "n_fact", 
-        "typ_fact", 
-        "date_fact", 
-        "client", 
-        "cpt_comptable", 
-        "date_gl", 
-        "mnt_ht", 
-        "mnt_ttc", 
-        "chiffre_aff_exe_dzd",
-        "tva",
-        "taux_realisation_ca"
+        "cpt_comptable",
+        "description_cpt_comptable",
+        "type_cpte",
+        "aut_bdg",
+        "aut_imp",
+        "auxil",
+        "let",
       ];
+    } else if (isRevenueJournalFile) {
+      // For revenue journals, show ALL columns from database records
+      // Return all keys from the first record to show all 30 columns
+      return Object.keys(savedData.data.data[0]);
     } else if (isEncaissementArDotFile) {
       // For encaissement AR DOT, show key columns
       return [
@@ -532,7 +554,7 @@ const FilePreviewPage = () => {
         "taux_encaissement",
         "montant_restant",
         "date_rglt",
-        "n_rglt"
+        "n_rglt",
       ];
     } else if (isCreancePeriodiqueDotFile) {
       // For créance périodique DOT, show key columns
@@ -551,12 +573,96 @@ const FilePreviewPage = () => {
         "open_amt",
         "creance_brut",
         "creance_net",
-        "creance_ht"
+        "creance_ht",
       ];
     }
-    
+
     // For park data, show all columns
     return Object.keys(savedData.data.data[0]);
+  };
+
+  // Handle sorting for saved data table (database preview)
+  const handleSavedSort = (column) => {
+    setSavedSortColumn((prevColumn) => {
+      if (prevColumn === column) {
+        // Toggle direction when clicking the same column
+        setSavedSortDirection((prevDirection) =>
+          prevDirection === "asc" ? "desc" : "asc"
+        );
+        return prevColumn;
+      }
+      // New sort column defaults to ascending
+      setSavedSortDirection("asc");
+      return column;
+    });
+  };
+
+  // Handle per-column filter changes for saved data table
+  const handleSavedFilterChange = (column, value) => {
+    setSavedColumnFilters((prev) => ({
+      ...prev,
+      [column]: value,
+    }));
+  };
+
+  // Get saved data records after applying column filters and sorting
+  const getProcessedSavedRecords = () => {
+    if (!savedData?.data?.data || !Array.isArray(savedData.data.data)) {
+      return [];
+    }
+
+    const columns = getAvailableColumns();
+    let records = savedData.data.data;
+
+    // Apply column filters (contains match, case-insensitive)
+    if (columns.length > 0) {
+      records = records.filter((record) =>
+        columns.every((column) => {
+          const filterValue = savedColumnFilters[column];
+          if (!filterValue) return true;
+
+          const cellValue = record[column];
+          if (cellValue === null || cellValue === undefined) return false;
+
+          return String(cellValue)
+            .toLowerCase()
+            .includes(filterValue.toLowerCase());
+        })
+      );
+    }
+
+    // Apply sorting if a sort column is selected
+    if (savedSortColumn) {
+      const direction = savedSortDirection === "asc" ? 1 : -1;
+      records = [...records].sort((a, b) => {
+        const valA = a[savedSortColumn];
+        const valB = b[savedSortColumn];
+
+        if (valA === null || valA === undefined) return 1;
+        if (valB === null || valB === undefined) return -1;
+
+        // Numeric sort when both values look like numbers
+        const numA = parseFloat(valA);
+        const numB = parseFloat(valB);
+        const isNumA = !isNaN(numA) && isFinite(numA);
+        const isNumB = !isNaN(numB) && isFinite(numB);
+
+        if (isNumA && isNumB) {
+          if (numA < numB) return -1 * direction;
+          if (numA > numB) return 1 * direction;
+          return 0;
+        }
+
+        // Fallback to string comparison
+        const strA = String(valA).toLowerCase();
+        const strB = String(valB).toLowerCase();
+        if (strA < strB) return -1 * direction;
+        if (strA > strB) return 1 * direction;
+        return 0;
+      });
+    }
+
+    return records;
   };
 
   const handleDownload = async () => {
@@ -988,22 +1094,35 @@ const FilePreviewPage = () => {
                     </div>
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        {savedData.data.data.reduce((sum, obj) => sum + (parseFloat(obj.objectif_ca) || 0), 0).toLocaleString('fr-FR') || 0}
+                        {savedData.data.data
+                          .reduce(
+                            (sum, obj) =>
+                              sum + (parseFloat(obj.objectif_ca) || 0),
+                            0
+                          )
+                          .toLocaleString("fr-FR") || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Objectif total (DZD)</div>
+                      <div className="text-sm text-gray-600">
+                        Objectif total (DZD)
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-purple-50 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {savedData.data.data.filter(obj => obj.dot_id).length || 0}
+                        {savedData.data.data.filter((obj) => obj.dot_id)
+                          .length || 0}
                       </div>
-                      <div className="text-sm text-gray-600">
-                        DOTs associés
-                      </div>
+                      <div className="text-sm text-gray-600">DOTs associés</div>
                     </div>
                     <div className="text-center p-4 bg-orange-50 rounded-lg">
                       <div className="text-2xl font-bold text-orange-600">
-                        {savedData.data.data.length > 0 
-                          ? Math.round(savedData.data.data.reduce((sum, obj) => sum + (parseFloat(obj.objectif_ca) || 0), 0) / savedData.data.data.length).toLocaleString('fr-FR')
+                        {savedData.data.data.length > 0
+                          ? Math.round(
+                              savedData.data.data.reduce(
+                                (sum, obj) =>
+                                  sum + (parseFloat(obj.objectif_ca) || 0),
+                                0
+                              ) / savedData.data.data.length
+                            ).toLocaleString("fr-FR")
                           : 0}
                       </div>
                       <div className="text-sm text-gray-600">Moyenne (DZD)</div>
@@ -1015,19 +1134,25 @@ const FilePreviewPage = () => {
                       <div className="text-2xl font-bold text-blue-600">
                         {savedData.data.data.length || 0}
                       </div>
-                      <div className="text-sm text-gray-600">
-                        Total comptes
-                      </div>
+                      <div className="text-sm text-gray-600">Total comptes</div>
                     </div>
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        {new Set(savedData.data.data.map(acc => acc.type_cpte).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((acc) => acc.type_cpte)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Types de comptes</div>
+                      <div className="text-sm text-gray-600">
+                        Types de comptes
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-purple-50 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {savedData.data.data.filter(acc => acc.description_cpt_comptable).length || 0}
+                        {savedData.data.data.filter(
+                          (acc) => acc.description_cpt_comptable
+                        ).length || 0}
                       </div>
                       <div className="text-sm text-gray-600">
                         Comptes avec description
@@ -1035,9 +1160,15 @@ const FilePreviewPage = () => {
                     </div>
                     <div className="text-center p-4 bg-orange-50 rounded-lg">
                       <div className="text-2xl font-bold text-orange-600">
-                        {new Set(savedData.data.data.map(acc => acc.aut_bdg).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((acc) => acc.aut_bdg)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Autorités budget</div>
+                      <div className="text-sm text-gray-600">
+                        Autorités budget
+                      </div>
                     </div>
                   </div>
                 ) : isRevenueJournalFile && savedData?.data?.data ? (
@@ -1046,33 +1177,50 @@ const FilePreviewPage = () => {
                       <div className="text-2xl font-bold text-blue-600">
                         {savedData.data.total || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Total enregistrements</div>
+                      <div className="text-sm text-gray-600">
+                        Total enregistrements
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        {new Intl.NumberFormat('fr-FR', {
-                          style: 'decimal',
+                        {new Intl.NumberFormat("fr-FR", {
+                          style: "decimal",
                           minimumFractionDigits: 2,
-                          maximumFractionDigits: 2
+                          maximumFractionDigits: 2,
                         }).format(
-                          savedData.data.data.reduce((sum, record) => 
-                            sum + (parseFloat(record.chiffre_aff_exe_dzd) || 0), 0
+                          savedData.data.data.reduce(
+                            (sum, record) =>
+                              sum +
+                              (parseFloat(record.chiffre_aff_exe_dzd) || 0),
+                            0
                           )
                         )}
                       </div>
-                      <div className="text-sm text-gray-600">Chiffre d'affaires total (DZD)</div>
+                      <div className="text-sm text-gray-600">
+                        Chiffre d'affaires total (DZD)
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-purple-50 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {new Set(savedData.data.data.map(record => record.org_name).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((record) => record.org_name)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
                       <div className="text-sm text-gray-600">Organisations</div>
                     </div>
                     <div className="text-center p-4 bg-orange-50 rounded-lg">
                       <div className="text-2xl font-bold text-orange-600">
-                        {new Set(savedData.data.data.map(record => record.n_fact).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((record) => record.n_fact)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Factures uniques</div>
+                      <div className="text-sm text-gray-600">
+                        Factures uniques
+                      </div>
                     </div>
                   </div>
                 ) : isEncaissementArDotFile && savedData?.data?.data ? (
@@ -1081,39 +1229,53 @@ const FilePreviewPage = () => {
                       <div className="text-2xl font-bold text-blue-600">
                         {savedData.data.total || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Total enregistrements</div>
+                      <div className="text-sm text-gray-600">
+                        Total enregistrements
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        {new Intl.NumberFormat('fr-FR', {
-                          style: 'decimal',
+                        {new Intl.NumberFormat("fr-FR", {
+                          style: "decimal",
                           minimumFractionDigits: 2,
-                          maximumFractionDigits: 2
+                          maximumFractionDigits: 2,
                         }).format(
-                          savedData.data.data.reduce((sum, record) => 
-                            sum + (parseFloat(record.montant_ttc) || 0), 0
+                          savedData.data.data.reduce(
+                            (sum, record) =>
+                              sum + (parseFloat(record.montant_ttc) || 0),
+                            0
                           )
                         )}
                       </div>
-                      <div className="text-sm text-gray-600">Montant TTC total (DZD)</div>
+                      <div className="text-sm text-gray-600">
+                        Montant TTC total (DZD)
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-purple-50 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {new Intl.NumberFormat('fr-FR', {
-                          style: 'decimal',
+                        {new Intl.NumberFormat("fr-FR", {
+                          style: "decimal",
                           minimumFractionDigits: 2,
-                          maximumFractionDigits: 2
+                          maximumFractionDigits: 2,
                         }).format(
-                          savedData.data.data.reduce((sum, record) => 
-                            sum + (parseFloat(record.encaissement) || 0), 0
+                          savedData.data.data.reduce(
+                            (sum, record) =>
+                              sum + (parseFloat(record.encaissement) || 0),
+                            0
                           )
                         )}
                       </div>
-                      <div className="text-sm text-gray-600">Encaissement total (DZD)</div>
+                      <div className="text-sm text-gray-600">
+                        Encaissement total (DZD)
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-orange-50 rounded-lg">
                       <div className="text-2xl font-bold text-orange-600">
-                        {new Set(savedData.data.data.map(record => record.organisation).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((record) => record.organisation)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
                       <div className="text-sm text-gray-600">Organisations</div>
                     </div>
@@ -1124,31 +1286,45 @@ const FilePreviewPage = () => {
                       <div className="text-2xl font-bold text-blue-600">
                         {savedData.data.total || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Total enregistrements</div>
+                      <div className="text-sm text-gray-600">
+                        Total enregistrements
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-green-50 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        {new Intl.NumberFormat('fr-FR', {
-                          style: 'decimal',
+                        {new Intl.NumberFormat("fr-FR", {
+                          style: "decimal",
                           minimumFractionDigits: 2,
-                          maximumFractionDigits: 2
+                          maximumFractionDigits: 2,
                         }).format(
-                          savedData.data.data.reduce((sum, record) => 
-                            sum + (parseFloat(record.creance_net) || 0), 0
+                          savedData.data.data.reduce(
+                            (sum, record) =>
+                              sum + (parseFloat(record.creance_net) || 0),
+                            0
                           )
                         )}
                       </div>
-                      <div className="text-sm text-gray-600">Créance Net total (DZD)</div>
+                      <div className="text-sm text-gray-600">
+                        Créance Net total (DZD)
+                      </div>
                     </div>
                     <div className="text-center p-4 bg-purple-50 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {new Set(savedData.data.data.map(record => record.dot).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((record) => record.dot)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
                       <div className="text-sm text-gray-600">DOTs</div>
                     </div>
                     <div className="text-center p-4 bg-orange-50 rounded-lg">
                       <div className="text-2xl font-bold text-orange-600">
-                        {new Set(savedData.data.data.map(record => record.produit).filter(Boolean)).size || 0}
+                        {new Set(
+                          savedData.data.data
+                            .map((record) => record.produit)
+                            .filter(Boolean)
+                        ).size || 0}
                       </div>
                       <div className="text-sm text-gray-600">Produits</div>
                     </div>
@@ -1202,7 +1378,9 @@ const FilePreviewPage = () => {
                 ) : isAccountDescriptionFile ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div>
-                      <Label htmlFor="search">Rechercher par code comptable</Label>
+                      <Label htmlFor="search">
+                        Rechercher par code comptable
+                      </Label>
                       <Input
                         id="search"
                         placeholder="Code comptable..."
@@ -1214,7 +1392,9 @@ const FilePreviewPage = () => {
                 ) : isRevenueJournalFile ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div>
-                      <Label htmlFor="search">Rechercher par organisation</Label>
+                      <Label htmlFor="search">
+                        Rechercher par organisation
+                      </Label>
                       <Input
                         id="search"
                         placeholder="Nom de l'organisation..."
@@ -1226,7 +1406,9 @@ const FilePreviewPage = () => {
                 ) : isEncaissementArDotFile ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div>
-                      <Label htmlFor="search">Rechercher par organisation</Label>
+                      <Label htmlFor="search">
+                        Rechercher par organisation
+                      </Label>
                       <Input
                         id="search"
                         placeholder="Nom de l'organisation..."
@@ -1361,137 +1543,322 @@ const FilePreviewPage = () => {
                       <TableHeader>
                         <TableRow>
                           {getAvailableColumns().map((column) => (
+                            <TableHead
+                              key={column}
+                              className="min-w-[120px] cursor-pointer select-none hover:bg-gray-50"
+                              onClick={() => handleSavedSort(column)}
+                            >
+                              <div className="flex items-center justify-between space-x-1">
+                                <span>
+                                  {column === "dot_name"
+                                    ? "DOT"
+                                    : column === "objectif_ca"
+                                    ? "Objectif C.A (DZD)"
+                                    : column === "cpt_comptable"
+                                    ? "Code Comptable"
+                                    : column === "description_cpt_comptable"
+                                    ? "Description Cpt Comptable"
+                                    : column === "type_cpte"
+                                    ? "TYPE_CPTE"
+                                    : column === "aut_bdg"
+                                    ? "AUT_BDG"
+                                    : column === "aut_imp"
+                                    ? "AUT_IMP"
+                                    : column === "auxil"
+                                    ? "AUXIL"
+                                    : column === "let"
+                                    ? "LET"
+                                    : // Revenue Journal columns (all 30 columns)
+                                    column === "org_name"
+                                    ? "Org Name"
+                                    : column === "origine"
+                                    ? "Origine"
+                                    : column === "n_fact"
+                                    ? "N Fact"
+                                    : column === "typ_fact"
+                                    ? "Typ Fact"
+                                    : column === "date_fact"
+                                    ? "Date Fact"
+                                    : column === "n_client"
+                                    ? "N Client"
+                                    : column === "client"
+                                    ? "Client"
+                                    : column === "delai_paie"
+                                    ? "Delai Paie"
+                                    : column === "devise"
+                                    ? "Devise"
+                                    : column === "obj_fact"
+                                    ? "Obj Fact"
+                                    : column === "cpt_comptable"
+                                    ? "Cpt Comptable"
+                                    : column === "date_facture_gl"
+                                    ? "Date facture GL"
+                                    : column === "date_gl"
+                                    ? "Date GL"
+                                    : column === "periode_de_facturation"
+                                    ? "Periode de facturation"
+                                    : column === "reference"
+                                    ? "Reference"
+                                    : column === "termine_flag"
+                                    ? "Termine Flag"
+                                    : column === "tax_amount"
+                                    ? "Tax Amount"
+                                    : column === "creer_par"
+                                    ? "Creer Par"
+                                    : column === "n_ligne"
+                                    ? "N Ligne"
+                                    : column === "description_ligne_de_produit"
+                                    ? "Description (ligne de produit)"
+                                    : column === "uom"
+                                    ? "Uom"
+                                    : column === "qte"
+                                    ? "Qte"
+                                    : column === "prix_uni"
+                                    ? "Prix Uni"
+                                    : column === "taux_change"
+                                    ? "Taux Change"
+                                    : column === "mnt_ht"
+                                    ? "Mnt Ht"
+                                    : column === "tax"
+                                    ? "Tax"
+                                    : column === "mnt_tax"
+                                    ? "Mnt Tax"
+                                    : column === "mnt_ttc"
+                                    ? "Mnt Ttc"
+                                    : column === "memo_line_id"
+                                    ? "Memo Line Id"
+                                    : column === "chiffre_aff_exe_dzd"
+                                    ? "Chiffre Aff Exe Dzd"
+                                    : column === "tva"
+                                    ? "TVA"
+                                    : column === "chiffre_aff_exe_dzd_ttc"
+                                    ? "Chiffre Aff Exe Dzd TTC"
+                                    : column === "taux_realisation_ca"
+                                    ? "Taux Réalisation C.A (%)"
+                                    : // Encaissement AR DOT columns
+                                    column === "organisation"
+                                    ? "Organisation"
+                                    : column === "source"
+                                    ? "Source"
+                                    : column === "encaissement"
+                                    ? "Encaissement (DZD)"
+                                    : column === "taux_encaissement"
+                                    ? "Taux Encaissement (%)"
+                                    : column === "montant_restant"
+                                    ? "Montant Restant (DZD)"
+                                    : column === "date_rglt"
+                                    ? "Date Règlement"
+                                    : column === "n_rglt"
+                                    ? "N° Règlement"
+                                    : // Créance Périodique DOT columns
+                                    column === "dot"
+                                    ? "DOT"
+                                    : column === "actel"
+                                    ? "ACTEL"
+                                    : column === "mois"
+                                    ? "Mois"
+                                    : column === "annee"
+                                    ? "Année"
+                                    : column === "period_key"
+                                    ? "Période"
+                                    : column === "subs_status"
+                                    ? "Statut Abonné"
+                                    : column === "produit"
+                                    ? "Produit"
+                                    : column === "cust_lev1"
+                                    ? "Niveau Client 1"
+                                    : column === "cust_lev2"
+                                    ? "Niveau Client 2"
+                                    : column === "cust_lev3"
+                                    ? "Niveau Client 3"
+                                    : column === "invoice_amt"
+                                    ? "Montant Facture (DZD)"
+                                    : column === "open_amt"
+                                    ? "Montant Ouvert (DZD)"
+                                    : column === "creance_brut"
+                                    ? "Créance Brut (DZD)"
+                                    : column === "creance_net"
+                                    ? "Créance Net (DZD)"
+                                    : column === "creance_ht"
+                                    ? "Créance HT (DZD)"
+                                    : column}
+                                </span>
+                                {savedSortColumn === column && (
+                                  <span className="text-blue-600 text-xs">
+                                    {savedSortDirection === "asc" ? "↑" : "↓"}
+                                  </span>
+                                )}
+                              </div>
+                            </TableHead>
+                          ))}
+                        </TableRow>
+                        {/* Column filters row */}
+                        <TableRow>
+                          {getAvailableColumns().map((column) => (
                             <TableHead key={column} className="min-w-[120px]">
-                              {column === "dot_name" ? "DOT" :
-                               column === "objectif_ca" ? "Objectif C.A (DZD)" :
-                               column === "cpt_comptable" ? "Code Comptable" :
-                               column === "description_cpt_comptable" ? "Description Cpt Comptable" :
-                               column === "type_cpte" ? "TYPE_CPTE" :
-                               column === "aut_bdg" ? "AUT_BDG" :
-                               column === "aut_imp" ? "AUT_IMP" :
-                               column === "auxil" ? "AUXIL" :
-                               column === "let" ? "LET" :
-                               column === "org_name" ? "Organisation" :
-                               column === "n_fact" ? "N° Facture" :
-                               column === "typ_fact" ? "Type Facture" :
-                               column === "date_fact" ? "Date Facture" :
-                               column === "client" ? "Client" :
-                               column === "date_gl" ? "Date GL" :
-                               column === "mnt_ht" ? "Montant HT (DZD)" :
-                               column === "mnt_ttc" ? "Montant TTC (DZD)" :
-                               column === "chiffre_aff_exe_dzd" ? "Chiffre d'Affaires (DZD)" :
-                               column === "tva" ? "TVA" :
-                               column === "taux_realisation_ca" ? "Taux Réalisation C.A (%)" :
-                               // Encaissement AR DOT columns
-                               column === "organisation" ? "Organisation" :
-                               column === "source" ? "Source" :
-                               column === "encaissement" ? "Encaissement (DZD)" :
-                               column === "taux_encaissement" ? "Taux Encaissement (%)" :
-                               column === "montant_restant" ? "Montant Restant (DZD)" :
-                               column === "date_rglt" ? "Date Règlement" :
-                               column === "n_rglt" ? "N° Règlement" :
-                               // Créance Périodique DOT columns
-                               column === "dot" ? "DOT" :
-                               column === "actel" ? "ACTEL" :
-                               column === "mois" ? "Mois" :
-                               column === "annee" ? "Année" :
-                               column === "period_key" ? "Période" :
-                               column === "subs_status" ? "Statut Abonné" :
-                               column === "produit" ? "Produit" :
-                               column === "cust_lev1" ? "Niveau Client 1" :
-                               column === "cust_lev2" ? "Niveau Client 2" :
-                               column === "cust_lev3" ? "Niveau Client 3" :
-                               column === "invoice_amt" ? "Montant Facture (DZD)" :
-                               column === "open_amt" ? "Montant Ouvert (DZD)" :
-                               column === "creance_brut" ? "Créance Brut (DZD)" :
-                               column === "creance_net" ? "Créance Net (DZD)" :
-                               column === "creance_ht" ? "Créance HT (DZD)" :
-                               column}
+                              <Input
+                                value={savedColumnFilters[column] || ""}
+                                onChange={(e) =>
+                                  handleSavedFilterChange(
+                                    column,
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="Filtrer..."
+                                className="h-8 text-xs"
+                              />
                             </TableHead>
                           ))}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {Array.isArray(savedData?.data?.data) &&
-                          savedData.data.data.map((record, index) => (
-                            <TableRow key={record.id || index}>
-                              {getAvailableColumns().map((column) => (
-                                <TableCell
-                                  key={column}
-                                  className="max-w-xs truncate text-sm"
-                                >
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <div className="truncate">
-                                        {column === "objectif_ca" && isRevenueObjectiveFile
-                                          ? new Intl.NumberFormat('fr-FR', {
-                                              style: 'decimal',
+                        {getProcessedSavedRecords().map((record, index) => (
+                          <TableRow key={record.id || index}>
+                            {getAvailableColumns().map((column) => (
+                              <TableCell
+                                key={column}
+                                className="max-w-xs truncate text-sm"
+                              >
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <div className="truncate">
+                                      {column === "objectif_ca" &&
+                                      isRevenueObjectiveFile
+                                        ? new Intl.NumberFormat("fr-FR", {
+                                            style: "decimal",
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          }).format(
+                                            parseFloat(record[column]) || 0
+                                          )
+                                        : isRevenueJournalFile &&
+                                          (column === "mnt_ht" ||
+                                            column === "mnt_ttc" ||
+                                            column === "mnt_tax" ||
+                                            column === "chiffre_aff_exe_dzd" ||
+                                            column ===
+                                              "chiffre_aff_exe_dzd_ttc" ||
+                                            column === "tax_amount" ||
+                                            column === "prix_uni")
+                                        ? new Intl.NumberFormat("fr-FR", {
+                                            style: "decimal",
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          }).format(
+                                            parseFloat(record[column]) || 0
+                                          )
+                                        : isRevenueJournalFile &&
+                                          (column === "qte" ||
+                                            column === "taux_change")
+                                        ? record[column] !== null &&
+                                          record[column] !== undefined
+                                          ? new Intl.NumberFormat("fr-FR", {
+                                              style: "decimal",
                                               minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2
-                                            }).format(parseFloat(record[column]) || 0)
-                                          : (isRevenueJournalFile && (column === "mnt_ht" || column === "mnt_ttc" || column === "chiffre_aff_exe_dzd"))
-                                          ? new Intl.NumberFormat('fr-FR', {
-                                              style: 'decimal',
+                                              maximumFractionDigits: 6,
+                                            }).format(
+                                              parseFloat(record[column]) || 0
+                                            )
+                                          : "N/A"
+                                        : isRevenueJournalFile &&
+                                          column === "tva"
+                                        ? record[column] !== null &&
+                                          record[column] !== undefined
+                                          ? new Intl.NumberFormat("fr-FR", {
+                                              style: "decimal",
+                                              minimumFractionDigits: 4,
+                                              maximumFractionDigits: 4,
+                                            }).format(
+                                              parseFloat(record[column]) || 0
+                                            )
+                                          : "N/A"
+                                        : isRevenueJournalFile &&
+                                          column === "taux_realisation_ca"
+                                        ? record[column] !== null &&
+                                          record[column] !== undefined
+                                          ? new Intl.NumberFormat("fr-FR", {
+                                              style: "decimal",
                                               minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2
-                                            }).format(parseFloat(record[column]) || 0)
-                                          : (isRevenueJournalFile && column === "tva")
-                                          ? record[column] !== null && record[column] !== undefined
-                                            ? new Intl.NumberFormat('fr-FR', {
-                                                style: 'decimal',
-                                                minimumFractionDigits: 4,
-                                                maximumFractionDigits: 4
-                                              }).format(parseFloat(record[column]) || 0)
-                                            : "N/A"
-                                          : (isRevenueJournalFile && column === "taux_realisation_ca")
-                                          ? record[column] !== null && record[column] !== undefined
-                                            ? new Intl.NumberFormat('fr-FR', {
-                                                style: 'decimal',
-                                                minimumFractionDigits: 2,
-                                                maximumFractionDigits: 2
-                                              }).format(parseFloat(record[column]) || 0) + "%"
-                                            : "N/A"
-                                          : (isRevenueJournalFile && (column === "date_fact" || column === "date_gl"))
-                                          ? record[column] 
-                                            ? new Date(record[column]).toLocaleDateString('fr-FR')
-                                            : "N/A"
-                                          : (isEncaissementArDotFile && (column === "montant_ht" || column === "montant_ttc" || column === "encaissement" || column === "montant_restant"))
-                                          ? new Intl.NumberFormat('fr-FR', {
-                                              style: 'decimal',
+                                              maximumFractionDigits: 2,
+                                            }).format(
+                                              parseFloat(record[column]) || 0
+                                            ) + "%"
+                                          : "N/A"
+                                        : isRevenueJournalFile &&
+                                          (column === "date_fact" ||
+                                            column === "date_gl" ||
+                                            column === "date_facture_gl")
+                                        ? record[column]
+                                          ? new Date(
+                                              record[column]
+                                            ).toLocaleDateString("fr-FR")
+                                          : "N/A"
+                                        : isRevenueJournalFile &&
+                                          column === "termine_flag"
+                                        ? record[column] === true ||
+                                          record[column] === 1 ||
+                                          record[column] === "1" ||
+                                          record[column] === "true"
+                                          ? "Oui"
+                                          : "Non"
+                                        : isEncaissementArDotFile &&
+                                          (column === "montant_ht" ||
+                                            column === "montant_ttc" ||
+                                            column === "encaissement" ||
+                                            column === "montant_restant")
+                                        ? new Intl.NumberFormat("fr-FR", {
+                                            style: "decimal",
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          }).format(
+                                            parseFloat(record[column]) || 0
+                                          )
+                                        : isEncaissementArDotFile &&
+                                          column === "taux_encaissement"
+                                        ? record[column] !== null &&
+                                          record[column] !== undefined
+                                          ? new Intl.NumberFormat("fr-FR", {
+                                              style: "decimal",
                                               minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2
-                                            }).format(parseFloat(record[column]) || 0)
-                                          : (isEncaissementArDotFile && column === "taux_encaissement")
-                                          ? record[column] !== null && record[column] !== undefined
-                                            ? new Intl.NumberFormat('fr-FR', {
-                                                style: 'decimal',
-                                                minimumFractionDigits: 2,
-                                                maximumFractionDigits: 2
-                                              }).format(parseFloat(record[column]) || 0) + "%"
-                                            : "N/A"
-                                          : (isEncaissementArDotFile && (column === "date_fact" || column === "date_rglt"))
-                                          ? record[column] 
-                                            ? new Date(record[column]).toLocaleDateString('fr-FR')
-                                            : "N/A"
-                                          : (isCreancePeriodiqueDotFile && (column === "invoice_amt" || column === "open_amt" || column === "creance_brut" || column === "creance_net" || column === "creance_ht"))
-                                          ? new Intl.NumberFormat('fr-FR', {
-                                              style: 'decimal',
-                                              minimumFractionDigits: 2,
-                                              maximumFractionDigits: 2
-                                            }).format(parseFloat(record[column]) || 0)
-                                          : formatValue(record[column])}
-                                      </div>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p className="max-w-xs break-words">
-                                        {String(record[column] || "N/A")}
-                                      </p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TableCell>
-                              ))}
-                            </TableRow>
-                          ))}
+                                              maximumFractionDigits: 2,
+                                            }).format(
+                                              parseFloat(record[column]) || 0
+                                            ) + "%"
+                                          : "N/A"
+                                        : isEncaissementArDotFile &&
+                                          (column === "date_fact" ||
+                                            column === "date_rglt")
+                                        ? record[column]
+                                          ? new Date(
+                                              record[column]
+                                            ).toLocaleDateString("fr-FR")
+                                          : "N/A"
+                                        : isCreancePeriodiqueDotFile &&
+                                          (column === "invoice_amt" ||
+                                            column === "open_amt" ||
+                                            column === "creance_brut" ||
+                                            column === "creance_net" ||
+                                            column === "creance_ht")
+                                        ? new Intl.NumberFormat("fr-FR", {
+                                            style: "decimal",
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          }).format(
+                                            parseFloat(record[column]) || 0
+                                          )
+                                        : formatValue(record[column])}
+                                    </div>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="max-w-xs break-words">
+                                      {String(record[column] || "N/A")}
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
                       </TableBody>
                     </Table>
                   </div>

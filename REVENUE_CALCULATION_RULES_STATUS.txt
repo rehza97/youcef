@@ -1,0 +1,97 @@
+REVENUE CALCULATION RULES - VERIFICATION STATUS
+===============================================
+
+USER REQUIREMENTS vs ACTUAL IMPLEMENTATION:
+
+1. CROISER LES 3 FICHIERS (Cross-reference 3 files)
+   STATUS: ✅ IMPLEMENTED
+   - Description Cpt Comptable: Matched in step 17 (line 540)
+   - Objectif C.A: Matched in step 18 (line 543)
+   - AT Journal: Main file being processed
+   ISSUE: Cross-referencing happens AFTER filtering (should be FIRST)
+   CURRENT ORDER: Steps 17-18 (after all filtering)
+   SHOULD BE: Step 1 (before any filtering)
+
+2. SUPPRIMER TOUTES LES LIGNES CONTENANT 'REPRISE'
+   STATUS: ✅ IMPLEMENTED
+   - Applied in step 2bis (line 498)
+   - Case-insensitive search across all text columns
+   - Logs show: "After 'reprise' filter: X rows"
+
+3. CORRIGER LES CHIFFRES (Prix Uni, Mnt Ht, Mnt Tax, Mnt Ttc, Chiffre Aff Exe Dzd)
+   STATUS: ✅ IMPLEMENTED
+   - Applied in step 9-13 (line 528)
+   - Removes dots (thousands separator)
+   - Converts to float format
+   - Format: French format (comma for decimal, space for thousands)
+   NOTE: Formatting happens in export, not in database
+
+4. AJOUTER COLONNE TVA (=Mnt Ttc/Mnt Ht) - Remplacer #DIV/0! par 0,00
+   STATUS: ✅ IMPLEMENTED (JUST FIXED)
+   - Applied in step 15 (line 534)
+   - Formula: TVA = Mnt Ttc / Mnt Ht
+   - Division by zero: Returns 0.00 (was None, now fixed)
+   - Rounding: 4 decimal places
+
+5. AJOUTER COLONNE Chiffre Aff Exe Dzd TTC (=Chiffre Aff Exe Dzd * TVA)
+   STATUS: ✅ IMPLEMENTED
+   - Applied in step 16 (line 537)
+   - Formula: CA TTC = Chiffre Aff Exe Dzd * TVA
+   - Rounding: 2 decimal places
+
+6. CORRIGER DOT BORD-BOU-ARRERIDJ en BORD BOU ARRERIDJ
+   STATUS: ✅ IMPLEMENTED
+   - Applied in step 4bis (line 508)
+   - Replaces 'BORD-BOU-ARRERIDJ' with 'BORD BOU ARRERIDJ'
+
+7. GÉNÉRER DEUX FICHIERS D'EXPORTATION
+   STATUS: ✅ IMPLEMENTED
+   - File 1: Chiffre d'Affaires AR DOT (normal data)
+   - File 2: Anomalie Chiffre d'Affaires AR DOT (anomalies)
+   - Location: fastapi_backend/output/
+   - Format: Excel (.xlsx)
+   - Applied after processing (line 84)
+
+8. METTRE Cpt Comptable CONTENANT LA LETTRE A DANS FICHIER ANOMALIE
+   STATUS: ✅ IMPLEMENTED
+   - Detected in step 6 (line 516)
+   - Condition: Cpt Comptable contains 'A' AND Description doesn't start with '@'
+   - Saved to anomalies in step 7 (line 520)
+   - Exported to anomaly file
+
+CURRENT PROCESSING ORDER:
+=========================
+1. Filter AT_SIEGE
+2. Filter 'reprise' ✅
+3. Clean Org Name (remove DOT_)
+4. Clean Org Name (replace separators)
+5. Fix BORD-BOU-ARRERIDJ ✅
+6. Sort by Org Name, Type Fact, N Fact
+7. Detect anomalies (Cpt Comptable with A) ✅
+8. Filter Cpt Comptable with A (remove from main data) ✅
+9. Keep most recent year
+10. Clean numeric fields ✅
+11. Calculate TVA ✅
+12. Calculate CA TTC ✅
+13. Match Account Descriptions ✅ (SHOULD BE FIRST)
+14. Match Revenue Objectives ✅ (SHOULD BE FIRST)
+15. Calculate Achievement Rate
+
+ISSUES FOUND:
+=============
+1. ❌ Cross-referencing (rules 13-14) happens AFTER filtering
+   - Should happen FIRST before any filtering
+   - Currently: Steps 13-14
+   - Should be: Step 1
+
+2. ✅ TVA division by zero: FIXED
+   - Was returning None
+   - Now returns 0.00
+
+3. ✅ All other rules are correctly implemented
+
+RECOMMENDED FIX:
+================
+Move cross-referencing (match_account_descriptions and match_revenue_objectives) 
+to happen FIRST, before any filtering operations.
+

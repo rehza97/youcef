@@ -6,7 +6,7 @@ Maps actual revenue file headers to database fields for 3 different file types
 
 import pandas as pd
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, date
 import logging
 
 logger = logging.getLogger(__name__)
@@ -158,11 +158,27 @@ def find_column(df: pd.DataFrame, keywords: list) -> Optional[str]:
 
 
 def safe_string(value: Any) -> Optional[str]:
-    """Safely convert value to string"""
-    if value is None or pd.isna(value):
+    """Safely convert value to string, handling NaN, None, and empty values"""
+    # Handle None first
+    if value is None:
         return None
+    
+    # Handle pandas NaN/NaT values
+    if pd.isna(value):
+        return None
+    
+    # Convert to string and strip whitespace
     text = str(value).strip()
-    return text if text and text.lower() not in ['nan', 'none', 'null', ''] else None
+    
+    # Check if it's empty or represents a null value
+    if not text or text.lower() in ['nan', 'none', 'null', 'nat', '']:
+        return None
+    
+    # If the original value was numeric NaN (like float('nan')), don't convert to string
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    
+    return text
 
 
 def safe_float(value: Any, max_value: Optional[float] = None, min_value: Optional[float] = None) -> Optional[float]:
@@ -190,30 +206,84 @@ def safe_float(value: Any, max_value: Optional[float] = None, min_value: Optiona
         return None
 
 
-def safe_date(value: Any) -> Optional[datetime]:
-    """Safely convert value to date"""
+def safe_date(value: Any) -> Optional[date]:
+    """
+    Safely convert value to date - handles multiple formats:
+    - Date/datetime objects
+    - Date strings (various formats)
+    - Numeric values (Excel date serial numbers)
+    """
     if value is None or pd.isna(value):
         return None
+    
+    # If already a date object, return as-is
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    
+    # If already a datetime object, extract date part
+    if isinstance(value, (datetime, pd.Timestamp)):
+        if pd.isna(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            dt = value.to_pydatetime()
+        else:
+            dt = value
+        return dt.date() if hasattr(dt, 'date') else date(dt.year, dt.month, dt.day)
+    
+    # Handle numeric values (Excel date serial numbers)
+    # Excel dates: 1 = January 1, 1900, but Excel incorrectly treats 1900 as leap year
+    # Excel epoch: January 1, 1900 = day 1
+    if isinstance(value, (int, float)):
+        try:
+            # Excel date serial number (days since 1899-12-30)
+            excel_epoch = date(1899, 12, 30)  # Excel's epoch (adjusted for leap year bug)
+            days = int(value)
+            result_date = excel_epoch + pd.Timedelta(days=days)
+            parsed_date = result_date.date() if hasattr(result_date, 'date') else result_date
+            logger.debug(f"📅 Converted Excel serial {value} → {parsed_date}")
+            return parsed_date
+        except (ValueError, OverflowError, OSError) as e:
+            logger.warning(f"⚠️ Failed to convert numeric date {value}: {e}")
+            return None
+    
+    # Handle string values
     text = str(value).strip()
     if not text or text.lower() in ['nan', 'none', 'null', 'nat', '']:
         return None
+    
+    # Try to parse as number first (in case it's a string representation of Excel date)
     try:
-        # Try ISO format first
-        result = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
-        # Check if result is NaT (Not a Time) before converting
+        num_value = float(text)
+        if num_value > 0 and num_value < 1000000:  # Reasonable Excel date range
+            excel_epoch = date(1899, 12, 30)
+            days = int(num_value)
+            result_date = excel_epoch + pd.Timedelta(days=days)
+            parsed_date = result_date.date() if hasattr(result_date, 'date') else result_date
+            logger.debug(f"📅 Converted string Excel serial '{text}' → {parsed_date}")
+            return parsed_date
+    except (ValueError, TypeError):
+        pass  # Not a number, continue with string parsing
+    
+    try:
+        # Try parsing as pandas datetime first (handles most formats automatically)
+        # Use dayfirst=True for French date format (dd/mm/yyyy)
+        result = pd.to_datetime(text, errors="coerce", dayfirst=True)
+        # Check if result is NaT (Not a Time)
         if pd.isna(result):
-            return None
-        return result.to_pydatetime()
-    except:
-        try:
-            # Try flexible parsing with dayfirst=True for French date format (dd/mm/yyyy)
-            result = pd.to_datetime(text, errors="coerce", dayfirst=True)
-            # Check if result is NaT (Not a Time) before converting
+            # Try without dayfirst as fallback
+            result = pd.to_datetime(text, errors="coerce", dayfirst=False)
             if pd.isna(result):
+                logger.debug(f"Date parsing failed for '{text}': could not parse as date string")
                 return None
-            return result.to_pydatetime()
-        except:
-            return None
+        
+        # Convert to date object
+        dt = result.to_pydatetime()
+        parsed_date = dt.date() if hasattr(dt, 'date') else date(dt.year, dt.month, dt.day)
+        logger.debug(f"📅 Parsed date string '{text}' → {parsed_date}")
+        return parsed_date
+    except Exception as e:
+        logger.warning(f"⚠️ Date parsing failed for '{text}': {e}")
+        return None
 
 
 def safe_boolean(value: Any) -> Optional[bool]:
@@ -256,16 +326,17 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
         "origine": safe_string(_get(["Origine", "origin"])),
         "n_fact": safe_string(_get(["N Fact", "numero facture", "invoice number"])),
         "typ_fact": safe_string(_get(["Typ Fact", "type facture", "invoice type"])),
-        "date_fact": safe_date(_get(["Date Fact", "date facture"])),
+        "date_fact": safe_date(_get(["Date Fact", "date facture", "date fact", "date_fact", "datefact", "date invoice"])),
         "n_client": safe_string(_get(["N Client", "numero client", "customer number"])),
         "client": safe_string(_get(["Client", "customer"])),
         "delai_paie": safe_string(_get(["Delai Paie", "payment delay"])),
         "devise": safe_string(_get(["Devise", "currency"])),
         "obj_fact": safe_string(_get(["Obj Fact", "objet facture", "invoice object"])),
         "cpt_comptable": safe_string(_get(["Cpt Comptable", "compte comptable", "account code"])),
-        "date_facture_gl": safe_date(_get(["Date facture GL", "gl invoice date"])),
-        "date_gl": safe_date(_get(["Date GL", "gl date"])),
-        "periode_de_facturation": safe_string(_get(["Periode de facturation", "billing period"])),
+        "date_facture_gl": safe_date(_get(["Date facture GL", "gl invoice date", "date facture gl", "date_facture_gl", "datefacturegl"])),
+        "date_gl": safe_date(_get(["Date GL", "gl date", "date gl", "date_gl", "dategl", "date gl gl"])),
+        "periode_de_facturation": safe_string(_get(["Periode de facturation", "billing period", "periode de facturation", "periode", "period", "billing"])),
+        # Note: If value is NaN/empty in source, safe_string will return None (NULL in DB)
         "reference": safe_string(_get(["Reference", "ref"])),
         "termine_flag": safe_boolean(_get(["Termine Flag", "terminated"])),
         # Monetary fields with NUMERIC(15, 2) clamping
@@ -276,19 +347,20 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
         "uom": safe_string(_get(["Uom", "unit of measure", "unite"])),
         "qte": safe_float(_get(["Qte", "quantity", "quantite"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "prix_uni": safe_float(_get(["Prix Uni", "unit price", "prix unitaire"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
-        "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux", "taux change", "taux_change", "tauxchange", "rate", "exchange"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "mnt_ht": safe_float(_get(["Mnt Ht", "montant ht", "amount excluding tax"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "tax": safe_string(_get(["Tax", "taxe"])),
         "mnt_tax": safe_float(_get(["Mnt Tax", "montant tax", "tax amount"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "mnt_ttc": safe_float(_get(["Mnt Ttc", "montant ttc", "amount including tax"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
-        "memo_line_id": safe_string(_get(["Memo Line Id", "memo"])),
+        "memo_line_id": safe_string(_get(["Memo Line Id", "memo", "memo line id", "memo_line_id", "memolineid", "memo id", "line id"])),
         "chiffre_aff_exe_dzd": safe_float(_get(["Chiffre Aff Exe Dzd", "chiffre affaires", "revenue dzd"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         # Calculated columns - clamp to NUMERIC(10, 4) range: -999999.9999 to 999999.9999
         "tva": safe_float(_get(["TVA", "tva", "vat"]), max_value=999999.9999, min_value=-999999.9999),
         "chiffre_aff_exe_dzd_ttc": safe_float(_get(["Chiffre_Aff_Exe_Dzd_TTC", "ca ttc", "revenue ttc"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "taux_realisation_ca": safe_float(_get(["Taux_Realisation_CA", "achievement rate", "taux realisation"]), max_value=999999.9999, min_value=-999999.9999),
         # Matched relationships (will be set after matching)
-        "account_description_id": _get(["account_description_id"]),
+        # account_description_id is set from Account_Description object in processing
+        "account_description_id": None,  # Will be set from Account_Description object
         "revenue_objective_id": _get(["revenue_objective_id"]),
         "created_at": datetime.utcnow(),
     }

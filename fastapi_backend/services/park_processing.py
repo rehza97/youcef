@@ -263,10 +263,8 @@ class ParkDataProcessor:
         return df
 
     def _process_moohtarif_offers(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Handle Moohtarif offers - mark as anomalies and remove"""
-        logger.info("Processing Moohtarif offers")
-
-        original_count = len(df)
+        """Handle Moohtarif offers - mark as anomalies but KEEP in data"""
+        logger.info("Processing Moohtarif offers (marking as anomalies, keeping in data)")
 
         # Find rows with Moohtarif in Offer name
         offer_name_column = self._find_column(df, ['Offer name', 'offre'])
@@ -277,7 +275,6 @@ class ParkDataProcessor:
         else:
             logger.warning(
                 "No Offer name column found, skipping Moohtarif processing")
-            moohtarif_mask = pd.Series([False] * len(df), index=df.index)
             moohtarif_rows = pd.DataFrame()
 
         # Add to anomalies
@@ -290,46 +287,27 @@ class ParkDataProcessor:
             service_number = row[service_number_column] if service_number_column else 'N/A'
 
             self.anomalies.append({
-                "type": "Parc Corporate NGBSS",
-                "description": f"Moohtarif offer found: {offer_name}",
+                "type": "Anomalie Parc NGBSS",
+                "description": f"Moohtarif offer: {offer_name}",
                 "customer_code": customer_code,
                 "service_number": service_number
             })
 
-        # Remove rows with Moohtarif
-        df = df[~moohtarif_mask]
-
-        # Also remove rows with "Solutions Hébergements"
-        if offer_name_column:
-            df = df[~df[offer_name_column].str.contains(
-                'Solutions Hébergements', case=False, na=False)]
-
-        filtered_count = original_count - len(df)
-        if filtered_count > 0:
+        if len(moohtarif_rows) > 0:
             logger.info(
-                f"Filtered out {filtered_count} rows with Moohtarif or Solutions Hébergements")
+                f"Marked {len(moohtarif_rows)} Moohtarif rows as anomalies (keeping in data)")
 
+        # DO NOT REMOVE - keep all records in main parc data
+        # Records will be available in both main export and anomaly export
         return df
 
     def _filter_subscriber_status(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Remove rows with Subscriber status = 'Predeactivated'"""
-        logger.info("Filtering out Subscriber status = 'Predeactivated'")
+        """Keep Predeactivated status - no longer filtering it out"""
+        logger.info("Keeping all subscriber statuses (including Predeactivated)")
 
-        original_count = len(df)
-
-        # Remove rows with Predeactivated status
-        subscriber_status_column = self._find_column(
-            df, ['Subscriber status', 'abonne'])
-        if subscriber_status_column:
-            df = df[df[subscriber_status_column] != 'Predeactivated']
-        else:
-            logger.warning(
-                "No Subscriber status column found, skipping status filter")
-
-        filtered_count = original_count - len(df)
-        if filtered_count > 0:
-            logger.info(
-                f"Filtered out {filtered_count} rows with Predeactivated status")
+        # NO LONGER FILTERING Predeactivated
+        # All subscriber statuses are now kept in the data
+        # This allows "Predeactivated" to appear in the main parc data
 
         return df
 

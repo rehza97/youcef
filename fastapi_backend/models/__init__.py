@@ -9,6 +9,7 @@ from .file_upload import FileUpload
 from .dot import DOT
 from .park import Park
 from .revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
+from .revenue_pivot import RevenuePivotCache, RevenuePivotMetadata
 
 __all__ = [
     "User",
@@ -24,6 +25,8 @@ __all__ = [
     "RevenueJournal",
     "AccountDescription",
     "RevenueObjective",
-    "RevenueAnomaly"
+    "RevenueAnomaly",
+    "RevenuePivotCache",
+    "RevenuePivotMetadata"
 ]
 

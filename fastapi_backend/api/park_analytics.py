@@ -4,11 +4,14 @@ Based on Parc Corporate NGBSS data with DOT-based permissions
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, text
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 import logging
+import pandas as pd
+import io
 
 from database.connection import get_db
 from core.security import get_current_user
@@ -1092,6 +1095,7 @@ async def get_preview_data(
 @park_analytics_router.get("/export")
 async def export_data(
     format: str = Query("csv", regex="^(csv|excel)$"),
+    export_type: str = Query("normal", regex="^(normal|anomalies)$", description="Export type: normal or anomalies"),
     # Single value filters (for backward compatibility)
     dot_filter: Optional[str] = Query(None),
     actel_code_filter: Optional[str] = Query(None),
@@ -1125,11 +1129,11 @@ async def export_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Export park data with comprehensive filtering support - NO LIMIT"""
-    
+    """Export Parc Corporate NGBSS or Anomalie Parc NGBSS with filtering - returns Excel/CSV file"""
+
     # Log received filter parameters
     logger.info(
-        f"📤 GET /export - User {current_user.id} - Format: {format} - Filters: "
+        f"📤 GET /export - User {current_user.id} - Type: {export_type} - Format: {format} - Filters: "
         f"dot_ids={dot_ids}, actel_codes={actel_codes}, "
         f"subscriber_statuses={subscriber_statuses}, telecom_types={telecom_types}, "
         f"offer_names={offer_names}, offer_types={offer_types}, "
@@ -1181,33 +1185,49 @@ async def export_data(
     if telecom_type_filter and not telecom_types:
         query = query.filter(Park.telecom_type == telecom_type_filter)
 
+    # If exporting anomalies, filter for anomaly criteria
+    if export_type == "anomalies":
+        anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
+        anomaly_l3_categories = [5, 57]
+        anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
+
+        anomaly_conditions = []
+
+        # Offer names containing Moohtarif or Solutions Hébergements
+        for offer in anomaly_offer_names:
+            anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+
+        # Customer L3 codes 5 or 57
+        anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
+
+        # Telecom types: WIFI, WIMAX, X25
+        anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
+
+        # Apply OR condition for anomalies
+        query = query.filter(or_(*anomaly_conditions))
+
     # Get total count first for better error handling
     total_count = query.count()
 
     if total_count == 0:
-        # Return empty result instead of 404 - filters are valid, just no matching data
-        return {
-            "data": [],
-            "total_records": 0,
-            "format": format,
-            "message": "No data found with applied filters"
-        }
+        # Return empty file for consistency
+        raise HTTPException(status_code=404, detail="No data found with applied filters")
 
     # Get ALL data - no limit
     parks = query.all()
 
     logger.info(
-        f"Exporting {total_count:,} records for user {current_user.id} (format: {format})"
+        f"Exporting {total_count:,} records for user {current_user.id} (type: {export_type}, format: {format})"
     )
 
-    # Convert to dict for export with better error handling
-    export_data = []
+    # Convert to records for DataFrame
+    records = []
     for park in parks:
         try:
-            export_data.append({
+            records.append({
                 # Core identifiers
-                "DOT ID": park.dot_id or "",  # ✅ DOT ID
-                "DOT Name": park.dot.name if park.dot else "",  # ✅ DOT Name
+                "DOT ID": park.dot_id or "",
+                "DOT Name": park.dot.name if park.dot else "",
                 "Customer Code": park.customer_code or "",
                 "Service Number": park.service_number or "",
                 "Related Service Number": park.related_service_number or "",
@@ -1231,25 +1251,25 @@ async def export_data(
                 "Customer L3 Description": park.customer_l3_description or "",
 
                 # CSR and department
-                "CSR Name": park.csr_name or "",  # ✅ Added missing column
-                "Department Name": park.department_name or "",  # ✅ Added missing column
+                "CSR Name": park.csr_name or "",
+                "Department Name": park.department_name or "",
 
                 # Address information
                 "State": park.state or "",
-                "Province": park.province or "",  # ✅ Added missing column
+                "Province": park.province or "",
                 "Area": park.area or "",
-                "District": park.district or "",  # ✅ Added missing column
+                "District": park.district or "",
                 "City": park.city or "",
                 "Town": park.town or "",
-                "Postal Code": park.postal_code or "",  # ✅ Added missing column
+                "Postal Code": park.postal_code or "",
                 "Street": park.street or "",
-                "Street Number": park.street_number or "",  # ✅ Added missing column
-                "Building No": park.building_no or "",  # ✅ Added missing column
-                "Unit": park.unit or "",  # ✅ Added missing column
-                "Floor": park.floor or "",  # ✅ Added missing column
-                "House No": park.house_no or "",  # ✅ Added missing column
-                "Grid": park.grid or "",  # ✅ Added missing column
-                "Additional Address Info": park.additional_address_info or "",  # ✅ Added missing column
+                "Street Number": park.street_number or "",
+                "Building No": park.building_no or "",
+                "Unit": park.unit or "",
+                "Floor": park.floor or "",
+                "House No": park.house_no or "",
+                "Grid": park.grid or "",
+                "Additional Address Info": park.additional_address_info or "",
 
                 # Contact and technical info
                 "Contact Number": park.contact_number or "",
@@ -1261,44 +1281,43 @@ async def export_data(
                 "Creation Date": park.creation_date.isoformat() if park.creation_date else "",
                 "Active Date": park.active_date.isoformat() if park.active_date else "",
                 "Expiry Date": park.expiry_date.isoformat() if park.expiry_date else "",
-                # ✅ Added missing column
                 "Extraction Date": park.extraction_date.isoformat() if park.extraction_date else "",
 
                 # Metadata
                 "Created At": park.created_at.isoformat() if park.created_at else "",
-                # ✅ Added missing column
                 "Updated At": park.updated_at.isoformat() if park.updated_at else ""
             })
         except Exception as e:
             logger.error(f"Error processing park record {park.id}: {e}")
-            # Continue processing other records
             continue
 
-    return {
-        "data": export_data,
-        "total_records": len(export_data),
-        "total_available": total_count,
-        "export_limited": False,  # No limit anymore
-        "filters_applied": {
-            # Single value filters (backward compatibility)
-            "dot_filter": dot_filter,
-            "actel_code_filter": actel_code_filter,
-            "subscriber_status_filter": subscriber_status_filter,
-            "telecom_type_filter": telecom_type_filter,
-            # Multiple value filters
-            "dot_ids": dot_ids,
-            "actel_codes": actel_codes,
-            "subscriber_statuses": subscriber_statuses,
-            "telecom_types": telecom_types,
-            "offer_names": offer_names,
-            "offer_types": offer_types,
-            "customer_l2_codes": customer_l2_codes,
-            "customer_l3_codes": customer_l3_codes,
-            # Search and date filters
-            "search": search,
-            "date_from": date_from,
-            "date_to": date_to
-        },
-        "export_format": format,
-        "generated_at": datetime.utcnow().isoformat()
-    }
+    # Create DataFrame
+    df = pd.DataFrame(records)
+
+    # Generate file
+    output = io.BytesIO()
+
+    timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+
+    if export_type == "anomalies":
+        base_filename = f"Anomalie_Parc_NGBSS_{timestamp}"
+    else:
+        base_filename = f"Parc_Corporate_NGBSS_{timestamp}"
+
+    if format == "excel":
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Parc Data')
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"{base_filename}.xlsx"
+    else:  # csv
+        df.to_csv(output, index=False, encoding='utf-8-sig')
+        media_type = "text/csv"
+        filename = f"{base_filename}.csv"
+
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )

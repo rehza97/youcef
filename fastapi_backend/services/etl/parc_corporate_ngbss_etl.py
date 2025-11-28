@@ -35,17 +35,20 @@ class ParcCorporateNGBSSETL:
         # Business rules mapping
         self.dot_actel_mapping = {
             "2B|Centre Algérie Télécom pour les Entreprises HASSI MESSAOUD (2B)": "OUARGLA",
-            "99|Grand Compte": "SIEGE"
+            "99|Grand Compte": "DOT SIEGE"
         }
 
-        # Categories to remove
+        # Categories to remove - These will be marked as anomalies instead
         self.excluded_customer_l3_categories = [5, 57]
-        self.excluded_subscriber_status = ["Predeactivated"]
         self.excluded_offer_types = ["Supplementary Offer"]
 
-        # Anomaly patterns
-        self.anomaly_patterns = ["Moohtarif"]
-        self.excluded_offer_names = ["Moohtarif", "Solutions Hébergements"]
+        # Telecom types to mark as anomalies
+        self.excluded_telecom_types = ["WIFI", "WIMAX", "X25"]
+
+        # Anomaly patterns - items that should be in Anomalie Parc NGBSS
+        self.anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
+        self.anomaly_customer_l3_categories = [5, 57]
+        self.anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
 
     def run_etl(self, input_paths: List[Path]) -> ETLResult:
         """
@@ -239,11 +242,11 @@ class ParcCorporateNGBSSETL:
             raise
 
     def _detect_moohtarif_anomalies_step(self, df: pd.DataFrame, result: ETLResult) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Step 4: Detect Moohtarif anomalies BEFORE filtering them out"""
+        """Step 4: Detect all business anomalies (Moohtarif, Solutions Hébergements, L3: 5/57, WIFI/WIMAX/X25)"""
         step = ETLStep(
             step_type=ETLStepType.DETECT_ANOMALIES,
-            name="detect_moohtarif_anomalies",
-            description="Mark Moohtarif offers as anomalies before filtering"
+            name="detect_business_anomalies",
+            description="Mark business anomalies for Anomalie Parc NGBSS export"
         )
         step.start()
         result.add_step(step)
@@ -252,42 +255,65 @@ class ParcCorporateNGBSSETL:
             step.records_processed = len(df)
             anomalies_list = []
 
-            # Check for Moohtarif patterns in offer names (business anomaly)
-            # This must happen BEFORE filtering to properly mark them as anomalies
+            # 1. Check for anomaly offer names (Moohtarif, Solutions Hébergements)
             if 'offer_name' in df.columns:
-                for pattern in self.anomaly_patterns:
-                    anomaly_mask = df['offer_name'].str.contains(pattern, case=False, na=False)
+                for offer_pattern in self.anomaly_offer_names:
+                    anomaly_mask = df['offer_name'].str.contains(offer_pattern, case=False, na=False)
                     anomaly_records = df[anomaly_mask].copy()
 
                     if not anomaly_records.empty:
-                        anomaly_records['anomaly_type'] = 'Parc Corporate NGBSS'
-                        anomaly_records['anomaly_description'] = f'Business rule violation: Offer name contains "{pattern}"'
+                        anomaly_records['anomaly_type'] = 'Anomalie Parc NGBSS'
+                        anomaly_records['anomaly_description'] = f'Offer Name: {offer_pattern}'
                         anomalies_list.append(anomaly_records)
-                        step.add_warning(f"Found {len(anomaly_records)} records with '{pattern}' pattern - marked as anomalies")
+                        step.add_warning(f"Found {len(anomaly_records)} records with offer '{offer_pattern}' - marked as anomalies")
+
+            # 2. Check for Customer L3 categories (5, 57)
+            if 'code_customer_l3' in df.columns:
+                anomaly_mask = df['code_customer_l3'].isin(self.anomaly_customer_l3_categories)
+                anomaly_records = df[anomaly_mask].copy()
+
+                if not anomaly_records.empty:
+                    anomaly_records['anomaly_type'] = 'Anomalie Parc NGBSS'
+                    anomaly_records['anomaly_description'] = f'Code Customer L3: {", ".join(map(str, self.anomaly_customer_l3_categories))}'
+                    anomalies_list.append(anomaly_records)
+                    step.add_warning(f"Found {len(anomaly_records)} records with Customer L3 categories {self.anomaly_customer_l3_categories} - marked as anomalies")
+
+            # 3. Check for Telecom Types (WIFI, WIMAX, X25)
+            if 'telecom_type' in df.columns:
+                anomaly_mask = df['telecom_type'].isin(self.anomaly_telecom_types)
+                anomaly_records = df[anomaly_mask].copy()
+
+                if not anomaly_records.empty:
+                    anomaly_records['anomaly_type'] = 'Anomalie Parc NGBSS'
+                    anomaly_records['anomaly_description'] = f'Telecom Type: {", ".join(self.anomaly_telecom_types)}'
+                    anomalies_list.append(anomaly_records)
+                    step.add_warning(f"Found {len(anomaly_records)} records with Telecom Types {self.anomaly_telecom_types} - marked as anomalies")
 
             if anomalies_list:
-                moohtarif_anomalies = pd.concat(anomalies_list, ignore_index=True)
+                business_anomalies = pd.concat(anomalies_list, ignore_index=True)
+                # Remove duplicates (a record might match multiple criteria)
+                business_anomalies = business_anomalies.drop_duplicates(subset=[col for col in business_anomalies.columns if col not in ['anomaly_type', 'anomaly_description']])
             else:
-                moohtarif_anomalies = pd.DataFrame()
+                business_anomalies = pd.DataFrame()
 
-            step.metadata["moohtarif_anomalies"] = {
-                "count": len(moohtarif_anomalies),
-                "pattern": "Moohtarif"
+            step.metadata["business_anomalies"] = {
+                "count": len(business_anomalies),
+                "criteria": "Moohtarif, Solutions Hébergements, Customer L3 (5, 57), Telecom (WIFI, WIMAX, X25)"
             }
 
             step.complete(len(df))
-            return df, moohtarif_anomalies
+            return df, business_anomalies
 
         except Exception as e:
             step.fail(str(e))
             raise
 
     def _filter_step(self, df: pd.DataFrame, result: ETLResult) -> pd.DataFrame:
-        """Step 5: Filter out excluded records based on business rules"""
+        """Step 5: Filter out ONLY truly excluded records (Supplementary Offers)"""
         step = ETLStep(
             step_type=ETLStepType.CLEAN,
             name="filter_excluded_records",
-            description="Remove records based on business exclusion rules"
+            description="Remove only Supplementary Offer records (others go to both files)"
         )
         step.start()
         result.add_step(step)
@@ -297,27 +323,9 @@ class ParcCorporateNGBSSETL:
             step.records_processed = len(filtered_df)
             initial_count = len(filtered_df)
 
-            # Filter Code Customer L3 categories (5, 57)
-            if 'code_customer_l3' in filtered_df.columns:
-                before_count = len(filtered_df)
-                filtered_df = filtered_df[
-                    ~filtered_df['code_customer_l3'].isin(self.excluded_customer_l3_categories)
-                ]
-                removed = before_count - len(filtered_df)
-                if removed > 0:
-                    step.add_warning(f"Removed {removed} records with Customer L3 categories {self.excluded_customer_l3_categories}")
-
-            # Filter Subscriber Status (Predeactivated)
-            if 'subscriber_status' in filtered_df.columns:
-                before_count = len(filtered_df)
-                filtered_df = filtered_df[
-                    ~filtered_df['subscriber_status'].isin(self.excluded_subscriber_status)
-                ]
-                removed = before_count - len(filtered_df)
-                if removed > 0:
-                    step.add_warning(f"Removed {removed} records with status {self.excluded_subscriber_status}")
-
-            # Filter Offer Type (Supplementary Offer)
+            # ONLY Filter Offer Type (Supplementary Offer) - this is truly excluded
+            # All other records (Predeactivated, Moohtarif, L3: 5/57, WIFI/WIMAX/X25)
+            # remain in main parc AND are exported to anomalies
             if 'offer_type' in filtered_df.columns:
                 before_count = len(filtered_df)
                 filtered_df = filtered_df[
@@ -327,22 +335,13 @@ class ParcCorporateNGBSSETL:
                 if removed > 0:
                     step.add_warning(f"Removed {removed} records with offer type {self.excluded_offer_types}")
 
-            # Filter Offer Names containing excluded patterns
-            if 'offer_name' in filtered_df.columns:
-                before_count = len(filtered_df)
-                for pattern in self.excluded_offer_names:
-                    mask = filtered_df['offer_name'].str.contains(pattern, case=False, na=False)
-                    removed_by_pattern = mask.sum()
-                    filtered_df = filtered_df[~mask]
-                    if removed_by_pattern > 0:
-                        step.add_warning(f"Removed {removed_by_pattern} records containing '{pattern}' in offer name")
-
             total_removed = initial_count - len(filtered_df)
             step.metadata["filtering_summary"] = {
                 "initial_records": initial_count,
                 "final_records": len(filtered_df),
                 "total_removed": total_removed,
-                "removal_percentage": round((total_removed / initial_count) * 100, 2) if initial_count > 0 else 0
+                "removal_percentage": round((total_removed / initial_count) * 100, 2) if initial_count > 0 else 0,
+                "note": "Anomaly records (Moohtarif, Predeactivated, L3:5/57, WIFI/WIMAX/X25) kept in main parc"
             }
 
             step.complete(len(filtered_df))
@@ -461,11 +460,11 @@ class ParcCorporateNGBSSETL:
             raise
 
     def _output_step(self, clean_df: pd.DataFrame, anomalies_df: pd.DataFrame, result: ETLResult) -> None:
-        """Step 7: Output Parc Corporate NGBSS results"""
+        """Step 7: Output Parc Corporate NGBSS and Anomalie Parc NGBSS results"""
         step = ETLStep(
             step_type=ETLStepType.OUTPUT,
             name="output_parc_corporate_results",
-            description="Save processed Parc Corporate data and anomalies"
+            description="Save Parc Corporate NGBSS and Anomalie Parc NGBSS files"
         )
         step.start()
         result.add_step(step)
@@ -474,20 +473,20 @@ class ParcCorporateNGBSSETL:
             timestamp = datetime.now()
             base_dir = Path("uploads/temp/etl/parc_corporate_ngbss")
 
-            # Save cleaned data
+            # Save main parc data as "Parc Corporate NGBSS"
             if not clean_df.empty:
                 clean_filename = ETLUtils.generate_timestamped_filename(
-                    "parc_corporate_ngbss_cleaned", "xlsx", timestamp
+                    "Parc Corporate NGBSS", "xlsx", timestamp
                 )
                 clean_path = base_dir / clean_filename
                 ETLUtils.save_dataframe(clean_df, clean_path, format="excel")
                 result.output_files.append(clean_path)
 
-            # Save anomalies
+            # Save anomalies as "Anomalie Parc NGBSS"
             if not anomalies_df.empty:
                 anomaly_dir = Path("uploads/temp/anomalies/parc_corporate_ngbss")
                 anomaly_filename = ETLUtils.generate_timestamped_filename(
-                    "parc_corporate_ngbss_anomalies", "xlsx", timestamp
+                    "Anomalie Parc NGBSS", "xlsx", timestamp
                 )
                 anomaly_path = anomaly_dir / anomaly_filename
                 ETLUtils.save_dataframe(anomalies_df, anomaly_path, format="excel")

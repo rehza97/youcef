@@ -161,16 +161,17 @@ class RevenueProcessingHelpers:
             ht = row.get(mnt_ht_col)
 
             if pd.isna(ttc) or pd.isna(ht):
-                return None
+                return 0.00  # RULE: Replace #DIV/0! with 0.00
 
             try:
                 ttc = float(ttc)
                 ht = float(ht)
 
                 # Handle division by zero or very small denominators
+                # RULE: Replace #DIV/0! with 0.00
                 if abs(ht) < MIN_DENOMINATOR:
-                    # If denominator is too small, return None or 0
-                    return None
+                    # If denominator is too small, return 0.00 (not None)
+                    return 0.00
 
                 tva_value = ttc / ht
                 
@@ -184,7 +185,8 @@ class RevenueProcessingHelpers:
                 
                 return round(tva_value, 4)  # Round to 4 decimal places
             except (ValueError, TypeError, ZeroDivisionError):
-                return None
+                # RULE: Replace #DIV/0! with 0.00
+                return 0.00
 
         df[tva_col] = df.apply(calc_tva, axis=1)
         return df

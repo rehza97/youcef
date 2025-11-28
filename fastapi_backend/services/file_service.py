@@ -169,7 +169,9 @@ class FileService:
                 self._validate_excel_file(file_path)
             except HTTPException as ex:
                 # If HTML masquerading as .xls, allow fallback path
-                if ex.status_code == 400 and 'HTML content' in str(ex.detail):
+                error_detail = str(ex.detail).lower()
+                if ex.status_code == 400 and ('html' in error_detail or 'html content' in error_detail):
+                    logger.info("⚠️ File detected as HTML, will attempt to parse as HTML tables")
                     is_html_fake_xls = True
                 else:
                     raise
@@ -295,8 +297,12 @@ class FileService:
         """Validate that the file is actually an Excel file by checking file header"""
         try:
             with open(file_path, 'rb') as f:
-                # Read first 8 bytes to check file signature
-                header = f.read(8)
+                # Read first 50 bytes to check file signature and detect HTML
+                header = f.read(50)
+                header_lower = header.lower()
+                # Strip leading whitespace/BOM for HTML detection
+                header_stripped = header.lstrip(b' \t\n\r\xef\xbb\xbf')
+                header_stripped_lower = header_stripped.lower()
 
                 # Check for Excel file signatures
                 if header.startswith(b'PK\x03\x04'):  # .xlsx files (ZIP format)
@@ -306,11 +312,14 @@ class FileService:
                 elif header.startswith(b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'):
                     logger.info("✅ Detected .xls file (OLE2 signature)")
                     return
-                elif header.startswith(b'<html>') or header.startswith(b'<!DOCTYPE'):
+                # Check for HTML content (case-insensitive, handles variations like <html xmlns=...)
+                # Check both original and stripped versions
+                elif (header_lower.startswith(b'<html') or header_lower.startswith(b'<!doctype') or
+                      header_stripped_lower.startswith(b'<html') or header_stripped_lower.startswith(b'<!doctype')):
                     logger.error("❌ File appears to be HTML, not Excel")
                     raise HTTPException(
                         status_code=400,
-                        detail="File appears to be HTML content, not a valid Excel file. Please ensure you're uploading a proper Excel file (.xls or .xlsx)."
+                        detail="The uploaded file appears to be HTML content, not a valid Excel file. Please ensure you're uploading a proper Excel file (.xls or .xlsx)."
                     )
                 elif header.startswith(b'%PDF'):
                     logger.error("❌ File appears to be PDF, not Excel")
@@ -619,6 +628,22 @@ class FileService:
                         f"Deleted {anomalies_count} revenue anomalies records related to file {file_id}")
         except Exception as e:
             logger.warning(f"Error deleting revenue anomalies records: {e}")
+
+        # Delete related revenue pivot cache records if table exists
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'revenue_pivot_cache')"
+            )).scalar()
+
+            if result:
+                pivot_cache_count = db.execute(text(
+                    "DELETE FROM revenue_pivot_cache WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if pivot_cache_count > 0:
+                    logger.info(
+                        f"Deleted {pivot_cache_count} revenue pivot cache records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting revenue pivot cache records: {e}")
 
         # Delete file_previews first (foreign key constraint)
         try:
