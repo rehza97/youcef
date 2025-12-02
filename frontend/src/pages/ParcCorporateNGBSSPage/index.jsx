@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useContext } from "react";
 import {
   getParkAnalyticsOverview,
   getParkAnalyticsByTelecomType,
@@ -8,7 +8,10 @@ import {
   getParkAnalyticsByDOT,
   getParkAnalyticsAvailableFilters,
   exportParkAnalyticsData,
+  startParkAnalyticsExport,
+  downloadParkAnalyticsExport,
 } from "../../services/api";
+import { WebSocketContext } from "../../contexts/WebSocketContext";
 import {
   Card,
   CardContent,
@@ -41,6 +44,14 @@ import {
   TabsTrigger,
 } from "../../components/ui/tabs";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import { Progress } from "../../components/ui/progress";
+import {
   PieChart,
   Pie,
   Cell,
@@ -62,6 +73,9 @@ import {
   Building,
   Filter,
   RefreshCw,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { handleApiError } from "../../lib/error-handler";
@@ -93,6 +107,9 @@ const TELECOM_COLORS = {
 };
 
 const ParcCorporateNGBSSPage = () => {
+  // WebSocket context
+  const { subscribe, unsubscribe } = useContext(WebSocketContext);
+
   // State for data
   const [overview, setOverview] = useState({});
   const [telecomTypeData, setTelecomTypeData] = useState([]);
@@ -112,6 +129,17 @@ const ParcCorporateNGBSSPage = () => {
     telecom_type_filter: "",
   });
   const [showFilters, setShowFilters] = useState(false);
+
+  // Export progress state
+  const [exportProgress, setExportProgress] = useState({
+    isOpen: false,
+    taskId: null,
+    status: 'idle', // idle, processing, completed, failed
+    progress: 0,
+    message: '',
+    filename: null,
+    downloadUrl: null,
+  });
 
   useEffect(() => {
     fetchAllData();
@@ -155,29 +183,68 @@ const ParcCorporateNGBSSPage = () => {
     }
   };
 
+  // WebSocket listener for export progress
+  useEffect(() => {
+    const handleExportUpdate = (data) => {
+      if (data.type === 'processing_update' && data.task_id === exportProgress.taskId) {
+        const updateData = data.data;
+        setExportProgress(prev => ({
+          ...prev,
+          status: updateData.status || prev.status,
+          progress: updateData.progress || prev.progress,
+          message: updateData.message || prev.message,
+          filename: updateData.filename || prev.filename,
+          downloadUrl: updateData.download_url || prev.downloadUrl,
+        }));
+      }
+    };
+
+    if (exportProgress.taskId) {
+      subscribe('export-update', handleExportUpdate);
+    }
+
+    return () => {
+      if (exportProgress.taskId) {
+        unsubscribe('export-update', handleExportUpdate);
+      }
+    };
+  }, [exportProgress.taskId, subscribe, unsubscribe]);
+
   const handleExport = async (format = "csv", exportType = "normal") => {
     try {
+      // Start async export
       const filterParams = { ...filters, format };
-      const response = await exportParkAnalyticsData(filterParams, exportType);
+      const response = await startParkAnalyticsExport(filterParams, exportType);
 
-      // Response is now a blob directly from the backend
+      const taskId = response.data.task_id;
+
+      // Open progress dialog
+      setExportProgress({
+        isOpen: true,
+        taskId,
+        status: 'processing',
+        progress: 0,
+        message: 'Starting export...',
+        filename: null,
+        downloadUrl: null,
+      });
+
+      toast.info("Export started in background");
+    } catch (error) {
+      handleApiError(error, {
+        showToast: true,
+        fallbackMessage: "Error starting export",
+      });
+    }
+  };
+
+  const handleDownloadExport = async () => {
+    try {
+      const response = await downloadParkAnalyticsExport(exportProgress.taskId);
+
+      // Response is a blob
       const blob = response.data;
-
-      if (blob.size === 0) {
-        toast.info("Aucune donnée disponible à exporter");
-        return;
-      }
-
-      // Extract filename from Content-Disposition header or use default
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = `parc_corporate_ngbss_${new Date().toISOString().split("T")[0]}.${format}`;
-
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename=(.+)/);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1].replace(/['"]/g, '');
-        }
-      }
+      const filename = exportProgress.filename || `parc_export_${new Date().toISOString().split('T')[0]}.zip`;
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
@@ -189,12 +256,12 @@ const ParcCorporateNGBSSPage = () => {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      const exportTypeLabel = exportType === "anomalies" ? "Anomalie Parc NGBSS" : "Parc Corporate NGBSS";
-      toast.success(`${exportTypeLabel} exporté en ${format.toUpperCase()}`);
+      toast.success("Export downloaded successfully");
+      setExportProgress(prev => ({ ...prev, isOpen: false }));
     } catch (error) {
       handleApiError(error, {
         showToast: true,
-        fallbackMessage: "Erreur lors de l'export",
+        fallbackMessage: "Error downloading export",
       });
     }
   };
@@ -301,20 +368,12 @@ const ParcCorporateNGBSSPage = () => {
             <span>Actualiser</span>
           </Button>
           <Button
-            onClick={() => handleExport("excel", "normal")}
+            onClick={() => handleExport("excel", "both")}
             className="flex items-center space-x-2"
             variant="default"
           >
             <Download className="h-4 w-4" />
-            <span>Parc Corporate NGBSS</span>
-          </Button>
-          <Button
-            onClick={() => handleExport("excel", "anomalies")}
-            className="flex items-center space-x-2"
-            variant="destructive"
-          >
-            <Download className="h-4 w-4" />
-            <span>Anomalie Parc NGBSS</span>
+            <span>Export (Both Files)</span>
           </Button>
         </div>
       </div>
@@ -715,6 +774,78 @@ const ParcCorporateNGBSSPage = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Export Progress Dialog */}
+      <Dialog open={exportProgress.isOpen} onOpenChange={(open) => setExportProgress(prev => ({ ...prev, isOpen: open }))}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Export Progress</DialogTitle>
+            <DialogDescription>
+              {exportProgress.status === 'completed' ? 'Export completed successfully!' : 'Please wait while your data is being exported...'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Progress Bar */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Progress</span>
+                <span className="font-medium">{exportProgress.progress}%</span>
+              </div>
+              <Progress value={exportProgress.progress} className="h-2" />
+            </div>
+
+            {/* Status Icon and Message */}
+            <div className="flex items-start space-x-3">
+              {exportProgress.status === 'processing' && (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-500 mt-0.5" />
+              )}
+              {exportProgress.status === 'completed' && (
+                <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
+              )}
+              {exportProgress.status === 'failed' && (
+                <XCircle className="h-5 w-5 text-red-500 mt-0.5" />
+              )}
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium">
+                  {exportProgress.status === 'completed' && 'Export Ready'}
+                  {exportProgress.status === 'processing' && 'Processing...'}
+                  {exportProgress.status === 'failed' && 'Export Failed'}
+                </p>
+                <p className="text-sm text-muted-foreground">{exportProgress.message}</p>
+                {exportProgress.filename && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    File: {exportProgress.filename}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Download Button */}
+            {exportProgress.status === 'completed' && (
+              <Button
+                onClick={handleDownloadExport}
+                className="w-full"
+                variant="default"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download Export
+              </Button>
+            )}
+
+            {/* Close Button */}
+            {(exportProgress.status === 'completed' || exportProgress.status === 'failed') && (
+              <Button
+                onClick={() => setExportProgress(prev => ({ ...prev, isOpen: false }))}
+                className="w-full"
+                variant="outline"
+              >
+                Close
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -9,7 +9,10 @@ import {
   getParkAnalyticsAvailableFilters,
   exportParkAnalyticsData,
   getParkAnalyticsPreviewData,
+  startParkAnalyticsExport,
+  downloadParkAnalyticsExport,
 } from "../../services/api";
+import { useProcessing } from "../../contexts/ProcessingContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +49,17 @@ import {
   X,
   RefreshCw,
   AlertCircle,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { handleApiError } from "../../lib/error-handler";
 
@@ -113,6 +126,9 @@ const LoadingSpinner = () => (
 );
 
 const EncaissementPage = () => {
+  // WebSocket context
+  const { subscribeTask } = useProcessing();
+
   // State management
   const [overview, setOverview] = useState({});
   const [telecomTypeData, setTelecomTypeData] = useState([]);
@@ -132,7 +148,18 @@ const EncaissementPage = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
+  const [exportProgress_old, setExportProgress_old] = useState(0);
+
+  // New export progress state for async export
+  const [exportProgress, setExportProgress] = useState({
+    isOpen: false,
+    taskId: null,
+    status: 'idle',
+    progress: 0,
+    message: '',
+    filename: null,
+    downloadUrl: null,
+  });
   const [exportStatus, setExportStatus] = useState("");
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
@@ -457,13 +484,36 @@ const EncaissementPage = () => {
     return true;
   };
 
-  const exportData = async (format = "csv") => {
+  // WebSocket listener for export progress
+  useEffect(() => {
+    const handleExportUpdate = (message) => {
+      if (message.type === 'processing_update' && message.task_id === exportProgress.taskId) {
+        const updateData = message.data;
+        setExportProgress(prev => ({
+          ...prev,
+          status: updateData.status || prev.status,
+          progress: updateData.progress || prev.progress,
+          message: updateData.message || prev.message,
+          filename: updateData.filename || prev.filename,
+          downloadUrl: updateData.download_url || prev.downloadUrl,
+        }));
+      }
+    };
+
+    if (exportProgress.taskId && subscribeTask) {
+      subscribeTask(exportProgress.taskId, handleExportUpdate);
+    }
+
+    return () => {
+      // Cleanup handled by ProcessingContext
+    };
+  }, [exportProgress.taskId, subscribeTask]);
+
+  const exportData = async (format = "excel") => {
     if (!validateDateRange()) return;
 
     try {
       setExporting(true);
-      setExportProgress(0);
-      setExportStatus("Préparation de l'export...");
 
       const exportFilters = {};
       Object.entries(filters).forEach(([key, value]) => {
@@ -476,60 +526,43 @@ const EncaissementPage = () => {
       });
       exportFilters.format = format;
 
-      console.log("🚀 Exporting with filters:", exportFilters);
+      console.log("🚀 Starting async export with filters:", exportFilters);
 
-      // Simulate initial progress
-      setExportProgress(10);
-      setExportStatus("Récupération des données...");
+      // Start async export with "both" mode to get normal + anomalies
+      const response = await startParkAnalyticsExport(exportFilters, "both");
 
-      // Track download progress
-      const progressCallback = (progressEvent) => {
-        if (progressEvent.total) {
-          const percentCompleted = Math.round(
-            (progressEvent.loaded * 90) / progressEvent.total
-          );
-          setExportProgress(Math.min(90, 10 + percentCompleted));
-        } else {
-          // If total is unknown, simulate progress
-          setExportProgress((prev) => Math.min(90, prev + 5));
-        }
-      };
+      const taskId = response.data.task_id;
 
-      const response = await exportParkAnalyticsData(
-        exportFilters,
-        "normal", // exportType - always normal for Encaissement page
-        progressCallback
-      );
+      // Open progress dialog
+      setExportProgress({
+        isOpen: true,
+        taskId,
+        status: 'processing',
+        progress: 0,
+        message: 'Démarrage de l\'export...',
+        filename: null,
+        downloadUrl: null,
+      });
 
-      setExportProgress(95);
-      setExportStatus("Génération du fichier...");
+      toast.info("Export démarré en arrière-plan");
+    } catch (err) {
+      console.error("❌ Export failed:", err);
+      handleApiError(err, {
+        showToast: true,
+        fallbackMessage: "Erreur lors du démarrage de l'export",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
 
-      // Response is now a blob from the backend
+  const handleDownloadExport = async () => {
+    try {
+      const response = await downloadParkAnalyticsExport(exportProgress.taskId);
+
+      // Response is a blob
       const blob = response.data;
-
-      if (blob.size === 0) {
-        setExportProgress(0);
-        setExportStatus("");
-        toast.info("Aucune donnée disponible à exporter avec les filtres appliqués");
-        return;
-      }
-
-      setExportProgress(100);
-      setExportStatus("Téléchargement...");
-
-      // Small delay to show 100% before download
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      // Extract filename from Content-Disposition header or use default
-      const contentDisposition = response.headers['content-disposition'];
-      let filename = `parc_data_${new Date().toISOString().split("T")[0]}.${format === 'excel' ? 'xlsx' : 'csv'}`;
-
-      if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename=(.+)/);
-        if (filenameMatch && filenameMatch[1]) {
-          filename = filenameMatch[1].replace(/['"]/g, '');
-        }
-      }
+      const filename = exportProgress.filename || `parc_export_${new Date().toISOString().split('T')[0]}.zip`;
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
@@ -541,23 +574,13 @@ const EncaissementPage = () => {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      // Simple success message
-      toast.success(`Export réussi en ${format.toUpperCase()}`);
-    } catch (err) {
-      console.error("❌ Export failed:", err);
-      setExportProgress(0);
-      setExportStatus("");
-      handleApiError(err, {
+      toast.success("Export téléchargé avec succès");
+      setExportProgress(prev => ({ ...prev, isOpen: false }));
+    } catch (error) {
+      handleApiError(error, {
         showToast: true,
-        fallbackMessage: "Erreur lors de l'export",
+        fallbackMessage: "Erreur lors du téléchargement de l'export",
       });
-    } finally {
-      setExporting(false);
-      // Reset progress after a short delay
-      setTimeout(() => {
-        setExportProgress(0);
-        setExportStatus("");
-      }, 1000);
     }
   };
 
@@ -672,10 +695,10 @@ const EncaissementPage = () => {
                   {exportStatus || "Export en cours..."}
                 </span>
                 <span className="text-blue-700 font-semibold">
-                  {Math.round(exportProgress)}%
+                  {Math.round(exportProgress_old)}%
                 </span>
               </div>
-              <Progress value={exportProgress} className="h-2" />
+              <Progress value={exportProgress_old} className="h-2" />
             </div>
           </CardContent>
         </Card>
@@ -744,10 +767,12 @@ const EncaissementPage = () => {
                   <Label>DOT</Label>
                   <MultiSelect
                     options={
-                      availableFilters.dots?.map((d) => ({
-                        label: d.name,
-                        value: d.id.toString(),
-                      })) || []
+                      (availableFilters.dots || [])
+                        .map((d) => ({
+                          label: d.name,
+                          value: d.id.toString(),
+                        }))
+                        .sort((a, b) => a.label.localeCompare(b.label))
                     }
                     selected={filters.dot_ids}
                     onChange={(values) => handleFilterChange("dot_ids", values)}
@@ -782,10 +807,12 @@ const EncaissementPage = () => {
                         filteredStatuses = filteredStatuses.filter((s) => validStatuses.has(s));
                       }
                       
-                      return filteredStatuses.map((s) => ({
-                        label: s,
-                        value: s,
-                      }));
+                      return filteredStatuses
+                        .map((s) => ({
+                          label: s,
+                          value: s,
+                        }))
+                        .sort((a, b) => a.label.localeCompare(b.label));
                     })()}
                     selected={filters.subscriber_statuses}
                     onChange={(values) =>
@@ -820,10 +847,12 @@ const EncaissementPage = () => {
                         filteredTelecoms = filteredTelecoms.filter((t) => validTelecoms.has(t));
                       }
                       
-                      return filteredTelecoms.map((t) => ({
-                        label: t,
-                        value: t,
-                      }));
+                      return filteredTelecoms
+                        .map((t) => ({
+                          label: t,
+                          value: t,
+                        }))
+                        .sort((a, b) => a.label.localeCompare(b.label));
                     })()}
                     selected={filters.telecom_types}
                     onChange={(values) =>
@@ -857,10 +886,12 @@ const EncaissementPage = () => {
                       
                       // If no DOTs selected, show all Actel Codes
                       return (
-                        availableFilters.actel_codes?.map((code) => ({
-                          label: code,
-                          value: code,
-                        })) || []
+                        availableFilters.actel_codes
+                          ?.map((code) => ({
+                            label: code,
+                            value: code,
+                          }))
+                          .sort((a, b) => a.label.localeCompare(b.label)) || []
                       );
                     })()}
                     selected={filters.actel_codes}
@@ -903,10 +934,12 @@ const EncaissementPage = () => {
                         filteredOffers = filteredOffers.filter((o) => validOffers.has(o));
                       }
                       
-                      return filteredOffers.map((offer) => ({
-                        label: offer,
-                        value: offer,
-                      }));
+                      return filteredOffers
+                        .map((offer) => ({
+                          label: offer,
+                          value: offer,
+                        }))
+                        .sort((a, b) => a.label.localeCompare(b.label));
                     })()}
                     selected={filters.offer_names}
                     onChange={(values) =>
@@ -920,10 +953,12 @@ const EncaissementPage = () => {
                   <Label>Type d'Offre</Label>
                   <MultiSelect
                     options={
-                      availableFilters.offer_types?.map((type) => ({
-                        label: type,
-                        value: type,
-                      })) || []
+                      availableFilters.offer_types
+                        ?.map((type) => ({
+                          label: type,
+                          value: type,
+                        }))
+                        .sort((a, b) => a.label.localeCompare(b.label)) || []
                     }
                     selected={filters.offer_types}
                     onChange={(values) =>
@@ -937,10 +972,12 @@ const EncaissementPage = () => {
                   <Label>Client L2</Label>
                   <MultiSelect
                     options={
-                      availableFilters.customer_l2_codes?.map((l2) => ({
-                        label: `${l2.code} - ${l2.description}`,
-                        value: l2.code,
-                      })) || []
+                      availableFilters.customer_l2_codes
+                        ?.map((l2) => ({
+                          label: `${l2.code} - ${l2.description}`,
+                          value: l2.code,
+                        }))
+                        .sort((a, b) => a.label.localeCompare(b.label)) || []
                     }
                     selected={filters.customer_l2_codes}
                     onChange={(values) =>
@@ -971,16 +1008,19 @@ const EncaissementPage = () => {
                             .map((l3) => ({
                               label: `${l3.code} - ${l3.description}`,
                               value: l3.code,
-                            })) || []
+                            }))
+                            .sort((a, b) => a.label.localeCompare(b.label)) || []
                         );
                       }
                       
                       // If no L2 codes selected, show all L3 codes
                       return (
-                        availableFilters.customer_l3_codes?.map((l3) => ({
-                          label: `${l3.code} - ${l3.description}`,
-                          value: l3.code,
-                        })) || []
+                        availableFilters.customer_l3_codes
+                          ?.map((l3) => ({
+                            label: `${l3.code} - ${l3.description}`,
+                            value: l3.code,
+                          }))
+                          .sort((a, b) => a.label.localeCompare(b.label)) || []
                       );
                     })()}
                     selected={filters.customer_l3_codes}
@@ -1600,6 +1640,78 @@ const EncaissementPage = () => {
           </Card>
         )}
       </div>
+
+      {/* Export Progress Dialog */}
+      <Dialog open={exportProgress.isOpen} onOpenChange={(open) => setExportProgress(prev => ({ ...prev, isOpen: open }))}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Progression de l'Export</DialogTitle>
+            <DialogDescription>
+              {exportProgress.status === 'completed' ? 'Export terminé avec succès !' : 'Veuillez patienter pendant l\'export de vos données...'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Progress Bar */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Progression</span>
+                <span className="font-medium">{exportProgress.progress}%</span>
+              </div>
+              <Progress value={exportProgress.progress} className="h-2" />
+            </div>
+
+            {/* Status Icon and Message */}
+            <div className="flex items-start space-x-3">
+              {exportProgress.status === 'processing' && (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-500 mt-0.5" />
+              )}
+              {exportProgress.status === 'completed' && (
+                <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
+              )}
+              {exportProgress.status === 'failed' && (
+                <XCircle className="h-5 w-5 text-red-500 mt-0.5" />
+              )}
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium">
+                  {exportProgress.status === 'completed' && 'Export Prêt'}
+                  {exportProgress.status === 'processing' && 'Traitement en cours...'}
+                  {exportProgress.status === 'failed' && 'Échec de l\'Export'}
+                </p>
+                <p className="text-sm text-muted-foreground">{exportProgress.message}</p>
+                {exportProgress.filename && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Fichier : {exportProgress.filename}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Download Button */}
+            {exportProgress.status === 'completed' && (
+              <Button
+                onClick={handleDownloadExport}
+                className="w-full"
+                variant="default"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Télécharger l'Export
+              </Button>
+            )}
+
+            {/* Close Button */}
+            {(exportProgress.status === 'completed' || exportProgress.status === 'failed') && (
+              <Button
+                onClick={() => setExportProgress(prev => ({ ...prev, isOpen: false }))}
+                className="w-full"
+                variant="outline"
+              >
+                Fermer
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

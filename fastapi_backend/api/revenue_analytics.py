@@ -60,6 +60,7 @@ class RevenueOverviewResponse(BaseModel):
     by_org_name: Dict[str, float]
     by_month: Dict[str, float]
     by_month_objective: Dict[str, float] | None = None
+    total_objective: float  # Total objective (not divided by months)
     anomalies_count: int
 
 
@@ -202,8 +203,15 @@ async def get_revenue_overview(
         # Monthly Objective series (distribute total objective equally across 12 months)
         # If there are months returned, use their year to build matching keys
         by_month_objective: Dict[str, float] = {}
-        total_objective = db.query(
-            func.sum(RevenueObjective.objectif_ca)).scalar() or 0.0
+
+        # Build objective query with same filters as revenue
+        objective_query = db.query(func.sum(RevenueObjective.objectif_ca))
+
+        # Apply org_name filter to objectives
+        if org_name:
+            objective_query = objective_query.filter(RevenueObjective.dot_name.in_(org_name))
+
+        total_objective = objective_query.scalar() or 0.0
 
         if by_month_data and total_objective:
             # Group months by year to support multi-year datasets
@@ -240,6 +248,7 @@ async def get_revenue_overview(
             "by_org_name": by_org_name,
             "by_month": by_month,
             "by_month_objective": by_month_objective,
+            "total_objective": float(total_objective),  # Include total objective
             "anomalies_count": anomalies_count
         }
 

@@ -64,10 +64,15 @@ const Sidebar = () => {
       >
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="flex items-center justify-center h-16 px-4 border-b border-gray-200">
-            <h1 className="text-xl font-bold text-gray-900">
+          <div className="flex items-center justify-center gap-3 h-16 px-4 border-b border-gray-200">
+            <img 
+              src="/Algerie_Telecom.svg" 
+              alt="Algerie Telecom" 
+              className="h-12 w-auto object-contain"
+            />
+            <h6 className="font-bold text-gray-900 text-sm">
               Big Data Automated Analytics
-            </h1>
+            </h6>
           </div>
 
           {/* Navigation */}

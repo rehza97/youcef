@@ -35,7 +35,7 @@ class ParcCorporateNGBSSETL:
         # Business rules mapping
         self.dot_actel_mapping = {
             "2B|Centre Algérie Télécom pour les Entreprises HASSI MESSAOUD (2B)": "OUARGLA",
-            "99|Grand Compte": "DOT SIEGE"
+            "99|Grand Compte": "SIEGE"  # Fixed: Changed from "DOT SIEGE" to "SIEGE" to match database
         }
 
         # Categories to remove - These will be marked as anomalies instead

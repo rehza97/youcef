@@ -405,6 +405,7 @@ const RevenuePage = () => {
     by_org_name: {},
     by_month: {},
     by_month_objective: {},
+    total_objective: 0,
     anomalies_count: 0,
   });
   const [byAccount, setByAccount] = useState([]);
@@ -524,9 +525,7 @@ const RevenuePage = () => {
    */
   const globalAchievementRate = useMemo(() => {
     const totalRevenue = overview.total_revenue || 0;
-    const totalObjective = Object.values(
-      overview.by_month_objective || {}
-    ).reduce((sum, val) => sum + (val || 0), 0);
+    const totalObjective = overview.total_objective || 0;
 
     if (totalObjective === 0) return 0;
     return (totalRevenue / totalObjective) * 100;
@@ -561,7 +560,7 @@ const RevenuePage = () => {
   const accountChartData = useMemo(() => {
     return byAccount
       .map((item) => ({
-        compte: (item.cpt_comptable || "Inconnu").substring(0, 20),
+        compte: (item.description || item.cpt_comptable || "Inconnu").substring(0, 50),
         Total: item.total_revenue || 0,
       }))
       .sort((a, b) => b.Total - a.Total)
@@ -779,10 +778,7 @@ const RevenuePage = () => {
   }
 
   const activeFilterCount = getActiveFilterCount();
-  const totalObjective = Object.values(overview.by_month_objective || {}).reduce(
-    (sum, val) => sum + (val || 0),
-    0
-  );
+  const totalObjective = overview.total_objective || 0;
 
   return (
     <div className="space-y-6 p-6">
@@ -868,23 +864,46 @@ const RevenuePage = () => {
         </CardContent>
       </Card>
 
-      {/* Secondary Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <OverviewCard
-          title="Objectif C.A"
-          value={formatNumber(totalObjective)}
-          icon={Target}
-        />
-        <OverviewCard
-          title="Taux de réalisation C.A"
-          value={formatPercent(globalAchievementRate)}
-          icon={TrendingUp}
-        />
-        <OverviewCard
-          title="Total Enregistrements"
-          value={formatNumber(overview.total_records || 0)}
-          icon={FileText}
-        />
+      {/* Secondary Stats Cards - Horizontal Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Chiffre d'affaires (CA)
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatNumber(overview.total_revenue || 0)} DZD
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Objectif C.A
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatNumber(totalObjective)} DZD
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Taux de réalisation C.A
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatPercent(globalAchievementRate)}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Enhanced Filters */}

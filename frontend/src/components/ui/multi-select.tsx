@@ -150,13 +150,11 @@ export function MultiSelect({
                     handleSelectAll();
                     setTimeout(() => setOpen(true), 0);
                   }}
-                  onMouseDown={(e) => {
-                    if (e.button === 0) {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      handleSelectAll();
-                      setTimeout(() => setOpen(true), 0);
-                    }
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleSelectAll();
+                    setTimeout(() => setOpen(true), 0);
                   }}
                   className="cursor-pointer font-semibold border-b"
                 >
@@ -190,19 +188,17 @@ export function MultiSelect({
                 key={option.value}
                     value={option.label}
                     onSelect={(currentValue) => {
-                      // This fires on keyboard (Enter/Space) and sometimes on click
+                      // This fires on keyboard (Enter/Space)
+                      // Don't prevent default here to allow click events
                       handleSelect(option.value);
                       setTimeout(() => setOpen(true), 0);
                     }}
-                    onMouseDown={(e) => {
-                      // Explicitly handle mouse clicks - onSelect doesn't always fire on click
-                      if (e.button === 0) {
-                        // Left mouse button only
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleSelect(option.value);
-                        setTimeout(() => setOpen(true), 0);
-                      }
+                    onClick={(e) => {
+                      // Explicitly handle mouse clicks - primary handler for mouse
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleSelect(option.value);
+                      setTimeout(() => setOpen(true), 0);
                     }}
                     className="cursor-pointer"
               >

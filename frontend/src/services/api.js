@@ -948,6 +948,32 @@ export const exportParkAnalyticsData = (filters = {}, exportType = "normal", onD
   return api.get(`/api/park-analytics/export?${params.toString()}`, config);
 };
 
+// Start async export with progress tracking
+export const startParkAnalyticsExport = (filters = {}, exportType = "normal") => {
+  const format = filters.format || "csv";
+  const { format: _, ...filterParams } = filters;
+
+  const params = new URLSearchParams({
+    format,
+    export_type: exportType,
+    ...filterParams,
+  });
+
+  return api.post(`/api/park-analytics/export-async?${params.toString()}`);
+};
+
+// Get export task status
+export const getParkAnalyticsExportStatus = (taskId) => {
+  return api.get(`/api/park-analytics/export-status/${taskId}`);
+};
+
+// Download completed export file
+export const downloadParkAnalyticsExport = (taskId) => {
+  return api.get(`/api/park-analytics/export-download/${taskId}`, {
+    responseType: 'blob',
+  });
+};
+
 // Revenue Analytics API methods
 export const getRevenueOverview = (params = {}) => {
   const query = new URLSearchParams();

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import logging
 import pandas as pd
 import io
+import zipfile
 
 from database.connection import get_db
 from core.security import get_current_user
@@ -21,10 +22,320 @@ from models.dot import DOT
 from services.dot_service import DOTService
 from services.permission_service import PermissionService
 from services.kpi_cache_service import kpi_cache_service
+from services.processing_websocket import processing_ws_manager
+import asyncio
+import uuid
+import threading
+import tempfile
+import os
 
 logger = logging.getLogger(__name__)
 
 park_analytics_router = APIRouter()
+
+# Store active export tasks
+export_tasks = {}
+
+
+def _run_export_background(task_id: str, export_params: dict):
+    """Background worker for export with progress updates"""
+    from database.connection import SessionLocal
+
+    db = SessionLocal()
+
+    try:
+        # Send initial progress
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "started",
+            "progress": 0,
+            "message": "Starting export..."
+        }))
+
+        export_tasks[task_id] = {
+            "status": "processing",
+            "progress": 0,
+            "file_path": None,
+            "filename": None,
+            "error": None,
+            "start_time": datetime.utcnow().isoformat()
+        }
+
+        # Extract parameters
+        format = export_params["format"]
+        export_type = export_params["export_type"]
+        user_id = export_params["user_id"]
+
+        # Apply filters and build query
+        query = db.query(Park)
+        accessible_dots = DOTService.get_user_accessible_dots(db=db, user_id=user_id)
+
+        if accessible_dots:
+            query = query.filter(Park.dot_id.in_(accessible_dots))
+        else:
+            raise Exception("No accessible data")
+
+        # Apply all filters
+        query = apply_filters_to_query(
+            query=query,
+            dot_ids=export_params.get("dot_ids"),
+            actel_codes=export_params.get("actel_codes"),
+            subscriber_statuses=export_params.get("subscriber_statuses"),
+            telecom_types=export_params.get("telecom_types"),
+            offer_names=export_params.get("offer_names"),
+            offer_types=export_params.get("offer_types"),
+            customer_l2_codes=export_params.get("customer_l2_codes"),
+            customer_l3_codes=export_params.get("customer_l3_codes"),
+            search=export_params.get("search"),
+            date_from=export_params.get("date_from"),
+            date_to=export_params.get("date_to")
+        )
+
+        # Progress: Query built
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "processing",
+            "progress": 10,
+            "message": "Fetching data..."
+        }))
+        export_tasks[task_id]["progress"] = 10
+
+        # Helper to convert parks to records with progress
+        def parks_to_records_with_progress(parks_list, start_progress, end_progress, label=""):
+            records = []
+            total = len(parks_list)
+            for idx, park in enumerate(parks_list):
+                if idx % 1000 == 0:
+                    progress = start_progress + ((idx / total) * (end_progress - start_progress))
+                    asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                        "status": "processing",
+                        "progress": int(progress),
+                        "message": f"{label}Processing record {idx:,} of {total:,}..."
+                    }))
+                    export_tasks[task_id]["progress"] = int(progress)
+
+                try:
+                    records.append({
+                        "DOT ID": park.dot_id or "",
+                        "DOT Name": park.dot.name if park.dot else "",
+                        "Customer Code": park.customer_code or "",
+                        "Service Number": park.service_number or "",
+                        "Related Service Number": park.related_service_number or "",
+                        "Customer Name": park.customer_full_name or "",
+                        "Username": park.username or "",
+                        "Actel Code": park.actel_code or "",
+                        "Subscriber Status": park.subscriber_status or "",
+                        "Telecom Type": park.telecom_type or "",
+                        "Offer Name": park.offer_name or "",
+                        "Offer Type": park.offer_type or "",
+                        "Rental Fees": float(park.rental_fees) if park.rental_fees else 0.0,
+                        "Customer L1 Code": park.customer_l1_code or "",
+                        "Customer L1 Description": park.customer_l1_description or "",
+                        "Customer L2 Code": park.customer_l2_code or "",
+                        "Customer L2 Description": park.customer_l2_description or "",
+                        "Customer L3 Code": park.customer_l3_code or "",
+                        "Customer L3 Description": park.customer_l3_description or "",
+                        "CSR Name": park.csr_name or "",
+                        "Department Name": park.department_name or "",
+                        "State": park.state or "",
+                        "Province": park.province or "",
+                        "Area": park.area or "",
+                        "District": park.district or "",
+                        "City": park.city or "",
+                        "Town": park.town or "",
+                        "Postal Code": park.postal_code or "",
+                        "Street": park.street or "",
+                        "Street Number": park.street_number or "",
+                        "Building No": park.building_no or "",
+                        "Unit": park.unit or "",
+                        "Floor": park.floor or "",
+                        "House No": park.house_no or "",
+                        "Grid": park.grid or "",
+                        "Additional Address Info": park.additional_address_info or "",
+                        "Contact Number": park.contact_number or "",
+                        "ICCID": park.iccid or "",
+                        "IMSI": park.imsi or "",
+                        "Status Date": park.status_date.isoformat() if park.status_date else "",
+                        "Creation Date": park.creation_date.isoformat() if park.creation_date else "",
+                        "Active Date": park.active_date.isoformat() if park.active_date else "",
+                        "Expiry Date": park.expiry_date.isoformat() if park.expiry_date else "",
+                        "Extraction Date": park.extraction_date.isoformat() if park.extraction_date else "",
+                        "Created At": park.created_at.isoformat() if park.created_at else "",
+                        "Updated At": park.updated_at.isoformat() if park.updated_at else ""
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing park record {park.id}: {e}")
+                    continue
+            return records
+
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+
+        # Handle "both" export type
+        if export_type == "both":
+            normal_parks = query.all()
+
+            if len(normal_parks) == 0:
+                raise Exception("No data found with applied filters")
+
+            # Get anomaly data
+            anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
+            anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
+            anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
+
+            anomaly_conditions = []
+            for offer in anomaly_offer_names:
+                anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+            anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
+            anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
+
+            anomaly_query = query.filter(or_(*anomaly_conditions))
+            anomaly_parks = anomaly_query.all()
+
+            # Process normal data (10-50%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 20,
+                "message": f"Processing {len(normal_parks):,} normal records..."
+            }))
+
+            normal_records = parks_to_records_with_progress(normal_parks, 20, 50, "[Normal] ")
+            normal_df = pd.DataFrame(normal_records)
+
+            # Process anomaly data (50-80%)
+            if anomaly_parks:
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 50,
+                    "message": f"Processing {len(anomaly_parks):,} anomaly records..."
+                }))
+                anomaly_records = parks_to_records_with_progress(anomaly_parks, 50, 80, "[Anomaly] ")
+                anomaly_df = pd.DataFrame(anomaly_records)
+            else:
+                anomaly_df = pd.DataFrame()
+
+            # Create ZIP file (80-95%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 80,
+                "message": "Creating ZIP file..."
+            }))
+
+            # Create temp file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+            with zipfile.ZipFile(temp_file.name, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                file_ext = "xlsx" if format == "excel" else "csv"
+                normal_filename = f"Parc_Corporate_NGBSS_{timestamp}.{file_ext}"
+
+                # Write normal file
+                normal_buffer = io.BytesIO()
+                if format == "excel":
+                    with pd.ExcelWriter(normal_buffer, engine='openpyxl') as writer:
+                        normal_df.to_excel(writer, index=False, sheet_name='Parc Data')
+                else:
+                    normal_df.to_csv(normal_buffer, index=False, encoding='utf-8-sig')
+                zip_file.writestr(normal_filename, normal_buffer.getvalue())
+
+                # Write anomaly file
+                if len(anomaly_parks) > 0:
+                    anomaly_filename = f"Anomalie_Parc_NGBSS_{timestamp}.{file_ext}"
+                    anomaly_buffer = io.BytesIO()
+                    if format == "excel":
+                        with pd.ExcelWriter(anomaly_buffer, engine='openpyxl') as writer:
+                            anomaly_df.to_excel(writer, index=False, sheet_name='Parc Data')
+                    else:
+                        anomaly_df.to_csv(anomaly_buffer, index=False, encoding='utf-8-sig')
+                    zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
+                else:
+                    zip_file.writestr("NO_ANOMALIES_FOUND.txt", "No anomalies found with the applied filters.")
+
+            filename = f"Parc_Export_{timestamp}.zip"
+            export_tasks[task_id].update({
+                "file_path": temp_file.name,
+                "filename": filename,
+                "normal_count": len(normal_parks),
+                "anomaly_count": len(anomaly_parks)
+            })
+
+        else:
+            # Single file export
+            if export_type == "anomalies":
+                anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
+                anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
+                anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
+
+                anomaly_conditions = []
+                for offer in anomaly_offer_names:
+                    anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+                anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
+                anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
+
+                query = query.filter(or_(*anomaly_conditions))
+
+            parks = query.all()
+
+            if len(parks) == 0:
+                raise Exception("No data found with applied filters")
+
+            # Process records (20-80%)
+            records = parks_to_records_with_progress(parks, 20, 80, "")
+            df = pd.DataFrame(records)
+
+            # Create file (80-95%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 80,
+                "message": "Creating export file..."
+            }))
+
+            if export_type == "anomalies":
+                base_filename = f"Anomalie_Parc_NGBSS_{timestamp}"
+            else:
+                base_filename = f"Parc_Corporate_NGBSS_{timestamp}"
+
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format}')
+            if format == "excel":
+                with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Parc Data')
+                filename = f"{base_filename}.xlsx"
+            else:
+                df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+                filename = f"{base_filename}.csv"
+
+            export_tasks[task_id].update({
+                "file_path": temp_file.name,
+                "filename": filename,
+                "record_count": len(parks)
+            })
+
+        # Completed
+        export_tasks[task_id].update({
+            "status": "completed",
+            "progress": 100,
+            "end_time": datetime.utcnow().isoformat()
+        })
+
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "completed",
+            "progress": 100,
+            "message": "Export completed successfully!",
+            "filename": filename,
+            "download_url": f"/api/park-analytics/export-download/{task_id}"
+        }))
+
+    except Exception as e:
+        logger.error(f"Export error for task {task_id}: {e}", exc_info=True)
+        export_tasks[task_id].update({
+            "status": "failed",
+            "error": str(e),
+            "end_time": datetime.utcnow().isoformat()
+        })
+
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "failed",
+            "progress": 0,
+            "message": f"Export failed: {str(e)}"
+        }))
+
+    finally:
+        db.close()
 
 
 def apply_filters_to_query(
@@ -1092,10 +1403,10 @@ async def get_preview_data(
         )
 
 
-@park_analytics_router.get("/export")
-async def export_data(
+@park_analytics_router.post("/export-async")
+async def export_data_async(
     format: str = Query("csv", regex="^(csv|excel)$"),
-    export_type: str = Query("normal", regex="^(normal|anomalies)$", description="Export type: normal or anomalies"),
+    export_type: str = Query("normal", regex="^(normal|anomalies|both)$", description="Export type: normal, anomalies, or both (returns ZIP with both files)"),
     # Single value filters (for backward compatibility)
     dot_filter: Optional[str] = Query(None),
     actel_code_filter: Optional[str] = Query(None),
@@ -1129,7 +1440,143 @@ async def export_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Export Parc Corporate NGBSS or Anomalie Parc NGBSS with filtering - returns Excel/CSV file"""
+    """Start async export with progress tracking - returns task_id for monitoring"""
+
+    # Generate unique task ID
+    task_id = str(uuid.uuid4())
+
+    # Store export parameters
+    export_params = {
+        "format": format,
+        "export_type": export_type,
+        "dot_filter": dot_filter,
+        "actel_code_filter": actel_code_filter,
+        "subscriber_status_filter": subscriber_status_filter,
+        "telecom_type_filter": telecom_type_filter,
+        "dot_ids": dot_ids,
+        "actel_codes": actel_codes,
+        "subscriber_statuses": subscriber_statuses,
+        "telecom_types": telecom_types,
+        "offer_names": offer_names,
+        "offer_types": offer_types,
+        "customer_l2_codes": customer_l2_codes,
+        "customer_l3_codes": customer_l3_codes,
+        "search": search,
+        "date_from": date_from,
+        "date_to": date_to,
+        "user_id": current_user.id
+    }
+
+    # Start background export
+    thread = threading.Thread(
+        target=_run_export_background,
+        args=(task_id, export_params),
+        daemon=True
+    )
+    thread.start()
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": "Export started in background"
+    }
+
+
+@park_analytics_router.get("/export-status/{task_id}")
+async def get_export_status(task_id: str):
+    """Get export task status"""
+    if task_id not in export_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = export_tasks[task_id]
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "progress": task["progress"],
+        "filename": task.get("filename"),
+        "error": task.get("error"),
+        "start_time": task.get("start_time"),
+        "end_time": task.get("end_time"),
+        "normal_count": task.get("normal_count"),
+        "anomaly_count": task.get("anomaly_count"),
+        "record_count": task.get("record_count"),
+        "download_url": f"/api/park-analytics/export-download/{task_id}" if task["status"] == "completed" else None
+    }
+
+
+@park_analytics_router.get("/export-download/{task_id}")
+async def download_export_file(task_id: str):
+    """Download completed export file"""
+    if task_id not in export_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = export_tasks[task_id]
+
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Export not completed yet")
+
+    if not task.get("file_path") or not os.path.exists(task["file_path"]):
+        raise HTTPException(status_code=404, detail="Export file not found")
+
+    # Determine media type
+    filename = task["filename"]
+    if filename.endswith('.zip'):
+        media_type = "application/zip"
+    elif filename.endswith('.xlsx'):
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        media_type = "text/csv"
+
+    # Return file
+    def iterfile():
+        with open(task["file_path"], mode="rb") as file:
+            yield from file
+
+    return StreamingResponse(
+        iterfile(),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@park_analytics_router.get("/export")
+async def export_data(
+    format: str = Query("csv", regex="^(csv|excel)$"),
+    export_type: str = Query("normal", regex="^(normal|anomalies|both)$", description="Export type: normal, anomalies, or both (returns ZIP with both files)"),
+    # Single value filters (for backward compatibility)
+    dot_filter: Optional[str] = Query(None),
+    actel_code_filter: Optional[str] = Query(None),
+    subscriber_status_filter: Optional[str] = Query(None),
+    telecom_type_filter: Optional[str] = Query(None),
+    # Multiple value filters (comma-separated)
+    dot_ids: Optional[str] = Query(
+        None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(
+        None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(
+        None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(
+        None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(
+        None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(
+        None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(
+        None, description="Comma-separated Customer L3 codes"),
+    # Search filter
+    search: Optional[str] = Query(
+        None, description="Search in customer code, service number, or customer name"),
+    # Date range filters
+    date_from: Optional[str] = Query(
+        None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(
+        None, description="Filter to date (YYYY-MM-DD)"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Export Parc Corporate NGBSS data with filtering - returns Excel/CSV file or ZIP with both normal and anomalies (synchronous)"""
 
     # Log received filter parameters
     logger.info(
@@ -1185,139 +1632,205 @@ async def export_data(
     if telecom_type_filter and not telecom_types:
         query = query.filter(Park.telecom_type == telecom_type_filter)
 
-    # If exporting anomalies, filter for anomaly criteria
-    if export_type == "anomalies":
-        anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
-        anomaly_l3_categories = [5, 57]
-        anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
+    # Helper function to convert parks to records
+    def parks_to_records(parks_list):
+        records = []
+        for park in parks_list:
+            try:
+                records.append({
+                    # Core identifiers
+                    "DOT ID": park.dot_id or "",
+                    "DOT Name": park.dot.name if park.dot else "",
+                    "Customer Code": park.customer_code or "",
+                    "Service Number": park.service_number or "",
+                    "Related Service Number": park.related_service_number or "",
+                    "Customer Name": park.customer_full_name or "",
+                    "Username": park.username or "",
+                    "Actel Code": park.actel_code or "",
 
-        anomaly_conditions = []
+                    # Subscriber and telecom info
+                    "Subscriber Status": park.subscriber_status or "",
+                    "Telecom Type": park.telecom_type or "",
+                    "Offer Name": park.offer_name or "",
+                    "Offer Type": park.offer_type or "",
+                    "Rental Fees": float(park.rental_fees) if park.rental_fees else 0.0,
 
-        # Offer names containing Moohtarif or Solutions Hébergements
-        for offer in anomaly_offer_names:
-            anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+                    # Customer hierarchy
+                    "Customer L1 Code": park.customer_l1_code or "",
+                    "Customer L1 Description": park.customer_l1_description or "",
+                    "Customer L2 Code": park.customer_l2_code or "",
+                    "Customer L2 Description": park.customer_l2_description or "",
+                    "Customer L3 Code": park.customer_l3_code or "",
+                    "Customer L3 Description": park.customer_l3_description or "",
 
-        # Customer L3 codes 5 or 57
-        anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
+                    # CSR and department
+                    "CSR Name": park.csr_name or "",
+                    "Department Name": park.department_name or "",
 
-        # Telecom types: WIFI, WIMAX, X25
-        anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
+                    # Address information
+                    "State": park.state or "",
+                    "Province": park.province or "",
+                    "Area": park.area or "",
+                    "District": park.district or "",
+                    "City": park.city or "",
+                    "Town": park.town or "",
+                    "Postal Code": park.postal_code or "",
+                    "Street": park.street or "",
+                    "Street Number": park.street_number or "",
+                    "Building No": park.building_no or "",
+                    "Unit": park.unit or "",
+                    "Floor": park.floor or "",
+                    "House No": park.house_no or "",
+                    "Grid": park.grid or "",
+                    "Additional Address Info": park.additional_address_info or "",
 
-        # Apply OR condition for anomalies
-        query = query.filter(or_(*anomaly_conditions))
+                    # Contact and technical info
+                    "Contact Number": park.contact_number or "",
+                    "ICCID": park.iccid or "",
+                    "IMSI": park.imsi or "",
 
-    # Get total count first for better error handling
-    total_count = query.count()
+                    # Dates
+                    "Status Date": park.status_date.isoformat() if park.status_date else "",
+                    "Creation Date": park.creation_date.isoformat() if park.creation_date else "",
+                    "Active Date": park.active_date.isoformat() if park.active_date else "",
+                    "Expiry Date": park.expiry_date.isoformat() if park.expiry_date else "",
+                    "Extraction Date": park.extraction_date.isoformat() if park.extraction_date else "",
 
-    if total_count == 0:
-        # Return empty file for consistency
-        raise HTTPException(status_code=404, detail="No data found with applied filters")
+                    # Metadata
+                    "Created At": park.created_at.isoformat() if park.created_at else "",
+                    "Updated At": park.updated_at.isoformat() if park.updated_at else ""
+                })
+            except Exception as e:
+                logger.error(f"Error processing park record {park.id}: {e}")
+                continue
+        return records
 
-    # Get ALL data - no limit
-    parks = query.all()
-
-    logger.info(
-        f"Exporting {total_count:,} records for user {current_user.id} (type: {export_type}, format: {format})"
-    )
-
-    # Convert to records for DataFrame
-    records = []
-    for park in parks:
-        try:
-            records.append({
-                # Core identifiers
-                "DOT ID": park.dot_id or "",
-                "DOT Name": park.dot.name if park.dot else "",
-                "Customer Code": park.customer_code or "",
-                "Service Number": park.service_number or "",
-                "Related Service Number": park.related_service_number or "",
-                "Customer Name": park.customer_full_name or "",
-                "Username": park.username or "",
-                "Actel Code": park.actel_code or "",
-
-                # Subscriber and telecom info
-                "Subscriber Status": park.subscriber_status or "",
-                "Telecom Type": park.telecom_type or "",
-                "Offer Name": park.offer_name or "",
-                "Offer Type": park.offer_type or "",
-                "Rental Fees": float(park.rental_fees) if park.rental_fees else 0.0,
-
-                # Customer hierarchy
-                "Customer L1 Code": park.customer_l1_code or "",
-                "Customer L1 Description": park.customer_l1_description or "",
-                "Customer L2 Code": park.customer_l2_code or "",
-                "Customer L2 Description": park.customer_l2_description or "",
-                "Customer L3 Code": park.customer_l3_code or "",
-                "Customer L3 Description": park.customer_l3_description or "",
-
-                # CSR and department
-                "CSR Name": park.csr_name or "",
-                "Department Name": park.department_name or "",
-
-                # Address information
-                "State": park.state or "",
-                "Province": park.province or "",
-                "Area": park.area or "",
-                "District": park.district or "",
-                "City": park.city or "",
-                "Town": park.town or "",
-                "Postal Code": park.postal_code or "",
-                "Street": park.street or "",
-                "Street Number": park.street_number or "",
-                "Building No": park.building_no or "",
-                "Unit": park.unit or "",
-                "Floor": park.floor or "",
-                "House No": park.house_no or "",
-                "Grid": park.grid or "",
-                "Additional Address Info": park.additional_address_info or "",
-
-                # Contact and technical info
-                "Contact Number": park.contact_number or "",
-                "ICCID": park.iccid or "",
-                "IMSI": park.imsi or "",
-
-                # Dates
-                "Status Date": park.status_date.isoformat() if park.status_date else "",
-                "Creation Date": park.creation_date.isoformat() if park.creation_date else "",
-                "Active Date": park.active_date.isoformat() if park.active_date else "",
-                "Expiry Date": park.expiry_date.isoformat() if park.expiry_date else "",
-                "Extraction Date": park.extraction_date.isoformat() if park.extraction_date else "",
-
-                # Metadata
-                "Created At": park.created_at.isoformat() if park.created_at else "",
-                "Updated At": park.updated_at.isoformat() if park.updated_at else ""
-            })
-        except Exception as e:
-            logger.error(f"Error processing park record {park.id}: {e}")
-            continue
-
-    # Create DataFrame
-    df = pd.DataFrame(records)
-
-    # Generate file
-    output = io.BytesIO()
+    # Helper function to create file content
+    def create_file_content(df, file_format):
+        output = io.BytesIO()
+        if file_format == "excel":
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Parc Data')
+        else:  # csv
+            df.to_csv(output, index=False, encoding='utf-8-sig')
+        output.seek(0)
+        return output.getvalue()
 
     timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
 
-    if export_type == "anomalies":
-        base_filename = f"Anomalie_Parc_NGBSS_{timestamp}"
+    # Handle "both" export type - create ZIP with both files
+    if export_type == "both":
+        # Get normal data (all filtered records)
+        normal_parks = query.all()
+
+        if len(normal_parks) == 0:
+            raise HTTPException(status_code=404, detail="No data found with applied filters")
+
+        # Get anomaly data (filtered records + anomaly criteria)
+        anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
+        anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
+        anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
+
+        anomaly_conditions = []
+        for offer in anomaly_offer_names:
+            anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+        anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
+        anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
+
+        anomaly_query = query.filter(or_(*anomaly_conditions))
+        anomaly_parks = anomaly_query.all()
+
+        logger.info(
+            f"Exporting BOTH files for user {current_user.id}: "
+            f"{len(normal_parks):,} normal records, {len(anomaly_parks):,} anomaly records (format: {format})"
+        )
+
+        # Create DataFrames
+        normal_df = pd.DataFrame(parks_to_records(normal_parks))
+        anomaly_df = pd.DataFrame(parks_to_records(anomaly_parks)) if anomaly_parks else pd.DataFrame()
+
+        # Create ZIP file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add normal data file
+            file_ext = "xlsx" if format == "excel" else "csv"
+            normal_filename = f"Parc_Corporate_NGBSS_{timestamp}.{file_ext}"
+            normal_content = create_file_content(normal_df, format)
+            zip_file.writestr(normal_filename, normal_content)
+
+            # Add anomaly data file (only if there are anomalies)
+            if len(anomaly_parks) > 0:
+                anomaly_filename = f"Anomalie_Parc_NGBSS_{timestamp}.{file_ext}"
+                anomaly_content = create_file_content(anomaly_df, format)
+                zip_file.writestr(anomaly_filename, anomaly_content)
+            else:
+                # Add empty info file if no anomalies found
+                info_content = "No anomalies found with the applied filters."
+                zip_file.writestr("NO_ANOMALIES_FOUND.txt", info_content)
+
+        zip_buffer.seek(0)
+
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=Parc_Export_{timestamp}.zip"}
+        )
+
+    # Handle single file export (normal or anomalies only)
     else:
-        base_filename = f"Parc_Corporate_NGBSS_{timestamp}"
+        # If exporting anomalies only, filter for anomaly criteria
+        if export_type == "anomalies":
+            anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
+            anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
+            anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
 
-    if format == "excel":
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            df.to_excel(writer, index=False, sheet_name='Parc Data')
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"{base_filename}.xlsx"
-    else:  # csv
-        df.to_csv(output, index=False, encoding='utf-8-sig')
-        media_type = "text/csv"
-        filename = f"{base_filename}.csv"
+            anomaly_conditions = []
+            for offer in anomaly_offer_names:
+                anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+            anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
+            anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
 
-    output.seek(0)
+            query = query.filter(or_(*anomaly_conditions))
 
-    return StreamingResponse(
-        output,
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+        # Get total count first for better error handling
+        total_count = query.count()
+
+        if total_count == 0:
+            raise HTTPException(status_code=404, detail="No data found with applied filters")
+
+        # Get ALL data - no limit
+        parks = query.all()
+
+        logger.info(
+            f"Exporting {total_count:,} records for user {current_user.id} (type: {export_type}, format: {format})"
+        )
+
+        # Convert to records and create DataFrame
+        records = parks_to_records(parks)
+        df = pd.DataFrame(records)
+
+        # Generate file
+        output = io.BytesIO()
+
+        if export_type == "anomalies":
+            base_filename = f"Anomalie_Parc_NGBSS_{timestamp}"
+        else:
+            base_filename = f"Parc_Corporate_NGBSS_{timestamp}"
+
+        if format == "excel":
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Parc Data')
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = f"{base_filename}.xlsx"
+        else:  # csv
+            df.to_csv(output, index=False, encoding='utf-8-sig')
+            media_type = "text/csv"
+            filename = f"{base_filename}.csv"
+
+        output.seek(0)
+
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )

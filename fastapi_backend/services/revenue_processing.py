@@ -490,6 +490,14 @@ class RevenueDataProcessor:
 
         # 1. Garder que le tableau (keep only table data - skip if needed)
 
+        # 1a. CROSS-REFERENCING FIRST: Matcher avec Description Cpt Comptable
+        df = self._match_account_descriptions(df)
+        logger.info(f"Matched account descriptions")
+
+        # 1b. CROSS-REFERENCING FIRST: Matcher avec Objectif C.A
+        df = self._match_revenue_objectives(df)
+        logger.info(f"Matched revenue objectives")
+
         # 2. Org Name: Supprimer toutes les lignes contenant AT_SIEGE
         df = self._filter_at_siege(df)
         logger.info(f"After AT_SIEGE filter: {len(df)} rows")
@@ -535,12 +543,6 @@ class RevenueDataProcessor:
 
         # 16. Ajouter une colonne Chiffre Aff Exe Dzd TTC (=Chiffre Aff Exe Dzd * TVA)
         df = self._calculate_ca_ttc(df)
-
-        # 17. Matcher avec Description Cpt Comptable
-        df = self._match_account_descriptions(df)
-
-        # 18. Matcher avec Objectif C.A
-        df = self._match_revenue_objectives(df)
 
         # 19. Ajouter une colonne Taux de réalisation C.A
         df = self._calculate_achievement_rate(df)
