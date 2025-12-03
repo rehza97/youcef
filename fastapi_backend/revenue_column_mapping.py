@@ -181,29 +181,95 @@ def safe_string(value: Any) -> Optional[str]:
     return text
 
 
-def safe_float(value: Any, max_value: Optional[float] = None, min_value: Optional[float] = None) -> Optional[float]:
-    """Safely convert value to float, removing thousands separators"""
+def smart_parse_numeric(value: Any) -> Optional[float]:
+    """
+    Intelligently parse numeric values handling multiple formats:
+    - French format: 1.234.567,89 (dots=thousands, comma=decimal)
+    - Mixed dots: 1.234.567.89 (dots for both, last dot is decimal)
+    - US format: 1,234,567.89 (commas=thousands, dot=decimal)
+    - Standard: 1234567.89
+    """
     if value is None or pd.isna(value):
         return None
+    
     text = str(value).strip()
     if not text or text.lower() in ['nan', 'none', 'null', '']:
         return None
+    
+    # Handle negative numbers
+    is_negative = text.startswith('-')
+    if is_negative:
+        text = text[1:]
+    
     try:
-        # Remove dots (thousands separator in French format)
-        text = text.replace('.', '').replace(',', '.')
-        float_value = float(text)
+        # Case 1: Has comma - French format (dots=thousands, comma=decimal)
+        if ',' in text:
+            # Remove all dots (thousands separators), replace comma with dot
+            cleaned = text.replace('.', '').replace(',', '.')
+            result = float(cleaned)
+            return -result if is_negative else result
         
-        # Clamp to valid range if specified
-        if max_value is not None and float_value > max_value:
-            logger.warning(f"Float value {float_value} exceeds maximum {max_value}, clamping")
-            return max_value
-        if min_value is not None and float_value < min_value:
-            logger.warning(f"Float value {float_value} below minimum {min_value}, clamping")
-            return min_value
+        # Case 2: Has dots but no comma - need to detect decimal position
+        if '.' in text:
+            parts = text.rsplit('.', 1)  # Split from right, keep last part
+            
+            # Check if last part after dot has 2 digits (likely decimals)
+            if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 2:
+                # Last dot is decimal separator
+                # Remove all other dots (thousands separators) from integer part
+                integer_part = parts[0].replace('.', '')
+                cleaned = integer_part + '.' + parts[1]
+                result = float(cleaned)
+                return -result if is_negative else result
+            else:
+                # All dots are thousands separators
+                cleaned = text.replace('.', '')
+                result = float(cleaned)
+                return -result if is_negative else result
         
-        return float_value
-    except Exception:
+        # Case 3: No separators - just parse directly
+        result = float(text)
+        return -result if is_negative else result
+        
+    except (ValueError, TypeError) as e:
+        logger.debug(f"Failed to parse numeric value '{value}': {e}")
         return None
+
+
+def safe_float(value: Any, max_value: Optional[float] = None, min_value: Optional[float] = None) -> Optional[float]:
+    """
+    Safely convert value to float, handling multiple numeric formats intelligently.
+    
+    IMPORTANT:
+    - If value is already a numeric type (int/float), we **do not** re-parse it as a string.
+      This avoids scaling errors when values have already been cleaned earlier in the pipeline
+      (e.g. DataFrame numeric columns).
+    - For string inputs, we use smart_parse_numeric to handle French formats and mixed dots.
+    """
+    # 1) Handle already-numeric values first (from cleaned DataFrame)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Treat pandas NaN as None
+        try:
+            if pd.isna(value):  # type: ignore[arg-type]
+                return None
+        except Exception:
+            pass
+        float_value = float(value)
+    else:
+        # 2) Handle string/other inputs via smart parsing
+        float_value = smart_parse_numeric(value)
+        if float_value is None:
+            return None
+    
+    # 3) Clamp to valid range if specified
+    if max_value is not None and float_value > max_value:
+        logger.warning(f"Float value {float_value} exceeds maximum {max_value}, clamping")
+        return max_value
+    if min_value is not None and float_value < min_value:
+        logger.warning(f"Float value {float_value} below minimum {min_value}, clamping")
+        return min_value
+    
+    return float_value
 
 
 def safe_date(value: Any) -> Optional[date]:

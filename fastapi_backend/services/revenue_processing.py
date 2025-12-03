@@ -388,29 +388,52 @@ class RevenueDataProcessor:
                 logger.warning(f"⚠️ Failed to read .xls as Excel: {str(e)}")
                 logger.info(f"📖 Attempting to read {file_path} as HTML table")
                 try:
-                    # Read HTML tables without header first to detect structure
+                    # CRITICAL FIX: Read HTML table and convert all numeric columns to object dtype to preserve French format
+                    # This prevents pandas from auto-converting "4320000,00" to 43200000.0
                     html_tables_raw = pd.read_html(file_path, header=None)
                     if not html_tables_raw:
                         raise ValueError("No HTML tables found in file")
-                    
+
                     logger.info(f"✅ Found {len(html_tables_raw)} HTML table(s) in file")
-                    
+
                     # Find the table with the most columns (likely the data table)
                     # For revenue journal, we expect 30 columns
                     best_table = None
                     best_table_idx = -1
                     max_columns = 0
-                    
+
                     for idx, table in enumerate(html_tables_raw):
                         if len(table.columns) > max_columns:
                             max_columns = len(table.columns)
                             best_table = table
                             best_table_idx = idx
-                    
+
                     if best_table is None:
                         raise ValueError("No suitable HTML table found")
-                    
+
+                    # CRITICAL: Convert all columns to string IMMEDIATELY to prevent pandas number conversion
+                    # Pandas has already parsed numbers at this point, so we need to read HTML content as text
+                    import re
+                    from io import StringIO
+
+                    # Re-read the HTML as raw text to preserve French number format
+                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        html_content = f.read()
+
+                    # Replace French decimal commas with a temporary placeholder in numeric contexts
+                    # Pattern: digits followed by comma followed by exactly 2 digits (decimal)
+                    html_content_fixed = re.sub(r'(\d+),(\d{2})(?!\d)', r'\1DECIMALSEP\2', html_content)
+
+                    # Now read the modified HTML
+                    html_tables_fixed = pd.read_html(StringIO(html_content_fixed), header=None)
+                    best_table = max(html_tables_fixed, key=lambda t: len(t.columns))
+
+                    # Convert DECIMALSEP back to dots in all string columns
+                    for col in best_table.columns:
+                        best_table[col] = best_table[col].astype(str).str.replace('DECIMALSEP', '.')
+
                     logger.info(f"📊 Using HTML table {best_table_idx} with {len(best_table.columns)} columns and {len(best_table)} rows")
+                    logger.info(f"✅ Fixed French decimal separators (comma → dot) before pandas parsing")
                     
                     # Find header row (search first 20 rows)
                     header_row = self._find_header_row_for_revenue_journal(best_table.head(20).reset_index(drop=True))

@@ -118,22 +118,67 @@ class RevenueProcessingHelpers:
         return df
 
     @staticmethod
+    def smart_parse_numeric(value: Any) -> Optional[float]:
+        """
+        Intelligently parse numeric values handling multiple formats:
+        - French format: 1.234.567,89 (dots=thousands, comma=decimal)
+        - Mixed dots: 1.234.567.89 (dots for both, last dot is decimal)
+        - US format: 1,234,567.89 (commas=thousands, dot=decimal)
+        - Standard: 1234567.89
+        """
+        if value is None or pd.isna(value):
+            return None
+        
+        text = str(value).strip()
+        if not text or text.lower() in ['nan', 'none', 'null', '']:
+            return None
+        
+        # Handle negative numbers
+        is_negative = text.startswith('-')
+        if is_negative:
+            text = text[1:]
+        
+        try:
+            # Case 1: Has comma - French format (dots=thousands, comma=decimal)
+            if ',' in text:
+                # Remove all dots (thousands separators), replace comma with dot
+                cleaned = text.replace('.', '').replace(',', '.')
+                result = float(cleaned)
+                return -result if is_negative else result
+            
+            # Case 2: Has dots but no comma - need to detect decimal position
+            if '.' in text:
+                parts = text.rsplit('.', 1)  # Split from right, keep last part
+                
+                # Check if last part after dot has 2 digits (likely decimals)
+                if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 2:
+                    # Last dot is decimal separator
+                    # Remove all other dots (thousands separators) from integer part
+                    integer_part = parts[0].replace('.', '')
+                    cleaned = integer_part + '.' + parts[1]
+                    result = float(cleaned)
+                    return -result if is_negative else result
+                else:
+                    # All dots are thousands separators
+                    cleaned = text.replace('.', '')
+                    result = float(cleaned)
+                    return -result if is_negative else result
+            
+            # Case 3: No separators - just parse directly
+            result = float(text)
+            return -result if is_negative else result
+            
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Failed to parse numeric value '{value}': {e}")
+            return None
+
+    @staticmethod
     def clean_numeric_field(df: pd.DataFrame, col: str) -> pd.DataFrame:
-        """Clean numeric field by removing dots (thousands separator)"""
+        """Clean numeric field handling multiple formats intelligently"""
         if col not in df.columns:
             return df
 
-        def clean_number(val):
-            if pd.isna(val):
-                return None
-            try:
-                # Convert to string, remove dots, replace comma with dot
-                s = str(val).replace('.', '').replace(',', '.')
-                return float(s) if s else None
-            except:
-                return None
-
-        df[col] = df[col].apply(clean_number)
+        df[col] = df[col].apply(RevenueProcessingHelpers.smart_parse_numeric)
         return df
 
     @staticmethod
