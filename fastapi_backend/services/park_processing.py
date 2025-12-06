@@ -10,6 +10,7 @@ import logging
 from sqlalchemy.orm import Session
 from models.park import Park
 from models.dot import DOT
+from services.dot_service import DOTService
 
 logger = logging.getLogger(__name__)
 
@@ -183,39 +184,85 @@ class ParkDataProcessor:
         return df
 
     def _process_dot_actel_relationships(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process DOT and Actel Code relationships"""
-        logger.info("Processing DOT and Actel Code relationships")
+        """Process DOT column to create and assign DOTs dynamically"""
+        logger.info("Processing DOT column to create and assign DOTs")
 
-        # Create or get DOTs
-        dot_ouargla = self._get_or_create_dot(
-            "OUARGLA", "DOT for Ouargla region")
-        dot_siege = self._get_or_create_dot(
-            "SIEGE", "DOT for Grand Compte")
+        # Cache for DOT lookups to avoid repeated database queries
+        dot_cache = {}
 
-        # Map Actel Codes to DOTs
-        def map_actel_to_dot(actel_code):
-            if pd.isna(actel_code):
+        def get_or_create_dot_cached(dot_name: str) -> Optional[DOT]:
+            """Get or create DOT with caching"""
+            if not dot_name or pd.isna(dot_name):
                 return None
+            
+            # Normalize DOT name
+            dot_name_str = str(dot_name).strip()
+            if not dot_name_str or dot_name_str.lower() in ['nan', 'none', 'null', '']:
+                return None
+            
+            # Check cache first
+            if dot_name_str in dot_cache:
+                return dot_cache[dot_name_str]
+            
+            # Create or get DOT
+            dot = self._get_or_create_dot(
+                dot_name_str,
+                f"DOT for {dot_name_str} region"
+            )
+            dot_cache[dot_name_str] = dot
+            return dot
 
-            actel_str = str(actel_code)
-            if "2B|Centre Algérie Télécom pour les Entreprises HASSI MESSAOUD (2B)" in actel_str:
-                return dot_ouargla.id
-            elif "99|Grand Compte" in actel_str:
-                return dot_siege.id
-            return None
-
-        # Apply mapping - handle different column name formats (including real PRK headers)
-        actel_column = self._find_column(
-            df, ['Actel Code', 'actel', 'Actel Code_Code d\'actel', 'actel_code_code_d_actel'])
-
-        if actel_column:
-            df['dot_id'] = df[actel_column].apply(map_actel_to_dot)
-            logger.info(f"Applied DOT mapping using column: {actel_column}")
+        # Find DOT column - handle different column name formats
+        dot_column = self._find_column(
+            df, ['DOT', 'dot', 'dot_name', 'DOT_DOT'])
+        
+        if not dot_column:
+            logger.warning("No DOT column found in data")
+            # Try to find it in a case-insensitive way
+            for col in df.columns:
+                if col.upper() == 'DOT' or 'dot' in col.lower():
+                    dot_column = col
+                    logger.info(f"Found DOT column (case-insensitive): '{dot_column}'")
+                    break
+        
+        if dot_column:
+            logger.info(f"Using DOT column: '{dot_column}'")
+            
+            # Process each unique DOT value
+            unique_dots = df[dot_column].dropna().unique()
+            logger.info(f"Found {len(unique_dots)} unique DOT values in column")
+            
+            # Create all DOTs first (batch creation for better performance)
+            for dot_name in unique_dots:
+                dot = get_or_create_dot_cached(dot_name)
+                if dot:
+                    logger.debug(f"Created/cached DOT: '{dot_name}' → ID {dot.id}")
+            
+            # Map DOT names to DOT IDs
+            def map_dot_name_to_id(dot_name):
+                if pd.isna(dot_name):
+                    return None
+                dot = get_or_create_dot_cached(dot_name)
+                return dot.id if dot else None
+            
+            df['dot_id'] = df[dot_column].apply(map_dot_name_to_id)
+            
+            # Log DOT distribution
+            dot_counts = df['dot_id'].value_counts()
+            logger.info(f"✅ Applied DOT mapping: {len(dot_counts)} unique DOTs assigned")
+            for dot_id, count in dot_counts.head(20).items():
+                if dot_id:
+                    dot = self.db.query(DOT).filter(DOT.id == dot_id).first()
+                    dot_name = dot.name if dot else f"DOT_{dot_id}"
+                    logger.info(f"  - {dot_name}: {count} records")
+            
+            # Count records without DOT
+            missing_dot_count = df['dot_id'].isna().sum()
+            if missing_dot_count > 0:
+                logger.warning(f"⚠️ {missing_dot_count} records have no DOT assigned")
         else:
-            logger.warning(
-                "No Actel Code column found, assigning default OUARGLA")
-            # Assign default OUARGLA for all records without actel code
-            df['dot_id'] = dot_ouargla.id
+            logger.error("❌ No DOT column found - cannot assign DOTs to records")
+            df['dot_id'] = None
 
         return df
 
@@ -360,18 +407,28 @@ class ParkDataProcessor:
         return df
 
     def _get_or_create_dot(self, name: str, description: str = None) -> DOT:
-        """Get or create a DOT"""
-        dot = self.db.query(DOT).filter(DOT.name == name).first()
-        if not dot:
-            dot = DOT(
-                name=name,
-                description=description,
-                created_at=datetime.utcnow()
-            )
-            self.db.add(dot)
-            self.db.commit()
-            self.db.refresh(dot)
-            logger.info(f"Created new DOT: {name}")
+        """Get or create a DOT for Parc Corporate NGBSS module
+        
+        Args:
+            name: DOT name (will be normalized)
+            description: Optional description for the DOT
+            
+        Returns:
+            DOT object with module-specific assignment
+        """
+        from models.dot import MODULE_PARC_CORPORATE_NGBSS
+
+        # Use DOTService to create module-specific DOT
+        dot = DOTService.get_or_create_dot(
+            db=self.db,
+            name=name,
+            description=description,
+            module=MODULE_PARC_CORPORATE_NGBSS
+        )
+        logger.info(
+            f"✅ DOT '{name}' → ID: {dot.id}, Module: '{MODULE_PARC_CORPORATE_NGBSS}', "
+            f"DB Name: '{dot.name}'"
+        )
         return dot
 
     def _generate_statistics(self, df: pd.DataFrame) -> Dict[str, Any]:

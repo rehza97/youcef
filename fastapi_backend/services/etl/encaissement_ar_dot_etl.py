@@ -713,11 +713,14 @@ class EncaissementARDotETL(BaseETLProcessor):
         }
 
         try:
-            # Get DOT mapping for RBAC
+            # Get DOT mapping for RBAC (module-specific)
+            from models.dot import MODULE_ENCAISSEMENT_AR_DOT
             dot_mapping = {}
-            dots = db_session.query(DOT).all()
+            dots = db_session.query(DOT).filter(DOT.module == MODULE_ENCAISSEMENT_AR_DOT).all()
             for dot in dots:
                 dot_mapping[dot.name.upper()] = dot.id
+
+            logger.info(f"📍 Found {len(dot_mapping)} DOTs for module '{MODULE_ENCAISSEMENT_AR_DOT}'")
 
             # Save main records
             for idx, row in clean_df.iterrows():

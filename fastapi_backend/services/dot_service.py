@@ -14,37 +14,53 @@ class DOTService:
     """Centralized service for DOT operations and business logic"""
 
     @staticmethod
-    def get_or_create_dot(db: Session, name: str, description: Optional[str] = None) -> DOT:
+    def get_or_create_dot(db: Session, name: str, description: Optional[str] = None, module: Optional[str] = None) -> DOT:
         """Get existing DOT or create new one if it doesn't exist
-        
+
+        Args:
+            db: Database session
+            name: DOT name
+            description: Optional description
+            module: Optional module name. If provided, DOT will be module-specific.
+                   This allows having separate DOTs per module (e.g., "Alger" for each module).
+
         Handles race conditions where multiple threads try to create the same DOT simultaneously.
         """
         from sqlalchemy.exc import IntegrityError
         import math
-        
+
         # Validate and normalize the name
         if not name or (isinstance(name, float) and math.isnan(name)):
             raise ValueError("DOT name cannot be empty or NaN")
-            
+
         normalized_name = str(name).strip()
-        
+
         # Remove "DOT" prefix (case-insensitive) if present
         import re
         normalized_name = re.sub(r'^DOT\s+', '', normalized_name, flags=re.IGNORECASE).strip()
-        
+
         # Additional validation
         if not normalized_name or normalized_name.lower() in ['nan', 'none', 'null', '']:
             raise ValueError(f"Invalid DOT name: '{name}'")
-        
-        # Try to find existing DOT by name (case-insensitive)
-        # Also search for DOTs that might have the prefix in the database
-        existing_dot = db.query(DOT).filter(
+
+        # Try to find existing DOT by name and module (case-insensitive)
+        # Module-aware lookup: same name can exist in different modules
+        query = db.query(DOT).filter(
             or_(
                 DOT.name.ilike(normalized_name),
                 DOT.name.ilike(f"DOT {normalized_name}"),
                 DOT.name.ilike(f"DOT_{normalized_name}")
             )
-        ).first()
+        )
+
+        # Filter by module if provided
+        if module:
+            query = query.filter(DOT.module == module)
+        else:
+            # If no module specified, look for DOTs without a module
+            query = query.filter(DOT.module.is_(None))
+
+        existing_dot = query.first()
         
         # If found an existing DOT with prefix, normalize it
         if existing_dot and re.match(r'^DOT\s+', existing_dot.name, re.IGNORECASE):
@@ -63,23 +79,29 @@ class DOTService:
         try:
             new_dot = DOT(
                 name=normalized_name,
-                description=description or f"Auto-created DOT for region: {name}"
+                module=module,
+                description=description or f"Auto-created DOT for region: {name}" + (f" (Module: {module})" if module else "")
             )
             db.add(new_dot)
             db.commit()
             db.refresh(new_dot)
 
-            logger.info(f"Created new DOT: {new_dot.name} (ID: {new_dot.id})")
+            module_info = f" for module '{module}'" if module else ""
+            logger.info(f"Created new DOT: {new_dot.name}{module_info} (ID: {new_dot.id})")
             return new_dot
 
         except IntegrityError as e:
             # Race condition: another thread created the DOT between our check and insert
             db.rollback()
-            
+
             # Retry the query to get the DOT that was created by the other thread
-            existing_dot = db.query(DOT).filter(
-                DOT.name.ilike(normalized_name)
-            ).first()
+            retry_query = db.query(DOT).filter(DOT.name.ilike(normalized_name))
+            if module:
+                retry_query = retry_query.filter(DOT.module == module)
+            else:
+                retry_query = retry_query.filter(DOT.module.is_(None))
+
+            existing_dot = retry_query.first()
             
             if existing_dot:
                 logger.debug(
@@ -114,8 +136,8 @@ class DOTService:
 
     @staticmethod
     def list_dots_paginated(db: Session, page: int = 1, page_size: int = 25,
-                            search: Optional[str] = None) -> tuple[List[DOT], int]:
-        """List DOTs with pagination and search support"""
+                            search: Optional[str] = None, module: Optional[str] = None) -> tuple[List[DOT], int]:
+        """List DOTs with pagination, search, and module filter support"""
         query = db.query(DOT)
 
         # Apply search filter if provided
@@ -123,12 +145,16 @@ class DOTService:
             search_filter = DOT.name.ilike(f"%{search}%")
             query = query.filter(search_filter)
 
+        # Apply module filter if provided
+        if module:
+            query = query.filter(DOT.module == module)
+
         # Get total count
         total = query.count()
 
         # Apply pagination
         skip = (page - 1) * page_size
-        dots = query.order_by(DOT.name).offset(skip).limit(page_size).all()
+        dots = query.order_by(DOT.module, DOT.name).offset(skip).limit(page_size).all()
 
         return dots, total
 
@@ -328,27 +354,213 @@ class DOTService:
             return False
 
     @staticmethod
-    def get_user_accessible_dots(db: Session, user_id: int) -> List[int]:
-        """Get list of DOT IDs that a user can access"""
+    def get_user_accessible_dots(db: Session, user_id: int, module: Optional[str] = None) -> List[int]:
+        """Get list of DOT IDs that a user can access
+
+        NEW BEHAVIOR: When module is specified, returns only DOTs that belong to that module.
+        This allows each module to have its own set of DOTs (e.g., 4 "Alger" DOTs - one per module).
+
+        Priority order for DOT resolution:
+        1. If module specified: User-specific module DOT (UserModuleDOT) within that module's DOTs
+        2. If module specified: User's global dot_id (accepts both module-specific and global DOTs)
+        3. If module specified: Module default DOT (ModuleDOTConfig)
+        4. If no module: User's global dot_id
+        5. All DOTs within module (for superusers/staff)
+
+        Args:
+            db: Database session
+            user_id: User ID
+            module: Optional module name (e.g., 'parc_corporate_ngbss', 'chiffre_affaires')
+                    If provided, only returns DOTs that belong to this module OR global DOTs (module=NULL)
+
+        Returns:
+            List of DOT IDs the user can access
+        """
         try:
             from models.user import User
+            from models.user_module_dot import UserModuleDOT
+            from models.module_dot_config import ModuleDOTConfig
 
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 return []
 
-            # Superusers and staff have access to all DOTs
+            # Superusers and staff have access to all DOTs (within module if specified)
             if user.is_superuser or user.is_staff:
-                all_dots = db.query(DOT.id).all()
+                query = db.query(DOT.id)
+                if module:
+                    # Include both module-specific DOTs AND global DOTs (module=NULL)
+                    query = query.filter(
+                        or_(DOT.module == module, DOT.module.is_(None))
+                    )
+                all_dots = query.all()
                 return [dot.id for dot in all_dots]
 
-            # Regular users can only access their assigned DOT
+            # If module is specified, only return DOTs from that module
+            if module:
+                # Priority 1: User-specific module DOT assignment
+                module_dot = db.query(UserModuleDOT).filter(
+                    UserModuleDOT.user_id == user_id,
+                    UserModuleDOT.module == module
+                ).first()
+
+                if module_dot:
+                    # Verify the DOT exists and belongs to this module OR is global
+                    dot = db.query(DOT).filter(
+                        DOT.id == module_dot.dot_id,
+                        or_(DOT.module == module, DOT.module.is_(None))
+                    ).first()
+
+                    if dot:
+                        logger.debug(
+                            f"Using user-specific module DOT for user {user_id}, module '{module}': DOT {module_dot.dot_id}")
+                        return [module_dot.dot_id]
+
+                # Priority 2: Check if user's global DOT belongs to this module OR is a global DOT
+                if user.dot_id:
+                    dot = db.query(DOT).filter(
+                        DOT.id == user.dot_id,
+                        or_(DOT.module == module, DOT.module.is_(None))
+                    ).first()
+
+                    if dot:
+                        logger.debug(
+                            f"Using global DOT for user {user_id}, module '{module}': DOT {user.dot_id} (module: {dot.module or 'NULL'})")
+                        return [user.dot_id]
+
+                # Priority 3: Check for module-level default DOT
+                module_config = db.query(ModuleDOTConfig).filter(
+                    ModuleDOTConfig.module == module
+                ).first()
+
+                if module_config:
+                    logger.debug(
+                        f"Using module default DOT for user {user_id}, module '{module}': DOT {module_config.dot_id}")
+                    return [module_config.dot_id]
+
+                # No accessible DOT found for this module
+                logger.warning(
+                    f"User {user_id} has no accessible DOT for module '{module}'")
+                return []
+
+            # No module specified - fall back to global DOT assignment
             if user.dot_id:
+                logger.debug(
+                    f"Using global DOT for user {user_id}: DOT {user.dot_id}")
                 return [user.dot_id]
 
             return []
 
         except Exception as e:
             logger.error(
-                f"Error getting accessible DOTs for user {user_id}: {str(e)}")
+                f"Error getting accessible DOTs for user {user_id}, module {module}: {str(e)}")
             return []
+
+    @staticmethod
+    def assign_user_to_module_dot(db: Session, user_id: int, module: str, dot_id: int) -> bool:
+        """Assign a user to a specific DOT for a module"""
+        try:
+            from models.user import User
+            from models.user_module_dot import UserModuleDOT, ALL_MODULES
+
+            # Validate module
+            if module not in ALL_MODULES:
+                raise ValueError(f"Invalid module: {module}. Must be one of {ALL_MODULES}")
+
+            # Verify DOT exists
+            dot = db.query(DOT).filter(DOT.id == dot_id).first()
+            if not dot:
+                raise ValueError(f"DOT with ID {dot_id} not found")
+
+            # Verify user exists
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise ValueError(f"User with ID {user_id} not found")
+
+            # Check if assignment already exists
+            existing = db.query(UserModuleDOT).filter(
+                UserModuleDOT.user_id == user_id,
+                UserModuleDOT.module == module
+            ).first()
+
+            if existing:
+                # Update existing assignment
+                existing.dot_id = dot_id
+                logger.info(
+                    f"Updated module DOT assignment: user {user.username} (ID: {user_id}) "
+                    f"for module '{module}' to DOT {dot.name} (ID: {dot_id})")
+            else:
+                # Create new assignment
+                module_dot = UserModuleDOT(
+                    user_id=user_id,
+                    module=module,
+                    dot_id=dot_id
+                )
+                db.add(module_dot)
+                logger.info(
+                    f"Assigned user {user.username} (ID: {user_id}) to DOT {dot.name} (ID: {dot_id}) "
+                    f"for module '{module}'")
+
+            db.commit()
+            return True
+
+        except Exception as e:
+            logger.error(
+                f"Error assigning user {user_id} to DOT {dot_id} for module {module}: {str(e)}")
+            db.rollback()
+            raise
+
+    @staticmethod
+    def unassign_user_from_module_dot(db: Session, user_id: int, module: str) -> bool:
+        """Remove user's module-specific DOT assignment"""
+        try:
+            from models.user import User
+            from models.user_module_dot import UserModuleDOT
+
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise ValueError(f"User with ID {user_id} not found")
+
+            module_dot = db.query(UserModuleDOT).filter(
+                UserModuleDOT.user_id == user_id,
+                UserModuleDOT.module == module
+            ).first()
+
+            if module_dot:
+                db.delete(module_dot)
+                db.commit()
+                logger.info(
+                    f"Removed module DOT assignment for user {user.username} (ID: {user_id}) "
+                    f"from module '{module}'")
+                return True
+            else:
+                logger.warning(
+                    f"No module DOT assignment found for user {user_id} in module '{module}'")
+                return False
+
+        except Exception as e:
+            logger.error(
+                f"Error removing module DOT assignment for user {user_id}, module {module}: {str(e)}")
+            db.rollback()
+            raise
+
+    @staticmethod
+    def get_user_module_dots(db: Session, user_id: int) -> Dict[str, int]:
+        """Get all module-specific DOT assignments for a user
+        
+        Returns:
+            Dictionary mapping module names to DOT IDs
+        """
+        try:
+            from models.user_module_dot import UserModuleDOT
+
+            module_dots = db.query(UserModuleDOT).filter(
+                UserModuleDOT.user_id == user_id
+            ).all()
+
+            return {md.module: md.dot_id for md in module_dots}
+
+        except Exception as e:
+            logger.error(
+                f"Error getting module DOTs for user {user_id}: {str(e)}")
+            return {}

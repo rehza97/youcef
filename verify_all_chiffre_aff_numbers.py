@@ -213,3 +213,4 @@ if __name__ == "__main__":
                 f.write(f"{num['line']} | {num['original']} | {num['parsed']:.2f}\n")
         print(f"\n✅ Results saved to: parsed_chiffre_aff_numbers.txt")
 
+

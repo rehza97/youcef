@@ -17,7 +17,9 @@ from models.encaissement import (
 )
 from models.dot import DOT
 from models.user import User
+from models.user_module_dot import MODULE_ENCAISSEMENT_AR_DOT
 from services.permission_service import PermissionService
+from services.dot_service import DOTService
 
 logger = logging.getLogger(__name__)
 
@@ -437,14 +439,19 @@ class EncaissementService:
     def _apply_rbac_filter(self, query, current_user: User):
         """
         Apply RBAC filtering to EncaissementARDot query based on user's DOT access
+        Uses module-specific DOT assignments
         """
         # Check if user is admin or has global access
         if self._has_global_access(current_user):
             return query
 
-        # Filter by user's DOT
-        if current_user.dot_id:
-            query = query.filter(EncaissementARDot.dot_id == current_user.dot_id)
+        # Get module-specific accessible DOTs
+        accessible_dots = DOTService.get_user_accessible_dots(
+            self.db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        
+        if accessible_dots:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dots))
         else:
             # User has no DOT assigned - return empty result
             query = query.filter(False)
@@ -452,24 +459,32 @@ class EncaissementService:
         return query
 
     def _apply_rbac_filter_anomalies(self, query, current_user: User):
-        """Apply RBAC filtering to EncaissementAnomaly query"""
+        """Apply RBAC filtering to EncaissementAnomaly query (module-specific)"""
         if self._has_global_access(current_user):
             return query
 
-        if current_user.dot_id:
-            query = query.filter(EncaissementAnomaly.dot_id == current_user.dot_id)
+        accessible_dots = DOTService.get_user_accessible_dots(
+            self.db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        
+        if accessible_dots:
+            query = query.filter(EncaissementAnomaly.dot_id.in_(accessible_dots))
         else:
             query = query.filter(False)
 
         return query
 
     def _apply_rbac_filter_aggregates(self, query, current_user: User):
-        """Apply RBAC filtering to EncaissementAggregateView query"""
+        """Apply RBAC filtering to EncaissementAggregateView query (module-specific)"""
         if self._has_global_access(current_user):
             return query
 
-        if current_user.dot_id:
-            query = query.filter(EncaissementAggregateView.dot_id == current_user.dot_id)
+        accessible_dots = DOTService.get_user_accessible_dots(
+            self.db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        
+        if accessible_dots:
+            query = query.filter(EncaissementAggregateView.dot_id.in_(accessible_dots))
         else:
             query = query.filter(False)
 

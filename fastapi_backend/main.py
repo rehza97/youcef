@@ -60,6 +60,8 @@ from api.revenue import router as revenue_router
 from api.revenue_analytics import router as revenue_analytics_router
 from api.encaissement import router as encaissement_router
 from api.creance import router as creance_router
+from api.user_module_dot import user_module_dot_router
+from api.module_dot_config import router as module_dot_config_router
 print("", flush=True)
 print("=" * 70, flush=True)
 print("  Starting Youcef Backend API...", flush=True)
@@ -478,6 +480,12 @@ app.include_router(
     dependencies=[Depends(get_current_user)]
 )
 
+# User Module DOT Management
+app.include_router(
+    user_module_dot_router,
+    dependencies=[Depends(get_current_user)]
+)
+
 # New Secure Services
 app.include_router(
     secure_messaging_router,
@@ -501,6 +509,13 @@ app.include_router(
 app.include_router(
     websocket_router,
     tags=["WebSocket Messaging"]
+)
+
+# Module DOT Configuration
+app.include_router(
+    module_dot_config_router,
+    tags=["Module DOT Configuration"],
+    dependencies=[Depends(get_current_user)]
 )
 
 

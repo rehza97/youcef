@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../../contexts/AuthContext";
+import { usePermission } from "../../hooks/usePermission";
 import { Button } from "../ui/button";
 import {
   LayoutDashboard,
@@ -14,19 +15,35 @@ import {
   X,
   FileText,
   BarChart3,
+  Network,
 } from "lucide-react";
 
 const Sidebar = () => {
   const { logout } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+  const { hasPermission: canManageRBAC } = usePermission("can_manage_rbac");
 
   const navigation = [
     { name: "Tableau de bord", href: "/dashboard", icon: LayoutDashboard },
     { name: "Parc Corporate NGBSS", href: "/encaissement", icon: BarChart3 },
     { name: "Chiffre d'Affaires", href: "/revenue", icon: BarChart3 },
-    { name: "Encaissement AR DOT", href: "/encaissement-ar-dot", icon: BarChart3 },
-    { name: "Créance Périodique DOT", href: "/creance-periodique-dot", icon: BarChart3 },
+    {
+      name: "Encaissement AR DOT",
+      href: "/encaissement-ar-dot",
+      icon: BarChart3,
+    },
+    {
+      name: "Créance Périodique DOT",
+      href: "/creance-periodique-dot",
+      icon: BarChart3,
+    },
+    {
+      name: "Gestion DOT",
+      href: "/dot-management",
+      icon: Network,
+      adminOnly: true,
+    },
     { name: "Utilisateurs", href: "/users", icon: Users },
     { name: "Rôles", href: "/roles", icon: Shield },
     { name: "Profil", href: "/profile", icon: User },
@@ -34,6 +51,14 @@ const Sidebar = () => {
     { name: "Messagerie", href: "/messaging", icon: MessageSquare },
     { name: "Fichiers", href: "/files", icon: FileText },
   ];
+
+  // Filter navigation items based on admin permissions
+  const filteredNavigation = navigation.filter((item) => {
+    if (item.adminOnly) {
+      return canManageRBAC;
+    }
+    return true;
+  });
 
   const handleLogout = () => {
     logout();
@@ -65,9 +90,9 @@ const Sidebar = () => {
         <div className="flex flex-col h-full">
           {/* Header */}
           <div className="flex items-center justify-center gap-3 h-16 px-4 border-b border-gray-200">
-            <img 
-              src="/Algerie_Telecom.svg" 
-              alt="Algerie Telecom" 
+            <img
+              src="/Algerie_Telecom.svg"
+              alt="Algerie Telecom"
               className="h-12 w-auto object-contain"
             />
             <h6 className="font-bold text-gray-900 text-sm">
@@ -77,7 +102,7 @@ const Sidebar = () => {
 
           {/* Navigation */}
           <nav className="flex-1 px-4 py-6 space-y-2">
-            {navigation.map((item) => {
+            {filteredNavigation.map((item) => {
               const isActive = location.pathname === item.href;
               return (
                 <Link

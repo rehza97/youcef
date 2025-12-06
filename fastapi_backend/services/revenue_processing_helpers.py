@@ -245,6 +245,11 @@ class RevenueProcessingHelpers:
         Calculate Chiffre Aff Exe Dzd TTC = CA * TVA
         Limit to NUMERIC(15, 2) range: -9999999999999.99 to 9999999999999.99
         """
+        logger.info(f"   🔢 calculate_ca_ttc: Starting calculation")
+        logger.info(f"      - Input CA column: '{ca_col}'")
+        logger.info(f"      - Input TVA column: '{tva_col}'")
+        logger.info(f"      - Output column: '{ca_ttc_col}'")
+
         if ca_col not in df.columns or tva_col not in df.columns:
             logger.warning(
                 "Cannot calculate CA TTC: required columns not found")
@@ -254,11 +259,25 @@ class RevenueProcessingHelpers:
         MAX_CA_TTC = 9999999999999.99
         MIN_CA_TTC = -9999999999999.99
 
+        # Track statistics
+        null_ca_count = 0
+        null_tva_count = 0
+        success_count = 0
+        error_count = 0
+        clamped_count = 0
+
         def calc_ca_ttc(row):
+            nonlocal null_ca_count, null_tva_count, success_count, error_count, clamped_count
+
             ca = row.get(ca_col)
             tva = row.get(tva_col)
 
-            if pd.isna(ca) or pd.isna(tva):
+            if pd.isna(ca):
+                null_ca_count += 1
+                return None
+
+            if pd.isna(tva):
+                null_tva_count += 1
                 return None
 
             try:
@@ -270,16 +289,34 @@ class RevenueProcessingHelpers:
                 # Clamp to valid range for NUMERIC(15, 2)
                 if ca_ttc_value > MAX_CA_TTC:
                     logger.warning(f"CA TTC value {ca_ttc_value} exceeds maximum {MAX_CA_TTC}, clamping")
+                    clamped_count += 1
+                    success_count += 1
                     return MAX_CA_TTC
                 elif ca_ttc_value < MIN_CA_TTC:
                     logger.warning(f"CA TTC value {ca_ttc_value} below minimum {MIN_CA_TTC}, clamping")
+                    clamped_count += 1
+                    success_count += 1
                     return MIN_CA_TTC
 
+                success_count += 1
                 return round(ca_ttc_value, 2)  # Round to 2 decimal places for NUMERIC(15, 2)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as e:
+                error_count += 1
+                logger.debug(f"Error converting values to float: CA={ca}, TVA={tva}, Error={e}")
                 return None
 
+        logger.info(f"   🔢 Applying calculation to {len(df)} rows...")
         df[ca_ttc_col] = df.apply(calc_ca_ttc, axis=1)
+
+        # Log statistics
+        logger.info(f"   📊 Calculation complete:")
+        logger.info(f"      - Successful calculations: {success_count}")
+        logger.info(f"      - NULL CA values: {null_ca_count}")
+        logger.info(f"      - NULL TVA values: {null_tva_count}")
+        logger.info(f"      - Conversion errors: {error_count}")
+        logger.info(f"      - Clamped values: {clamped_count}")
+        logger.info(f"      - Total NULL results: {null_ca_count + null_tva_count + error_count}")
+
         return df
 
     @staticmethod

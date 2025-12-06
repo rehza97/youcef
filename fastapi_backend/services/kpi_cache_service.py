@@ -67,9 +67,10 @@ class KPICacheService:
         logger.debug(
             f"🔄 KPI cache MISS for overview (user {user_id}) - computing...")
 
-        # Compute fresh data
+        # Compute fresh data - use Parc Corporate NGBSS module
+        from models.dot import MODULE_PARC_CORPORATE_NGBSS
         accessible_dots = DOTService.get_user_accessible_dots(
-            db=db, user_id=user_id)
+            db=db, user_id=user_id, module=MODULE_PARC_CORPORATE_NGBSS)
 
         if not accessible_dots:
             result = {
@@ -94,9 +95,15 @@ class KPICacheService:
                 Park.created_at >= seven_days_ago
             ).count()
 
+            # Filter to only count DOTs that actually belong to this module (exclude global DOTs)
+            module_dots = db.query(DOT).filter(
+                DOT.id.in_(accessible_dots),
+                DOT.module == MODULE_PARC_CORPORATE_NGBSS
+            ).all()
+            
             result = {
                 "total_active_subscribers": total_active,
-                "total_dots": len(accessible_dots),
+                "total_dots": len(module_dots),  # Only count module-specific DOTs
                 "recent_activity": recent_activity,
                 "last_updated": datetime.utcnow().isoformat()
             }

@@ -218,7 +218,9 @@ class BackgroundProcessor:
             all_statistics = {}
 
             # Create DOTs first
-            self._create_dots()
+            # Pre-create DOTs for Parc Corporate NGBSS module
+            from models.dot import MODULE_PARC_CORPORATE_NGBSS
+            self._create_dots(module=MODULE_PARC_CORPORATE_NGBSS)
 
             # Send initial WebSocket update
             self._send_websocket_update(task_id, {
@@ -1375,10 +1377,20 @@ class BackgroundProcessor:
                 return dot_id
 
         # Cache miss - query database (rare)
+        # Use Parc Corporate NGBSS module for backward compatibility
+        from models.dot import MODULE_PARC_CORPORATE_NGBSS
         db = SessionLocal()
         try:
-            dot = DOTService.get_or_create_dot(db=db, name=dot_name.strip())
+            dot = DOTService.get_or_create_dot(
+                db=db,
+                name=dot_name.strip(),
+                description=f"Auto-created DOT for region: {dot_name.strip()}",
+                module=MODULE_PARC_CORPORATE_NGBSS
+            )
             dot_id = dot.id if dot else None
+            logger.debug(
+                f"✅ Created/cached DOT: '{dot_name}' → ID {dot_id}, Module: '{MODULE_PARC_CORPORATE_NGBSS}'"
+            )
 
             # Update both caches
             with self._dot_cache_lock:
@@ -1395,10 +1407,19 @@ class BackgroundProcessor:
             thread_local.dot_cache = {}
         return thread_local.dot_cache
 
-    def _create_dots(self):
-        """Create DOTs and pre-populate cache (CRITICAL PERFORMANCE FIX)"""
+    def _create_dots(self, module: str = None):
+        """Create DOTs and pre-populate cache (CRITICAL PERFORMANCE FIX)
+        
+        Args:
+            module: Module name for module-specific DOTs (default: None for backward compatibility)
+        """
+        from models.dot import MODULE_PARC_CORPORATE_NGBSS
+        
         db = SessionLocal()
         try:
+            # Use Parc Corporate NGBSS module by default (for backward compatibility)
+            target_module = module or MODULE_PARC_CORPORATE_NGBSS
+            
             dots_to_create = [
                 ("OUARGLA", "DOT for Ouargla region"),
                 ("SIEGE", "DOT for Grand Compte"),
@@ -1408,17 +1429,20 @@ class BackgroundProcessor:
                 dot = DOTService.get_or_create_dot(
                     db=db,
                     name=dot_name,
-                    description=description
+                    description=description,
+                    module=target_module
+                )
+                logger.info(
+                    f"✅ Pre-cached DOT: '{dot_name}' → ID {dot.id}, Module: '{target_module}'"
                 )
 
                 # ✅ Pre-populate cache for immediate access
                 with self._dot_cache_lock:
                     self._dot_cache[dot_name.upper()] = dot.id
 
-                logger.info(f"✅ Pre-cached DOT: {dot_name} → ID {dot.id}")
-
             logger.info(
-                f"✅ DOT cache initialized with {len(self._dot_cache)} entries: {list(self._dot_cache.keys())}")
+                f"✅ DOT cache initialized with {len(self._dot_cache)} entries: {list(self._dot_cache.keys())} "
+                f"(Module: '{target_module}')")
 
         except Exception as e:
             logger.error(f"Error creating DOTs: {e}")
@@ -1461,13 +1485,16 @@ class BackgroundProcessor:
                 return self._dot_cache[dot_name_normalized]
 
         # Cache miss - query database (only once per unique DOT)
+        # Use Parc Corporate NGBSS module for backward compatibility
+        from models.dot import MODULE_PARC_CORPORATE_NGBSS
         logger.info(f"🔍 DOT cache MISS: {dot_name} - querying database...")
         db = SessionLocal()
         try:
             dot = DOTService.get_or_create_dot(
                 db=db,
                 name=dot_name.strip(),
-                description=f"Auto-created DOT for region: {dot_name.strip()}"
+                description=f"Auto-created DOT for region: {dot_name.strip()}",
+                module=MODULE_PARC_CORPORATE_NGBSS
             )
             dot_id = dot.id if dot else None
 
@@ -1476,7 +1503,8 @@ class BackgroundProcessor:
                 self._dot_cache[dot_name_normalized] = dot_id
 
             logger.info(
-                f"✅ Cached DOT: {dot_name} → ID {dot_id} (cache size: {len(self._dot_cache)})")
+                f"✅ Cached DOT: '{dot_name}' → ID {dot_id}, Module: '{MODULE_PARC_CORPORATE_NGBSS}' "
+                f"(cache size: {len(self._dot_cache)})")
             return dot_id
         except Exception as e:
             logger.error(f"Error getting/creating DOT '{dot_name}': {e}")

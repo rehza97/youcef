@@ -10,7 +10,9 @@ from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
 from models.encaissement import EncaissementARDot
+from models.dot import MODULE_ENCAISSEMENT_AR_DOT
 from services.permission_service import PermissionService
+from services.dot_service import DOTService
 from core.security import get_current_user
 from pydantic import BaseModel
 from datetime import date
@@ -110,8 +112,15 @@ async def get_overview(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Build query
+        # Build query with module-specific DOT filtering
         query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
 
         # Get totals
         total_montant_ttc = query.with_entities(
@@ -200,8 +209,13 @@ async def get_by_organisation(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Build query
-        results = db.query(
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+
+        # Build query with DOT filter
+        query = db.query(
             EncaissementARDot.organisation,
             func.count(EncaissementARDot.id).label('nombre_factures'),
             func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
@@ -209,7 +223,12 @@ async def get_by_organisation(
             func.avg(EncaissementARDot.taux_encaissement).label('taux_moyen')
         ).filter(
             EncaissementARDot.organisation.isnot(None)
-        ).group_by(
+        )
+
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        results = query.group_by(
             EncaissementARDot.organisation
         ).all()
 
@@ -284,6 +303,13 @@ async def get_by_month(
         # Build query
         query = db.query(EncaissementARDot)
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if organisation:
             query = query.filter(EncaissementARDot.organisation.in_(organisation))
@@ -351,8 +377,18 @@ async def get_filters(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+
+        # Build base query with DOT filter
+        base_query = db.query(EncaissementARDot)
+        if accessible_dot_ids:
+            base_query = base_query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
         # Get unique organisations
-        org_results = db.query(
+        org_results = base_query.with_entities(
             EncaissementARDot.organisation
         ).distinct().filter(
             EncaissementARDot.organisation.isnot(None)
@@ -361,7 +397,7 @@ async def get_filters(
         organisations = [row.organisation for row in org_results]
 
         # Get unique months
-        month_results = db.query(
+        month_results = base_query.with_entities(
             EncaissementARDot.mois
         ).distinct().filter(
             EncaissementARDot.mois.isnot(None)
@@ -370,7 +406,7 @@ async def get_filters(
         mois = [row.mois for row in month_results if row.mois]
 
         # Get unique invoice types
-        type_results = db.query(
+        type_results = base_query.with_entities(
             EncaissementARDot.typ_fact
         ).distinct().filter(
             EncaissementARDot.typ_fact.isnot(None)
@@ -434,6 +470,13 @@ async def get_pivot(
     try:
         # Build base query
         query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
 
         # Apply filters
         if organisation:

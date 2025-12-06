@@ -16,7 +16,9 @@ from models.creance import (
 )
 from models.dot import DOT
 from models.user import User
+from models.user_module_dot import MODULE_CREANCE_PERIODIQUE_DOT
 from services.permission_service import PermissionService
+from services.dot_service import DOTService
 
 logger = logging.getLogger(__name__)
 
@@ -443,14 +445,19 @@ class CreanceService:
     def _apply_rbac_filter(self, query, current_user: User):
         """
         Apply RBAC filtering to CreancePeriodiqueDot query based on user's DOT access
+        Uses module-specific DOT assignments
         """
         # Check if user is admin or has global access
         if self._has_global_access(current_user):
             return query
 
-        # Filter by user's DOT
-        if current_user.dot_id:
-            query = query.filter(CreancePeriodiqueDot.dot_id == current_user.dot_id)
+        # Get module-specific accessible DOTs
+        accessible_dots = DOTService.get_user_accessible_dots(
+            self.db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        
+        if accessible_dots:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dots))
         else:
             # User has no DOT assigned - return empty result
             query = query.filter(False)
@@ -458,12 +465,16 @@ class CreanceService:
         return query
 
     def _apply_rbac_filter_aggregates(self, query, current_user: User):
-        """Apply RBAC filtering to CreanceAggregateView query"""
+        """Apply RBAC filtering to CreanceAggregateView query (module-specific)"""
         if self._has_global_access(current_user):
             return query
 
-        if current_user.dot_id:
-            query = query.filter(CreanceAggregateView.dot_id == current_user.dot_id)
+        accessible_dots = DOTService.get_user_accessible_dots(
+            self.db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        
+        if accessible_dots:
+            query = query.filter(CreanceAggregateView.dot_id.in_(accessible_dots))
         else:
             query = query.filter(False)
 

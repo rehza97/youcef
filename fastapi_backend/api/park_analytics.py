@@ -19,6 +19,7 @@ from core.security import get_current_user
 from models.user import User
 from models.park import Park
 from models.dot import DOT
+from models.user_module_dot import MODULE_PARC_CORPORATE_NGBSS
 from services.dot_service import DOTService
 from services.permission_service import PermissionService
 from services.kpi_cache_service import kpi_cache_service
@@ -67,7 +68,8 @@ def _run_export_background(task_id: str, export_params: dict):
 
         # Apply filters and build query
         query = db.query(Park)
-        accessible_dots = DOTService.get_user_accessible_dots(db=db, user_id=user_id)
+        accessible_dots = DOTService.get_user_accessible_dots(
+            db=db, user_id=user_id, module=MODULE_PARC_CORPORATE_NGBSS)
 
         if accessible_dots:
             query = query.filter(Park.dot_id.in_(accessible_dots))
@@ -500,7 +502,7 @@ async def get_park_overview(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
@@ -550,10 +552,19 @@ async def get_park_overview(
     last_record = query.order_by(Park.created_at.desc()).first()
     last_update = last_record.created_at.isoformat() if last_record else None
 
-    # Get accessible DOTs count
+    # Get accessible DOTs count - only count DOTs from Parc Corporate NGBSS module
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
-    total_dots = len(accessible_dots) if accessible_dots else 0
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
+    
+    # Filter to only count DOTs that actually belong to this module (exclude global DOTs)
+    if accessible_dots:
+        module_dots = db.query(DOT).filter(
+            DOT.id.in_(accessible_dots),
+            DOT.module == MODULE_PARC_CORPORATE_NGBSS
+        ).all()
+        total_dots = len(module_dots)
+    else:
+        total_dots = 0
 
     # Get recent activity (last 7 days)
     from datetime import datetime, timedelta
@@ -618,7 +629,7 @@ async def get_by_telecom_type(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
@@ -712,7 +723,7 @@ async def get_by_subscriber_status(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
@@ -830,7 +841,7 @@ async def get_by_customer_l2(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
@@ -928,7 +939,7 @@ async def get_by_customer_l3(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
@@ -1014,7 +1025,7 @@ async def get_by_dot(
 
     # Apply DOT-based permission filtering
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if not accessible_dots:
         return {"distribution": [], "total": 0}
 
@@ -1070,7 +1081,7 @@ async def get_available_filters(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:
@@ -1085,8 +1096,11 @@ async def get_available_filters(
             "customer_l3_codes": []
         }
 
-    # Get DOTs
-    dots = db.query(DOT).filter(DOT.id.in_(accessible_dots)).all()
+    # Get DOTs - filter by Parc Corporate NGBSS module
+    dots = db.query(DOT).filter(
+        DOT.id.in_(accessible_dots),
+        DOT.module == MODULE_PARC_CORPORATE_NGBSS
+    ).all()
 
     # Get unique values for filters
     # Get Actel Codes with their associated DOT IDs
@@ -1289,7 +1303,7 @@ async def get_preview_data(
         # Apply DOT-based permission filtering
         query = db.query(Park)
         accessible_dots = DOTService.get_user_accessible_dots(
-            db=db, user_id=current_user.id)
+            db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
 
         if not accessible_dots:
             logger.warning(f"User {current_user.id} has no accessible DOTs")
@@ -1591,7 +1605,7 @@ async def export_data(
     # Apply DOT-based permission filtering
     query = db.query(Park)
     accessible_dots = DOTService.get_user_accessible_dots(
-        db=db, user_id=current_user.id)
+        db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
     if accessible_dots:
         query = query.filter(Park.dot_id.in_(accessible_dots))
     else:

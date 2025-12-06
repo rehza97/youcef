@@ -38,6 +38,7 @@ const EncaissementPage = lazy(() => import("./pages/EncaissementPage"));
 const RevenuePage = lazy(() => import("./pages/RevenuePage"));
 const EncaissementARDotPage = lazy(() => import("./pages/EncaissementARDotPage"));
 const CreancePeriodiqueDotPage = lazy(() => import("./pages/CreancePeriodiqueDotPage"));
+const DOTManagementPage = lazy(() => import("./pages/DOTManagement/DOTManagementPage"));
 
 // Hooks
 import { useAuth } from "./contexts/AuthContext";
@@ -281,6 +282,16 @@ const AppContent = () => {
               <ProtectedRoute>
                 <PermissionRoute permission="can_view_kpi_data">
                   <CreancePeriodiqueDotPage />
+                </PermissionRoute>
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dot-management"
+            element={
+              <ProtectedRoute>
+                <PermissionRoute permission="can_manage_rbac">
+                  <DOTManagementPage />
                 </PermissionRoute>
               </ProtectedRoute>
             }

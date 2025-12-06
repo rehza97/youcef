@@ -41,6 +41,7 @@ class User(Base):
     blocked_by = relationship(
         "UserBlock", foreign_keys="UserBlock.blocked_id", back_populates="blocked")
     file_uploads = relationship("FileUpload", back_populates="user")
+    module_dots = relationship("UserModuleDOT", back_populates="user")
 
 # Pydantic models for API
 

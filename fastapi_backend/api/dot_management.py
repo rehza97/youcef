@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from datetime import datetime
 
 from database.connection import get_db
 from core.security import get_current_user
-from models.dot import DOT
+from models.dot import DOT, AVAILABLE_MODULES
 from models.user import User
 from services.dot_service import DOTService
 from services.permission_service import PermissionService
@@ -19,7 +19,15 @@ class DOTBase(BaseModel):
     """Base DOT schema"""
     name: str = Field(..., min_length=1, max_length=255,
                       description="DOT name")
+    module: Optional[str] = Field(None, description=f"Module this DOT belongs to. Must be one of: {', '.join(AVAILABLE_MODULES)}")
     description: Optional[str] = Field(None, description="DOT description")
+
+    @validator('module')
+    def validate_module(cls, v):
+        """Validate that module is in AVAILABLE_MODULES or None"""
+        if v is not None and v not in AVAILABLE_MODULES:
+            raise ValueError(f"Invalid module. Must be one of: {', '.join(AVAILABLE_MODULES)}")
+        return v
 
 
 class DOTCreate(DOTBase):
@@ -31,7 +39,15 @@ class DOTUpdate(BaseModel):
     """Schema for updating a DOT"""
     name: Optional[str] = Field(
         None, min_length=1, max_length=255, description="DOT name")
+    module: Optional[str] = Field(None, description=f"Module this DOT belongs to. Must be one of: {', '.join(AVAILABLE_MODULES)}")
     description: Optional[str] = Field(None, description="DOT description")
+
+    @validator('module')
+    def validate_module(cls, v):
+        """Validate that module is in AVAILABLE_MODULES or None"""
+        if v is not None and v not in AVAILABLE_MODULES:
+            raise ValueError(f"Invalid module. Must be one of: {', '.join(AVAILABLE_MODULES)}")
+        return v
 
 
 class DOTResponse(DOTBase):
@@ -75,8 +91,11 @@ def create_dot(
     """
     Create a new DOT (Admin only)
 
-    - **name**: Unique DOT name (required)
+    - **name**: DOT name (unique per module)
+    - **module**: Optional module this DOT belongs to (e.g., 'parc_corporate_ngbss', 'chiffre_affaires')
     - **description**: Optional description of the DOT
+
+    Note: Same DOT name can exist in different modules (e.g., 4 "Alger" DOTs - one per module)
     """
     PermissionService.check_admin_permissions(current_user, db)
 
@@ -84,7 +103,8 @@ def create_dot(
         new_dot = DOTService.get_or_create_dot(
             db=db,
             name=dot.name,
-            description=dot.description
+            description=dot.description,
+            module=dot.module
         )
         return new_dot
     except Exception as e:
@@ -99,6 +119,7 @@ def list_dots(
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(25, ge=1, le=100, description="Items per page"),
     search: Optional[str] = Query(None, description="Search DOT name"),
+    module: Optional[str] = Query(None, description="Filter by module"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -107,16 +128,18 @@ def list_dots(
 
     - Admins/Super Users can see all DOTs
     - Regular users can only see their assigned DOT
+    - Optional module filter to show only DOTs for a specific module
     """
     try:
         # Get DOTs based on user permissions
         if current_user.is_superuser or current_user.is_staff:
-            # Admins can see all DOTs with search
+            # Admins can see all DOTs with search and module filter
             dots, total = DOTService.list_dots_paginated(
                 db=db,
                 page=page,
                 page_size=page_size,
-                search=search
+                search=search,
+                module=module
             )
         elif current_user.dot_id:
             # Regular users can only see their assigned DOT
@@ -401,4 +424,232 @@ def unassign_user_from_dot(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to unassign user: {str(e)}"
+        )
+
+
+# ============================================================================
+# Enhanced Module-Specific Endpoints
+# ============================================================================
+
+class DOTModuleSummary(BaseModel):
+    """Summary of DOTs grouped by module"""
+    module: Optional[str]
+    count: int
+    dots: List[DOTResponse]
+
+    class Config:
+        from_attributes = True
+
+
+class BulkDOTUpdate(BaseModel):
+    """Schema for bulk DOT updates"""
+    dot_ids: List[int] = Field(..., description="List of DOT IDs to update")
+    module: Optional[str] = Field(None, description="New module assignment")
+
+    @validator('module')
+    def validate_module(cls, v):
+        """Validate that module is in AVAILABLE_MODULES or None"""
+        if v is not None and v not in AVAILABLE_MODULES:
+            raise ValueError(f"Invalid module. Must be one of: {', '.join(AVAILABLE_MODULES)}")
+        return v
+
+
+class DOTUsageStats(BaseModel):
+    """Detailed usage statistics for a DOT"""
+    dot_id: int
+    dot_name: str
+    module: Optional[str]
+    users_count: int
+    parks_count: int
+    revenue_records: int
+    encaissement_records: int
+    creance_records: int
+    can_delete: bool
+    deletion_blockers: List[str]
+
+
+@router.get("/modules/summary", response_model=List[DOTModuleSummary])
+def get_dots_by_module(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get DOTs grouped by module
+
+    Returns a summary showing how many DOTs belong to each module,
+    including null (global) DOTs.
+    """
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        # Get all unique modules including None
+        from sqlalchemy import distinct
+
+        modules_query = db.query(distinct(DOT.module)).all()
+        modules = [m[0] for m in modules_query]
+
+        result = []
+        for module in modules:
+            # Get DOTs for this module
+            if module:
+                dots = db.query(DOT).filter(DOT.module == module).order_by(DOT.name).all()
+            else:
+                dots = db.query(DOT).filter(DOT.module.is_(None)).order_by(DOT.name).all()
+
+            result.append(DOTModuleSummary(
+                module=module,
+                count=len(dots),
+                dots=dots
+            ))
+
+        # Sort: named modules first (alphabetically), then None
+        result.sort(key=lambda x: (x.module is None, x.module or ''))
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get DOTs by module: {str(e)}"
+        )
+
+
+@router.post("/bulk-update", status_code=status.HTTP_200_OK)
+def bulk_update_dots(
+    bulk_update: BulkDOTUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Bulk update DOT module assignments (Admin only)
+
+    Allows assigning multiple DOTs to a module at once.
+    """
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        updated_count = 0
+        errors = []
+
+        for dot_id in bulk_update.dot_ids:
+            try:
+                dot = db.query(DOT).filter(DOT.id == dot_id).first()
+                if not dot:
+                    errors.append(f"DOT ID {dot_id} not found")
+                    continue
+
+                dot.module = bulk_update.module
+                updated_count += 1
+
+            except Exception as e:
+                errors.append(f"DOT ID {dot_id}: {str(e)}")
+
+        db.commit()
+
+        return {
+            "success": True,
+            "updated_count": updated_count,
+            "total_requested": len(bulk_update.dot_ids),
+            "errors": errors
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to bulk update DOTs: {str(e)}"
+        )
+
+
+@router.get("/{dot_id}/usage", response_model=DOTUsageStats)
+def get_dot_usage_stats(
+    dot_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed usage statistics for a DOT
+
+    Shows exactly what data is associated with this DOT and whether it can be safely deleted.
+    """
+    PermissionService.check_admin_permissions(current_user, db)
+
+    try:
+        dot = db.query(DOT).filter(DOT.id == dot_id).first()
+        if not dot:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"DOT with ID {dot_id} not found"
+            )
+
+        # Count users
+        from models.user import User as UserModel
+        users_count = db.query(UserModel).filter(UserModel.dot_id == dot_id).count()
+
+        # Count parks
+        parks_count = 0
+        try:
+            from models.park import Park
+            parks_count = db.query(Park).filter(Park.dot_id == dot_id).count()
+        except ImportError:
+            pass
+
+        # Count revenue records
+        revenue_records = 0
+        try:
+            from models.revenue import RevenueJournal
+            revenue_records = db.query(RevenueJournal).filter(RevenueJournal.dot_id == dot_id).count()
+        except ImportError:
+            pass
+
+        # Count encaissement records
+        encaissement_records = 0
+        try:
+            from models.encaissement import EncaissementARDot
+            encaissement_records = db.query(EncaissementARDot).filter(EncaissementARDot.dot_id == dot_id).count()
+        except ImportError:
+            pass
+
+        # Count créance records
+        creance_records = 0
+        try:
+            from models.creance import CreancePeriodiqueDot
+            creance_records = db.query(CreancePeriodiqueDot).filter(CreancePeriodiqueDot.dot_id == dot_id).count()
+        except ImportError:
+            pass
+
+        # Determine if can delete
+        blockers = []
+        if users_count > 0:
+            blockers.append(f"{users_count} user(s) assigned")
+        if parks_count > 0:
+            blockers.append(f"{parks_count} park record(s)")
+        if revenue_records > 0:
+            blockers.append(f"{revenue_records} revenue record(s)")
+        if encaissement_records > 0:
+            blockers.append(f"{encaissement_records} encaissement record(s)")
+        if creance_records > 0:
+            blockers.append(f"{creance_records} créance record(s)")
+
+        can_delete = len(blockers) == 0
+
+        return DOTUsageStats(
+            dot_id=dot_id,
+            dot_name=dot.name,
+            module=dot.module,
+            users_count=users_count,
+            parks_count=parks_count,
+            revenue_records=revenue_records,
+            encaissement_records=encaissement_records,
+            creance_records=creance_records,
+            can_delete=can_delete,
+            deletion_blockers=blockers
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get DOT usage stats: {str(e)}"
         )

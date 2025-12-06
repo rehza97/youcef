@@ -34,6 +34,9 @@ import {
   getRevenueByTauxCA,
   getRevenueFilters,
   exportRevenueData,
+  startRevenueExport,
+  downloadRevenueExport,
+  getRevenueExportStatus,
   getRevenuePreviewData,
   getRevenueObjectivesPreview,
   getAccountDescriptionsPreview,
@@ -68,8 +71,19 @@ import {
   AlertCircle,
   ChevronDown,
   Search,
+  CheckCircle2,
+  XCircle,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useProcessing } from "../../contexts/ProcessingContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // Formatage français avec séparateur de milliers et 2 décimales
 const formatNumber = (value) => {
@@ -365,10 +379,21 @@ const REVENUE_JOURNAL_COLUMNS = [
  * Main Revenue Page Component
  */
 const RevenuePage = () => {
+  // WebSocket context
+  const { subscribeTask } = useProcessing();
+  
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
+  const [exportProgress, setExportProgress] = useState({
+    isOpen: false,
+    taskId: null,
+    status: 'idle',
+    progress: 0,
+    message: '',
+    filename: null,
+    downloadUrl: null,
+  });
   const [exportStatus, setExportStatus] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
@@ -581,58 +606,99 @@ const RevenuePage = () => {
   }, [byOrg]);
 
   /**
-   * Export handler
+   * Export handler - uses async export with "both" mode (normal + anomalies)
    */
   const handleExport = async (format = "xlsx") => {
     try {
       setExporting(true);
-      setExportProgress(0);
-      setExportStatus("Préparation de l'export...");
 
       const exportParams = { ...filters, format };
       if (Array.isArray(exportParams.org_name) && exportParams.org_name.length > 0) {
         exportParams.org_name = exportParams.org_name.join(",");
       }
+      if (Array.isArray(exportParams.typ_fact) && exportParams.typ_fact.length > 0) {
+        exportParams.typ_fact = exportParams.typ_fact.join(",");
+      }
+      if (Array.isArray(exportParams.cpt_comptable) && exportParams.cpt_comptable.length > 0) {
+        exportParams.cpt_comptable = exportParams.cpt_comptable.join(",");
+      }
 
-      setExportProgress(10);
-      setExportStatus("Récupération des données...");
+      console.log("🚀 Starting async revenue export with filters:", exportParams);
 
-      const res = await exportRevenueData(exportParams);
-      const mimeType =
-        format === "xlsx"
-          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : "text/csv";
-      const blob = new Blob([res.data], { type: mimeType });
+      // Start async export with "both" mode to get normal + anomalies
+      const response = await startRevenueExport(exportParams, "both");
 
-      setExportProgress(95);
-      setExportStatus("Génération du fichier...");
+      const taskId = response.data.task_id;
 
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Open progress dialog
+      setExportProgress({
+        isOpen: true,
+        taskId,
+        status: 'processing',
+        progress: 0,
+        message: 'Démarrage de l\'export...',
+        filename: null,
+        downloadUrl: null,
+      });
 
-      setExportProgress(100);
-      setExportStatus("Téléchargement...");
+      toast.info("Export démarré en arrière-plan");
+    } catch (err) {
+      console.error("❌ Export failed:", err);
+      toast.error("Erreur lors du démarrage de l'export");
+    } finally {
+      setExporting(false);
+    }
+  };
 
+  const handleDownloadExport = async () => {
+    try {
+      const response = await downloadRevenueExport(exportProgress.taskId);
+
+      // Response is a blob
+      const blob = response.data;
+      const filename = exportProgress.filename || `revenue_export_${new Date().toISOString().split('T')[0]}.zip`;
+
+      // Create download link
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `revenue_export_${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
-      a.remove();
       window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
 
-      toast.success(`Export réussi en ${format.toUpperCase()}`);
+      toast.success("Export téléchargé avec succès");
+      setExportProgress(prev => ({ ...prev, isOpen: false }));
     } catch (error) {
-      console.error("Error exporting data:", error);
-      toast.error("Erreur lors de l'export");
-    } finally {
-      setExporting(false);
-      setTimeout(() => {
-        setExportProgress(0);
-        setExportStatus("");
-      }, 1000);
+      toast.error("Erreur lors du téléchargement de l'export");
     }
   };
+
+  // WebSocket listener for export progress
+  useEffect(() => {
+    const handleExportUpdate = (message) => {
+      if (message.type === 'processing_update' && message.task_id === exportProgress.taskId) {
+        const updateData = message.data;
+        setExportProgress(prev => ({
+          ...prev,
+          status: updateData.status || prev.status,
+          progress: updateData.progress || prev.progress,
+          message: updateData.message || prev.message,
+          filename: updateData.filename || prev.filename,
+          downloadUrl: updateData.download_url || prev.downloadUrl,
+        }));
+      }
+    };
+
+    if (exportProgress.taskId && subscribeTask) {
+      subscribeTask(exportProgress.taskId, handleExportUpdate);
+    }
+
+    return () => {
+      // Cleanup handled by ProcessingContext
+    };
+  }, [exportProgress.taskId, subscribeTask]);
 
   const applyFilters = () => {
     fetchData();
@@ -831,24 +897,80 @@ const RevenuePage = () => {
         </div>
       </div>
 
-      {/* Export Progress Bar */}
-      {exporting && (
-        <Card className="border-blue-200 bg-blue-50/50">
-          <CardContent className="pt-6">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium text-blue-900">
-                  {exportStatus || "Export en cours..."}
-                </span>
-                <span className="text-blue-700 font-semibold">
-                  {Math.round(exportProgress)}%
-                </span>
+      {/* Export Progress Dialog */}
+      <Dialog open={exportProgress.isOpen} onOpenChange={(open) => setExportProgress(prev => ({ ...prev, isOpen: open }))}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Progression de l'Export</DialogTitle>
+            <DialogDescription>
+              {exportProgress.status === 'completed' 
+                ? 'Export terminé avec succès!' 
+                : exportProgress.status === 'failed'
+                ? 'Erreur lors de l\'export'
+                : 'Votre export est en cours de traitement...'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {exportProgress.status === 'processing' && (
+              <>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">
+                      {exportProgress.message || "Traitement en cours..."}
+                    </span>
+                    <span className="font-semibold">
+                      {Math.round(exportProgress.progress)}%
+                    </span>
+                  </div>
+                  <Progress value={exportProgress.progress} className="h-2" />
+                </div>
+                <p className="text-xs text-muted-foreground text-center">
+                  Veuillez patienter, cette opération peut prendre quelques instants...
+                </p>
+              </>
+            )}
+            {exportProgress.status === 'completed' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-center space-x-2 text-green-600">
+                  <CheckCircle2 className="h-6 w-6" />
+                  <span className="font-semibold">Export terminé!</span>
+                </div>
+                {exportProgress.filename && (
+                  <p className="text-sm text-center text-muted-foreground">
+                    Fichier: {exportProgress.filename}
+                  </p>
+                )}
+                <Button
+                  onClick={handleDownloadExport}
+                  className="w-full"
+                  size="lg"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Télécharger l'export
+                </Button>
               </div>
-              <Progress value={exportProgress} className="h-2" />
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            )}
+            {exportProgress.status === 'failed' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-center space-x-2 text-red-600">
+                  <XCircle className="h-6 w-6" />
+                  <span className="font-semibold">Échec de l'export</span>
+                </div>
+                <p className="text-sm text-center text-muted-foreground">
+                  {exportProgress.message || "Une erreur s'est produite lors de l'export"}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => setExportProgress(prev => ({ ...prev, isOpen: false }))}
+                  className="w-full"
+                >
+                  Fermer
+                </Button>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Total Revenue - Hero Card */}
       <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white">

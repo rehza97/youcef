@@ -27,6 +27,31 @@ class RevenueDataProcessor:
         self.account_descriptions = {}  # Cache for account descriptions
         self.revenue_objectives = {}  # Cache for revenue objectives
 
+    def _get_or_create_dot(self, name: str, description: str = None) -> DOT:
+        """Get or create a DOT for Chiffre d'Affaires module
+        
+        Args:
+            name: DOT name (will be normalized)
+            description: Optional description for the DOT
+            
+        Returns:
+            DOT object with module-specific assignment
+        """
+        from models.dot import MODULE_CHIFFRE_AFFAIRES
+
+        # Use DOTService to create module-specific DOT
+        dot = DOTService.get_or_create_dot(
+            db=self.db,
+            name=name,
+            description=description,
+            module=MODULE_CHIFFRE_AFFAIRES
+        )
+        logger.info(
+            f"✅ DOT '{name}' → ID: {dot.id}, Module: '{MODULE_CHIFFRE_AFFAIRES}', "
+            f"DB Name: '{dot.name}'"
+        )
+        return dot
+
     def process_revenue_journal(self, file_path: str, file_upload_id: int = None,
                                  progress_callback=None) -> Dict[str, Any]:
         """
@@ -263,11 +288,12 @@ class RevenueDataProcessor:
                     skipped_count += 1
                     continue
 
-                # Get or create DOT
-                dot = DOTService.get_or_create_dot(
-                    self.db, mapped['dot_name'])
+                # Get or create DOT for Chiffre d'Affaires module
+                dot = self._get_or_create_dot(
+                    mapped['dot_name'],
+                    f"DOT for {mapped['dot_name']} region"
+                )
                 mapped['dot_id'] = dot.id
-                logger.info(f"🔍 DOT '{mapped['dot_name']}' → DOT ID: {dot.id}, DOT name in DB: '{dot.name}'")
 
                 # Check if exists - use case-insensitive comparison
                 # Try exact match first, then case-insensitive
@@ -525,18 +551,11 @@ class RevenueDataProcessor:
         df = self._filter_at_siege(df)
         logger.info(f"After AT_SIEGE filter: {len(df)} rows")
 
-        # 2bis. Supprimer toutes les lignes contenant 'reprise' (case-insensitive)
-        df = self._filter_reprise(df)
-        logger.info(f"After 'reprise' filter: {len(df)} rows")
-
         # 3. Org Name: Remplacer DOT_ par vide
         df = self._clean_org_name_dot(df)
 
         # 4. Org Name: Remplacer – et _ par espace
         df = self._clean_org_name_separators(df)
-
-        # 4bis. Corriger DOT BORD-BOU-ARRERIDJ en BORD BOU ARRERIDJ
-        df = self._fix_specific_dot_names(df)
 
         # 5. Trier par Org Name, Type Fact et N Fact
         df = self._sort_by_org_type_invoice(df)
@@ -725,20 +744,129 @@ class RevenueDataProcessor:
     def _calculate_tva(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate TVA = Mnt Ttc / Mnt Ht"""
         from services.revenue_processing_helpers import RevenueProcessingHelpers
+
+        logger.info(f"📊 Starting TVA calculation for {len(df)} rows")
+
         mnt_ttc = self._find_column(df, ['Mnt Ttc', 'amount including tax'])
         mnt_ht = self._find_column(df, ['Mnt Ht', 'amount excluding tax'])
+
         if mnt_ttc and mnt_ht:
-            return RevenueProcessingHelpers.calculate_tva(df, mnt_ttc, mnt_ht)
-        return df
+            logger.info(f"   ✅ Found Mnt Ttc column: '{mnt_ttc}'")
+            logger.info(f"   ✅ Found Mnt Ht column: '{mnt_ht}'")
+
+            # Log statistics before calculation
+            ttc_non_null = df[mnt_ttc].notna().sum()
+            ht_non_null = df[mnt_ht].notna().sum()
+            logger.info(f"   📊 Before calculation:")
+            logger.info(f"      - Mnt Ttc values (non-null): {ttc_non_null}/{len(df)}")
+            logger.info(f"      - Mnt Ht values (non-null): {ht_non_null}/{len(df)}")
+
+            # Sample values
+            if ttc_non_null > 0:
+                ttc_sample = df[df[mnt_ttc].notna()][mnt_ttc].head(5).tolist()
+                logger.info(f"      - Sample Mnt Ttc values: {ttc_sample}")
+
+            if ht_non_null > 0:
+                ht_sample = df[df[mnt_ht].notna()][mnt_ht].head(5).tolist()
+                logger.info(f"      - Sample Mnt Ht values: {ht_sample}")
+
+            result_df = RevenueProcessingHelpers.calculate_tva(df, mnt_ttc, mnt_ht)
+
+            # Log statistics after calculation
+            tva_col = 'TVA'
+            if tva_col in result_df.columns:
+                tva_non_null = result_df[tva_col].notna().sum()
+                logger.info(f"   📊 After calculation:")
+                logger.info(f"      - TVA values (non-null): {tva_non_null}/{len(result_df)}")
+
+                if tva_non_null > 0:
+                    tva_sample = result_df[result_df[tva_col].notna()][tva_col].head(5).tolist()
+                    logger.info(f"      - Sample TVA values: {tva_sample}")
+
+                    # Count zero vs non-zero TVA
+                    tva_zero_count = (result_df[tva_col] == 0.0).sum()
+                    tva_nonzero_count = ((result_df[tva_col] != 0.0) & result_df[tva_col].notna()).sum()
+                    logger.info(f"      - TVA = 0.00: {tva_zero_count} rows")
+                    logger.info(f"      - TVA != 0.00: {tva_nonzero_count} rows")
+                else:
+                    logger.warning(f"      ⚠️ All TVA values are NULL!")
+            else:
+                logger.error(f"   ❌ TVA column was not created!")
+
+            return result_df
+        else:
+            logger.warning(f"   ⚠️ Required columns not found! Mnt Ttc: {mnt_ttc}, Mnt Ht: {mnt_ht}")
+            return df
 
     def _calculate_ca_ttc(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Chiffre Aff Exe Dzd TTC"""
         from services.revenue_processing_helpers import RevenueProcessingHelpers
+
+        logger.info(f"📊 Starting Chiffre Aff Exe Dzd TTC calculation for {len(df)} rows")
+
         ca_col = self._find_column(
             df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+
         if ca_col:
-            return RevenueProcessingHelpers.calculate_ca_ttc(df, ca_col)
-        return df
+            logger.info(f"   ✅ Found Chiffre Aff Exe Dzd column: '{ca_col}'")
+
+            # Check if TVA column exists
+            tva_col = 'TVA'
+            if tva_col not in df.columns:
+                logger.warning(f"   ⚠️ TVA column not found! Cannot calculate CA TTC")
+                return df
+
+            logger.info(f"   ✅ Found TVA column")
+
+            # Log statistics before calculation
+            ca_non_null = df[ca_col].notna().sum()
+            tva_non_null = df[tva_col].notna().sum()
+            logger.info(f"   📊 Before calculation:")
+            logger.info(f"      - CA values (non-null): {ca_non_null}/{len(df)}")
+            logger.info(f"      - TVA values (non-null): {tva_non_null}/{len(df)}")
+
+            # Sample values
+            if ca_non_null > 0:
+                ca_sample = df[df[ca_col].notna()][ca_col].head(5).tolist()
+                logger.info(f"      - Sample CA values: {ca_sample}")
+
+            if tva_non_null > 0:
+                tva_sample = df[df[tva_col].notna()][tva_col].head(5).tolist()
+                logger.info(f"      - Sample TVA values: {tva_sample}")
+
+            # Perform calculation
+            result_df = RevenueProcessingHelpers.calculate_ca_ttc(df, ca_col)
+
+            # Log statistics after calculation
+            ca_ttc_col = 'Chiffre_Aff_Exe_Dzd_TTC'
+            if ca_ttc_col in result_df.columns:
+                ca_ttc_non_null = result_df[ca_ttc_col].notna().sum()
+                logger.info(f"   📊 After calculation:")
+                logger.info(f"      - CA TTC values (non-null): {ca_ttc_non_null}/{len(result_df)}")
+
+                if ca_ttc_non_null > 0:
+                    ca_ttc_sample = result_df[result_df[ca_ttc_col].notna()][ca_ttc_col].head(5).tolist()
+                    logger.info(f"      - Sample CA TTC values: {ca_ttc_sample}")
+
+                    # Calculate statistics
+                    ca_ttc_sum = result_df[ca_ttc_col].sum()
+                    ca_ttc_mean = result_df[ca_ttc_col].mean()
+                    ca_ttc_min = result_df[ca_ttc_col].min()
+                    ca_ttc_max = result_df[ca_ttc_col].max()
+
+                    logger.info(f"      - CA TTC Sum: {ca_ttc_sum:,.2f}")
+                    logger.info(f"      - CA TTC Mean: {ca_ttc_mean:,.2f}")
+                    logger.info(f"      - CA TTC Min: {ca_ttc_min:,.2f}")
+                    logger.info(f"      - CA TTC Max: {ca_ttc_max:,.2f}")
+                else:
+                    logger.warning(f"      ⚠️ All CA TTC values are NULL!")
+            else:
+                logger.error(f"   ❌ CA TTC column was not created!")
+
+            return result_df
+        else:
+            logger.warning(f"   ⚠️ Chiffre Aff Exe Dzd column not found! Cannot calculate CA TTC")
+            return df
 
     def _match_account_descriptions(self, df: pd.DataFrame) -> pd.DataFrame:
         """Match with account descriptions"""
@@ -1066,10 +1194,12 @@ class RevenueDataProcessor:
                             status = "✅" if value is not None else "❌ MISSING"
                             logger.info(f"      {status} {field}: {value}")
 
-                    # Get or create DOT
+                    # Get or create DOT for Chiffre d'Affaires module
                     if mapped.get('org_name'):
-                        dot = DOTService.get_or_create_dot(
-                            self.db, mapped['org_name'])
+                        dot = self._get_or_create_dot(
+                            mapped['org_name'],
+                            f"DOT for {mapped['org_name']} organization"
+                        )
                         mapped['dot_id'] = dot.id
 
                         # Match revenue objective by org_name

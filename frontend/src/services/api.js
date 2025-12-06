@@ -1126,6 +1126,32 @@ export const exportRevenueData = (params = {}) => {
   });
 };
 
+// Start async revenue export
+export const startRevenueExport = (filters = {}, exportType = "both") => {
+  const format = filters.format || "xlsx";
+  const { format: _, ...filterParams } = filters;
+
+  const params = new URLSearchParams({
+    format,
+    export_type: exportType,
+    ...filterParams,
+  });
+
+  return api.post(`/api/revenue/export-async?${params.toString()}`);
+};
+
+// Get revenue export task status
+export const getRevenueExportStatus = (taskId) => {
+  return api.get(`/api/revenue/export-status/${taskId}`);
+};
+
+// Download completed revenue export file
+export const downloadRevenueExport = (taskId) => {
+  return api.get(`/api/revenue/export-download/${taskId}`, {
+    responseType: 'blob',
+  });
+};
+
 export const getRevenuePreviewData = (filters = {}, limit = 10, offset = 0) => {
   const params = new URLSearchParams({
     limit: limit.toString(),

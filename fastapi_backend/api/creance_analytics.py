@@ -10,7 +10,9 @@ from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
 from models.creance import CreancePeriodiqueDot
+from models.dot import MODULE_CREANCE_PERIODIQUE_DOT
 from services.permission_service import PermissionService
+from services.dot_service import DOTService
 from core.security import get_current_user
 from pydantic import BaseModel
 import logging
@@ -126,8 +128,15 @@ async def get_overview(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Build query
+        # Build query with module-specific DOT filtering
         query = db.query(CreancePeriodiqueDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
 
         # Get totals
         total_creance_brut = query.with_entities(
@@ -223,8 +232,13 @@ async def get_by_dot(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Build query
-        results = db.query(
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+
+        # Build query with DOT filter
+        query = db.query(
             CreancePeriodiqueDot.dot,
             func.count(CreancePeriodiqueDot.id).label('nombre_lignes'),
             func.sum(CreancePeriodiqueDot.creance_brut).label('total_creance_brut'),
@@ -233,7 +247,12 @@ async def get_by_dot(
             func.sum(CreancePeriodiqueDot.invoice_amt).label('total_invoice_amt')
         ).filter(
             CreancePeriodiqueDot.dot.isnot(None)
-        ).group_by(
+        )
+
+        if accessible_dot_ids:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
+
+        results = query.group_by(
             CreancePeriodiqueDot.dot
         ).all()
 
@@ -304,6 +323,13 @@ async def get_by_year(
         # Build query
         query = db.query(CreancePeriodiqueDot)
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if dot:
             query = query.filter(CreancePeriodiqueDot.dot.in_(dot))
@@ -370,6 +396,13 @@ async def get_by_product(
     try:
         # Build query
         query = db.query(CreancePeriodiqueDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
 
         # Apply filters
         if dot:
@@ -439,6 +472,13 @@ async def get_by_cust_level(
         # Build query
         query = db.query(CreancePeriodiqueDot)
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if dot:
             query = query.filter(CreancePeriodiqueDot.dot.in_(dot))
@@ -503,8 +543,18 @@ async def get_filters(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+
+        # Build base query with DOT filter
+        base_query = db.query(CreancePeriodiqueDot)
+        if accessible_dot_ids:
+            base_query = base_query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
+
         # Get unique DOTs
-        dot_results = db.query(
+        dot_results = base_query.with_entities(
             CreancePeriodiqueDot.dot
         ).distinct().filter(
             CreancePeriodiqueDot.dot.isnot(None)
@@ -513,7 +563,7 @@ async def get_filters(
         dots = [row.dot for row in dot_results]
 
         # Get unique years
-        year_results = db.query(
+        year_results = base_query.with_entities(
             CreancePeriodiqueDot.annee
         ).distinct().filter(
             CreancePeriodiqueDot.annee.isnot(None)
@@ -522,7 +572,7 @@ async def get_filters(
         years = [row.annee for row in year_results]
 
         # Get unique products
-        product_results = db.query(
+        product_results = base_query.with_entities(
             CreancePeriodiqueDot.produit
         ).distinct().filter(
             CreancePeriodiqueDot.produit.isnot(None)
@@ -584,6 +634,13 @@ async def get_pivot(
     try:
         # Build base query
         query = db.query(CreancePeriodiqueDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CREANCE_PERIODIQUE_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(CreancePeriodiqueDot.dot_id.in_(accessible_dot_ids))
 
         # Apply filters
         if dot:

@@ -11,17 +11,29 @@ from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
 from models.revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
+from models import MODULE_CHIFFRE_AFFAIRES
 from services.permission_service import PermissionService
+from services.dot_service import DOTService
 from core.security import get_current_user
 from pydantic import BaseModel
 from datetime import datetime, date
 import pandas as pd
 import io
 import logging
+import uuid
+import threading
+import tempfile
+import zipfile
+import os
+import asyncio
+from services.processing_websocket import processing_ws_manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/revenue", tags=["Revenue Analytics"])
+
+# Store active export tasks
+export_tasks = {}
 
 
 # ============================================================================
@@ -110,6 +122,7 @@ class RevenueByTauxCAResponse(BaseModel):
 class RevenueFiltersResponse(BaseModel):
     """Response schema for available filter values"""
     org_names: List[str]
+    dots: Optional[List[Dict[str, Any]]] = None  # DOTs for Chiffre d'Affaires module (optional)
     months: List[str]  # Date GL months
     date_fact_months: List[str]  # Date Fact months
     typ_fact_list: List[str]  # Type Fact values
@@ -147,6 +160,13 @@ async def get_revenue_overview(
     try:
         # Build query
         query = db.query(RevenueJournal)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
         # Apply filters
         if org_name:
@@ -329,7 +349,14 @@ async def get_revenue_preview_data(
     try:
         # Build query
         query = db.query(RevenueJournal)
-        
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
         # Apply all column filters dynamically - support ALL columns
         # Handle integer ID columns
         if id:
@@ -1065,6 +1092,13 @@ async def get_revenue_by_taux_ca(
         # Build base query
         query = db.query(RevenueJournal)
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
@@ -1150,14 +1184,38 @@ async def get_revenue_filters(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Get unique org_names
-        org_names_result = db.query(
-            RevenueJournal.org_name
-        ).distinct().filter(
+        # Apply DOT-based permission filtering for Chiffre d'Affaires module
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        
+        # Get unique org_names - only from accessible DOTs in Chiffre d'Affaires module
+        query = db.query(RevenueJournal.org_name).distinct().filter(
             RevenueJournal.org_name.isnot(None)
-        ).order_by(RevenueJournal.org_name).all()
-
-        org_names = [row.org_name for row in org_names_result]
+        )
+        
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+        else:
+            # User has no access to any DOTs in this module
+            org_names = []
+            query = None
+        
+        if query:
+            org_names_result = query.order_by(RevenueJournal.org_name).all()
+            org_names = [row.org_name for row in org_names_result]
+        else:
+            org_names = []
+        
+        # Also get DOTs for this module (for reference)
+        from models.dot import DOT
+        dots = db.query(DOT).filter(
+            DOT.module == MODULE_CHIFFRE_AFFAIRES
+        ).order_by(DOT.name).all()
+        
+        # Filter DOTs by accessible ones
+        if accessible_dot_ids:
+            dots = [dot for dot in dots if dot.id in accessible_dot_ids]
 
         # Get distinct months from Date GL (YYYY-MM format)
         months_result = db.query(
@@ -1210,10 +1268,15 @@ async def get_revenue_filters(
             {"label": "100%+", "min": 100, "max": 200}
         ]
 
-        logger.info(f"Retrieved filters: {len(org_names)} orgs, {len(months)} date_gl months, {len(date_fact_months)} date_fact months, {len(typ_fact_list)} type facts, {len(cpt_comptable_list)} accounts")
+        logger.info(
+            f"Retrieved filters: {len(org_names)} orgs (from {len(dots)} DOTs in module '{MODULE_CHIFFRE_AFFAIRES}'), "
+            f"{len(months)} date_gl months, {len(date_fact_months)} date_fact months, "
+            f"{len(typ_fact_list)} type facts, {len(cpt_comptable_list)} accounts"
+        )
 
         return {
             "org_names": org_names,
+            "dots": [{"id": dot.id, "name": dot.name} for dot in dots],  # Add DOTs for reference
             "months": months,
             "date_fact_months": date_fact_months,
             "typ_fact_list": typ_fact_list,
@@ -1252,6 +1315,13 @@ async def list_revenue_journals(
 
     try:
         query = db.query(RevenueJournal)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
         # Apply filters
         if org_name:
@@ -1349,6 +1419,13 @@ async def get_revenue_pivot(
     try:
         # Build base query
         query = db.query(RevenueJournal)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
         # Apply filters
         if org_name:
@@ -1478,12 +1555,37 @@ async def export_revenue_data(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    format: str = Query("xlsx", regex="^(xlsx|csv)$")
+    start_date_fact: Optional[date] = None,
+    end_date_fact: Optional[date] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    format: str = Query("xlsx", regex="^(xlsx|csv)$"),
+    include_all_columns: bool = Query(False, description="Include all columns (True) or summary columns only (False)")
 ):
     """
-    Export revenue data to Excel or CSV
+    Export revenue data to Excel or CSV with filtering
+
+    Applies the same filters used during file processing to ensure exported data
+    matches what users see in the analytics dashboard.
+
+    Filters applied (same as processing rules):
+    - Org Name (DOT): Filter by organization(s)
+    - Type Fact: Filter by invoice type(s)
+    - Cpt Comptable: Filter by account code(s)
+    - Date GL: Filter by general ledger date range
+    - Date Fact: Filter by invoice date range
+    - Taux CA: Filter by achievement rate range
+
+    Note: This endpoint exports the FILTERED data already in the database.
+    The following filters were already applied during file upload:
+    - Removed AT_SIEGE organizations
+    - Removed accounts containing 'A'
+    - Kept only most recent year
+
     Requires: can_export_analytics permission
     """
     PermissionService.require_permission(
@@ -1493,33 +1595,99 @@ async def export_revenue_data(
         # Build query (no limit for export)
         query = db.query(RevenueJournal)
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if typ_fact:
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+        if cpt_comptable:
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+
+        # Date GL filters
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
             query = query.filter(RevenueJournal.date_gl <= end_date)
 
+        # Date Fact filters
+        if start_date_fact:
+            query = query.filter(RevenueJournal.date_fact >= start_date_fact)
+        if end_date_fact:
+            query = query.filter(RevenueJournal.date_fact <= end_date_fact)
+
+        # Taux CA filters
+        if taux_ca_min is not None:
+            query = query.filter(RevenueJournal.taux_realisation_ca >= taux_ca_min)
+        if taux_ca_max is not None:
+            query = query.filter(RevenueJournal.taux_realisation_ca <= taux_ca_max)
+
         # Fetch all data
-        data = query.order_by(RevenueJournal.date_gl.desc()).all()
+        data = query.order_by(RevenueJournal.date_gl.desc(), RevenueJournal.org_name.asc()).all()
 
         # Convert to DataFrame
         records = []
         for item in data:
-            records.append({
-                "Org Name": item.org_name,
-                "N Fact": item.n_fact,
-                "Date Fact": item.date_fact,
-                "Date GL": item.date_gl,
-                "N Client": item.n_client,
-                "Client": item.client,
-                "Cpt Comptable": item.cpt_comptable,
-                "Chiffre Aff Exe Dzd": item.chiffre_aff_exe_dzd,
-                "TVA": item.tva,
-                "Chiffre Aff Exe Dzd TTC": item.chiffre_aff_exe_dzd_ttc,
-                "Taux Réalisation CA": item.taux_realisation_ca
-            })
+            if include_all_columns:
+                # Export ALL columns
+                records.append({
+                    "ID": item.id,
+                    "Org Name": item.org_name,
+                    "Origine": item.origine,
+                    "N Fact": item.n_fact,
+                    "Typ Fact": item.typ_fact,
+                    "Date Fact": item.date_fact,
+                    "N Client": item.n_client,
+                    "Client": item.client,
+                    "Delai Paie": item.delai_paie,
+                    "Devise": item.devise,
+                    "Obj Fact": item.obj_fact,
+                    "Cpt Comptable": item.cpt_comptable,
+                    "Date Facture GL": item.date_facture_gl,
+                    "Date GL": item.date_gl,
+                    "Periode de Facturation": item.periode_de_facturation,
+                    "Reference": item.reference,
+                    "Termine Flag": "Oui" if item.termine_flag else "Non",
+                    "Tax Amount": item.tax_amount,
+                    "Creer Par": item.creer_par,
+                    "N Ligne": item.n_ligne,
+                    "Description (ligne de produit)": item.description_ligne_de_produit,
+                    "Uom": item.uom,
+                    "Qte": item.qte,
+                    "Prix Uni": item.prix_uni,
+                    "Taux Change": item.taux_change,
+                    "Mnt Ht": item.mnt_ht,
+                    "Tax": item.tax,
+                    "Mnt Tax": item.mnt_tax,
+                    "Mnt Ttc": item.mnt_ttc,
+                    "Memo Line Id": item.memo_line_id,
+                    "Chiffre Aff Exe Dzd": item.chiffre_aff_exe_dzd,
+                    "TVA": item.tva,
+                    "Chiffre Aff Exe Dzd TTC": item.chiffre_aff_exe_dzd_ttc,
+                    "Taux Réalisation CA (%)": item.taux_realisation_ca,
+                })
+            else:
+                # Export summary columns only
+                records.append({
+                    "Org Name": item.org_name,
+                    "N Fact": item.n_fact,
+                    "Typ Fact": item.typ_fact,
+                    "Date Fact": item.date_fact,
+                    "Date GL": item.date_gl,
+                    "N Client": item.n_client,
+                    "Client": item.client,
+                    "Cpt Comptable": item.cpt_comptable,
+                    "Chiffre Aff Exe Dzd": item.chiffre_aff_exe_dzd,
+                    "TVA": item.tva,
+                    "Chiffre Aff Exe Dzd TTC": item.chiffre_aff_exe_dzd_ttc,
+                    "Taux Réalisation CA (%)": item.taux_realisation_ca
+                })
 
         df = pd.DataFrame(records)
 
@@ -1528,15 +1696,17 @@ async def export_revenue_data(
 
         if format == "xlsx":
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Revenue Data')
+                df.to_excel(writer, index=False, sheet_name='Chiffre Affaires AR DOT')
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            filename = f"revenue_data_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            filename = f"Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
         else:  # csv
             df.to_csv(output, index=False)
             media_type = "text/csv"
-            filename = f"revenue_data_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+            filename = f"Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
 
         output.seek(0)
+
+        logger.info(f"Exported {len(data)} revenue records to {format} for user {current_user.id}")
 
         return StreamingResponse(
             output,
@@ -1547,3 +1717,550 @@ async def export_revenue_data(
     except Exception as e:
         logger.error(f"Error exporting revenue data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export-anomalies")
+async def export_revenue_anomalies(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    org_name: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
+    format: str = Query("xlsx", regex="^(xlsx|csv)$")
+):
+    """
+    Export revenue anomalies to Excel or CSV
+
+    Exports all detected anomalies where:
+    - Cpt Comptable contains 'A'
+    - Description doesn't start with '@'
+
+    These anomalies were detected during file processing and flagged
+    for review before being filtered out.
+
+    Requires: can_export_analytics permission
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_export_analytics")
+
+    try:
+        # Build query
+        query = db.query(RevenueAnomaly)
+
+        # Apply filters
+        if org_name:
+            query = query.filter(RevenueAnomaly.org_name.in_(org_name))
+        if cpt_comptable:
+            query = query.filter(RevenueAnomaly.cpt_comptable.in_(cpt_comptable))
+
+        # Fetch all anomalies
+        data = query.order_by(RevenueAnomaly.created_at.desc()).all()
+
+        # Convert to DataFrame
+        records = []
+        for item in data:
+            records.append({
+                "ID": item.id,
+                "Type Anomalie": item.anomaly_type or "Chiffre d'Affaires AR DOT",
+                "DOT (Org Name)": item.org_name,
+                "N Fact": item.n_fact,
+                "Cpt Comptable": item.cpt_comptable,
+                "Description (ligne de produit)": item.description_ligne_de_produit,
+                "Raison Anomalie": item.anomaly_reason,
+                "Date Détection": item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else None,
+                "File Upload ID": item.file_upload_id,
+            })
+
+        df = pd.DataFrame(records)
+
+        # Generate file
+        output = io.BytesIO()
+
+        if format == "xlsx":
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        else:  # csv
+            df.to_csv(output, index=False)
+            media_type = "text/csv"
+            filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+
+        output.seek(0)
+
+        logger.info(f"Exported {len(data)} revenue anomalies to {format} for user {current_user.id}")
+
+        return StreamingResponse(
+            output,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    except Exception as e:
+        logger.error(f"Error exporting revenue anomalies: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Store active export tasks
+export_tasks = {}
+
+
+def _run_revenue_export_background(task_id: str, export_params: dict):
+    """Background worker for revenue export with progress updates"""
+    from database.connection import SessionLocal
+
+    db = SessionLocal()
+
+    try:
+        # Send initial progress
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "started",
+            "progress": 0,
+            "message": "Starting export..."
+        }))
+
+        export_tasks[task_id] = {
+            "status": "processing",
+            "progress": 0,
+            "file_path": None,
+            "filename": None,
+            "error": None,
+            "start_time": datetime.utcnow().isoformat()
+        }
+
+        # Extract parameters
+        format = export_params["format"]
+        export_type = export_params.get("export_type", "normal")
+        user_id = export_params["user_id"]
+
+        # Build query
+        query = db.query(RevenueJournal)
+        
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, user_id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+        else:
+            raise Exception("No accessible data")
+
+        # Apply filters
+        if export_params.get("org_name"):
+            org_names = export_params["org_name"].split(",") if isinstance(export_params["org_name"], str) else export_params["org_name"]
+            query = query.filter(RevenueJournal.org_name.in_(org_names))
+        if export_params.get("typ_fact"):
+            typ_facts = export_params["typ_fact"].split(",") if isinstance(export_params["typ_fact"], str) else export_params["typ_fact"]
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_facts))
+        if export_params.get("cpt_comptable"):
+            cpt_comptables = export_params["cpt_comptable"].split(",") if isinstance(export_params["cpt_comptable"], str) else export_params["cpt_comptable"]
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptables))
+        if export_params.get("start_date"):
+            query = query.filter(RevenueJournal.date_gl >= export_params["start_date"])
+        if export_params.get("end_date"):
+            query = query.filter(RevenueJournal.date_gl <= export_params["end_date"])
+        if export_params.get("start_date_fact"):
+            query = query.filter(RevenueJournal.date_fact >= export_params["start_date_fact"])
+        if export_params.get("end_date_fact"):
+            query = query.filter(RevenueJournal.date_fact <= export_params["end_date_fact"])
+        if export_params.get("taux_ca_min") is not None:
+            query = query.filter(RevenueJournal.taux_realisation_ca >= export_params["taux_ca_min"])
+        if export_params.get("taux_ca_max") is not None:
+            query = query.filter(RevenueJournal.taux_realisation_ca <= export_params["taux_ca_max"])
+
+        # Progress: Query built
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "processing",
+            "progress": 10,
+            "message": "Fetching data..."
+        }))
+        export_tasks[task_id]["progress"] = 10
+
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+
+        # Handle "both" export type
+        if export_type == "both":
+            normal_data = query.filter(RevenueJournal.is_anomaly.is_(False)).all()
+            anomaly_data = db.query(RevenueAnomaly)
+            
+            # Apply same filters to anomalies
+            if export_params.get("org_name"):
+                org_names = export_params["org_name"].split(",") if isinstance(export_params["org_name"], str) else export_params["org_name"]
+                anomaly_data = anomaly_data.filter(RevenueAnomaly.org_name.in_(org_names))
+            if export_params.get("cpt_comptable"):
+                cpt_comptables = export_params["cpt_comptable"].split(",") if isinstance(export_params["cpt_comptable"], str) else export_params["cpt_comptable"]
+                anomaly_data = anomaly_data.filter(RevenueAnomaly.cpt_comptable.in_(cpt_comptables))
+            
+            anomaly_data = anomaly_data.all()
+
+            if len(normal_data) == 0 and len(anomaly_data) == 0:
+                raise Exception("No data found with applied filters")
+
+            # Process normal data (20-50%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 20,
+                "message": f"Processing {len(normal_data):,} normal records..."
+            }))
+
+            normal_records = []
+            for idx, item in enumerate(normal_data):
+                if idx % 1000 == 0:
+                    progress = 20 + ((idx / len(normal_data)) * 30) if len(normal_data) > 0 else 20
+                    asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                        "status": "processing",
+                        "progress": int(progress),
+                        "message": f"Processing normal record {idx:,} of {len(normal_data):,}..."
+                    }))
+                
+                normal_records.append({
+                    "ID": item.id,
+                    "Org Name": item.org_name,
+                    "Origine": item.origine,
+                    "N Fact": item.n_fact,
+                    "Typ Fact": item.typ_fact,
+                    "Date Fact": item.date_fact.isoformat() if item.date_fact else "",
+                    "N Client": item.n_client,
+                    "Client": item.client,
+                    "Delai Paie": item.delai_paie,
+                    "Devise": item.devise,
+                    "Obj Fact": item.obj_fact,
+                    "Cpt Comptable": item.cpt_comptable,
+                    "Date Facture GL": item.date_facture_gl.isoformat() if item.date_facture_gl else "",
+                    "Date GL": item.date_gl.isoformat() if item.date_gl else "",
+                    "Periode de Facturation": item.periode_de_facturation,
+                    "Reference": item.reference,
+                    "Termine Flag": "Oui" if item.termine_flag else "Non",
+                    "Tax Amount": float(item.tax_amount) if item.tax_amount else 0.0,
+                    "Creer Par": item.creer_par,
+                    "N Ligne": item.n_ligne,
+                    "Description (ligne de produit)": item.description_ligne_de_produit,
+                    "Uom": item.uom,
+                    "Qte": float(item.qte) if item.qte else 0.0,
+                    "Prix Uni": float(item.prix_uni) if item.prix_uni else 0.0,
+                    "Taux Change": float(item.taux_change) if item.taux_change else 0.0,
+                    "Mnt Ht": float(item.mnt_ht) if item.mnt_ht else 0.0,
+                    "Tax": item.tax,
+                    "Mnt Tax": float(item.mnt_tax) if item.mnt_tax else 0.0,
+                    "Mnt Ttc": float(item.mnt_ttc) if item.mnt_ttc else 0.0,
+                    "Memo Line Id": item.memo_line_id,
+                    "Chiffre Aff Exe Dzd": float(item.chiffre_aff_exe_dzd) if item.chiffre_aff_exe_dzd else 0.0,
+                    "TVA": float(item.tva) if item.tva else 0.0,
+                    "Chiffre Aff Exe Dzd TTC": float(item.chiffre_aff_exe_dzd_ttc) if item.chiffre_aff_exe_dzd_ttc else 0.0,
+                    "Taux Réalisation CA (%)": float(item.taux_realisation_ca) if item.taux_realisation_ca else None,
+                })
+            
+            normal_df = pd.DataFrame(normal_records)
+
+            # Process anomaly data (50-80%)
+            if anomaly_data:
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 50,
+                    "message": f"Processing {len(anomaly_data):,} anomaly records..."
+                }))
+                
+                anomaly_records = []
+                for idx, item in enumerate(anomaly_data):
+                    if idx % 100 == 0:
+                        progress = 50 + ((idx / len(anomaly_data)) * 30) if len(anomaly_data) > 0 else 50
+                        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                            "status": "processing",
+                            "progress": int(progress),
+                            "message": f"Processing anomaly record {idx:,} of {len(anomaly_data):,}..."
+                        }))
+                    
+                    anomaly_records.append({
+                        "ID": item.id,
+                        "Type Anomalie": item.anomaly_type or "Chiffre d'Affaires AR DOT",
+                        "DOT (Org Name)": item.org_name,
+                        "N Fact": item.n_fact,
+                        "Cpt Comptable": item.cpt_comptable,
+                        "Description (ligne de produit)": item.description_ligne_de_produit,
+                        "Raison Anomalie": item.anomaly_reason,
+                        "Date Détection": item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else "",
+                        "File Upload ID": item.file_upload_id,
+                    })
+                
+                anomaly_df = pd.DataFrame(anomaly_records)
+            else:
+                anomaly_df = pd.DataFrame()
+
+            # Create ZIP file (80-95%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 80,
+                "message": "Creating ZIP file..."
+            }))
+
+            # Create temp file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
+            with zipfile.ZipFile(temp_file.name, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                file_ext = "xlsx" if format == "xlsx" else "csv"
+                normal_filename = f"Chiffre_Affaires_AR_DOT_{timestamp}.{file_ext}"
+
+                # Write normal file
+                normal_buffer = io.BytesIO()
+                if format == "xlsx":
+                    with pd.ExcelWriter(normal_buffer, engine='openpyxl') as writer:
+                        normal_df.to_excel(writer, index=False, sheet_name='Chiffre Affaires AR DOT')
+                else:
+                    normal_df.to_csv(normal_buffer, index=False, encoding='utf-8-sig')
+                zip_file.writestr(normal_filename, normal_buffer.getvalue())
+
+                # Write anomaly file
+                if len(anomaly_data) > 0:
+                    anomaly_filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}.{file_ext}"
+                    anomaly_buffer = io.BytesIO()
+                    if format == "xlsx":
+                        with pd.ExcelWriter(anomaly_buffer, engine='openpyxl') as writer:
+                            anomaly_df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
+                    else:
+                        anomaly_df.to_csv(anomaly_buffer, index=False, encoding='utf-8-sig')
+                    zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
+                else:
+                    zip_file.writestr("NO_ANOMALIES_FOUND.txt", "No anomalies found with the applied filters.")
+
+            filename = f"Revenue_Export_{timestamp}.zip"
+            export_tasks[task_id].update({
+                "file_path": temp_file.name,
+                "filename": filename,
+                "normal_count": len(normal_data),
+                "anomaly_count": len(anomaly_data)
+            })
+
+        else:
+            # Single file export
+            if export_type == "anomalies":
+                data = db.query(RevenueAnomaly).all()
+                records = []
+                for item in data:
+                    records.append({
+                        "ID": item.id,
+                        "Type Anomalie": item.anomaly_type or "Chiffre d'Affaires AR DOT",
+                        "DOT (Org Name)": item.org_name,
+                        "N Fact": item.n_fact,
+                        "Cpt Comptable": item.cpt_comptable,
+                        "Description (ligne de produit)": item.description_ligne_de_produit,
+                        "Raison Anomalie": item.anomaly_reason,
+                        "Date Détection": item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else "",
+                        "File Upload ID": item.file_upload_id,
+                    })
+                base_filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}"
+            else:
+                data = query.filter(RevenueJournal.is_anomaly.is_(False)).all()
+                records = []
+                for idx, item in enumerate(data):
+                    if idx % 1000 == 0:
+                        progress = 20 + ((idx / len(data)) * 60) if len(data) > 0 else 20
+                        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                            "status": "processing",
+                            "progress": int(progress),
+                            "message": f"Processing record {idx:,} of {len(data):,}..."
+                        }))
+                    
+                    records.append({
+                        "ID": item.id,
+                        "Org Name": item.org_name,
+                        "Origine": item.origine,
+                        "N Fact": item.n_fact,
+                        "Typ Fact": item.typ_fact,
+                        "Date Fact": item.date_fact.isoformat() if item.date_fact else "",
+                        "N Client": item.n_client,
+                        "Client": item.client,
+                        "Delai Paie": item.delai_paie,
+                        "Devise": item.devise,
+                        "Obj Fact": item.obj_fact,
+                        "Cpt Comptable": item.cpt_comptable,
+                        "Date Facture GL": item.date_facture_gl.isoformat() if item.date_facture_gl else "",
+                        "Date GL": item.date_gl.isoformat() if item.date_gl else "",
+                        "Periode de Facturation": item.periode_de_facturation,
+                        "Reference": item.reference,
+                        "Termine Flag": "Oui" if item.termine_flag else "Non",
+                        "Tax Amount": float(item.tax_amount) if item.tax_amount else 0.0,
+                        "Creer Par": item.creer_par,
+                        "N Ligne": item.n_ligne,
+                        "Description (ligne de produit)": item.description_ligne_de_produit,
+                        "Uom": item.uom,
+                        "Qte": float(item.qte) if item.qte else 0.0,
+                        "Prix Uni": float(item.prix_uni) if item.prix_uni else 0.0,
+                        "Taux Change": float(item.taux_change) if item.taux_change else 0.0,
+                        "Mnt Ht": float(item.mnt_ht) if item.mnt_ht else 0.0,
+                        "Tax": item.tax,
+                        "Mnt Tax": float(item.mnt_tax) if item.mnt_tax else 0.0,
+                        "Mnt Ttc": float(item.mnt_ttc) if item.mnt_ttc else 0.0,
+                        "Memo Line Id": item.memo_line_id,
+                        "Chiffre Aff Exe Dzd": float(item.chiffre_aff_exe_dzd) if item.chiffre_aff_exe_dzd else 0.0,
+                        "TVA": float(item.tva) if item.tva else 0.0,
+                        "Chiffre Aff Exe Dzd TTC": float(item.chiffre_aff_exe_dzd_ttc) if item.chiffre_aff_exe_dzd_ttc else 0.0,
+                        "Taux Réalisation CA (%)": float(item.taux_realisation_ca) if item.taux_realisation_ca else None,
+                    })
+                base_filename = f"Chiffre_Affaires_AR_DOT_{timestamp}"
+
+            if len(records) == 0:
+                raise Exception("No data found with applied filters")
+
+            df = pd.DataFrame(records)
+
+            # Create file (80-95%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 80,
+                "message": "Creating export file..."
+            }))
+
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format}')
+            if format == "xlsx":
+                with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Revenue Data' if export_type != "anomalies" else 'Anomalies')
+                filename = f"{base_filename}.xlsx"
+            else:
+                df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+                filename = f"{base_filename}.csv"
+
+            export_tasks[task_id].update({
+                "file_path": temp_file.name,
+                "filename": filename,
+                "record_count": len(records)
+            })
+
+        # Completed
+        export_tasks[task_id].update({
+            "status": "completed",
+            "progress": 100,
+            "end_time": datetime.utcnow().isoformat()
+        })
+
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "completed",
+            "progress": 100,
+            "message": "Export completed successfully!",
+            "filename": filename,
+            "download_url": f"/api/revenue/export-download/{task_id}"
+        }))
+
+    except Exception as e:
+        logger.error(f"Export error for task {task_id}: {e}", exc_info=True)
+        export_tasks[task_id].update({
+            "status": "failed",
+            "error": str(e),
+            "end_time": datetime.utcnow().isoformat()
+        })
+
+        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+            "status": "failed",
+            "progress": 0,
+            "message": f"Export failed: {str(e)}"
+        }))
+
+    finally:
+        db.close()
+
+
+@router.post("/export-async")
+async def export_revenue_data_async(
+    format: str = Query("xlsx", regex="^(xlsx|csv)$"),
+    export_type: str = Query("both", regex="^(normal|anomalies|both)$", description="Export type: normal, anomalies, or both (returns ZIP with both files)"),
+    org_name: Optional[str] = Query(None),
+    typ_fact: Optional[str] = Query(None),
+    cpt_comptable: Optional[str] = Query(None),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    start_date_fact: Optional[date] = None,
+    end_date_fact: Optional[date] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Start async export with progress tracking - returns task_id for monitoring"""
+    PermissionService.require_permission(
+        current_user, db, "can_export_analytics")
+
+    # Generate unique task ID
+    task_id = str(uuid.uuid4())
+
+    # Store export parameters
+    export_params = {
+        "format": format,
+        "export_type": export_type,
+        "org_name": org_name,
+        "typ_fact": typ_fact,
+        "cpt_comptable": cpt_comptable,
+        "start_date": start_date.isoformat() if start_date else None,
+        "end_date": end_date.isoformat() if end_date else None,
+        "start_date_fact": start_date_fact.isoformat() if start_date_fact else None,
+        "end_date_fact": end_date_fact.isoformat() if end_date_fact else None,
+        "taux_ca_min": taux_ca_min,
+        "taux_ca_max": taux_ca_max,
+        "user_id": current_user.id
+    }
+
+    # Start background export
+    thread = threading.Thread(
+        target=_run_revenue_export_background,
+        args=(task_id, export_params),
+        daemon=True
+    )
+    thread.start()
+
+    return {
+        "success": True,
+        "task_id": task_id,
+        "message": "Export started in background"
+    }
+
+
+@router.get("/export-status/{task_id}")
+async def get_revenue_export_status(task_id: str):
+    """Get export task status"""
+    if task_id not in export_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = export_tasks[task_id]
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "progress": task["progress"],
+        "filename": task.get("filename"),
+        "error": task.get("error"),
+        "start_time": task.get("start_time"),
+        "end_time": task.get("end_time"),
+        "normal_count": task.get("normal_count"),
+        "anomaly_count": task.get("anomaly_count"),
+        "record_count": task.get("record_count"),
+        "download_url": f"/api/revenue/export-download/{task_id}" if task["status"] == "completed" else None
+    }
+
+
+@router.get("/export-download/{task_id}")
+async def download_revenue_export_file(task_id: str):
+    """Download completed export file"""
+    if task_id not in export_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = export_tasks[task_id]
+
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Export not completed yet")
+
+    if not task.get("file_path") or not os.path.exists(task["file_path"]):
+        raise HTTPException(status_code=404, detail="Export file not found")
+
+    # Determine media type
+    filename = task["filename"]
+    if filename.endswith('.zip'):
+        media_type = "application/zip"
+    elif filename.endswith('.xlsx'):
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        media_type = "text/csv"
+
+    # Return file
+    def iterfile():
+        with open(task["file_path"], mode="rb") as file:
+            yield from file
+
+    return StreamingResponse(
+        iterfile(),
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
