@@ -53,7 +53,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText } from "lucide-react";
 
 // Number formatter for French locale
 const numberFr = new Intl.NumberFormat("fr-FR", {
