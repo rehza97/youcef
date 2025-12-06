@@ -141,13 +141,40 @@ const ParcCorporateNGBSSPage = () => {
     downloadUrl: null,
   });
 
+  // Convert frontend filter format to backend API format
+  const buildFilterParams = () => {
+    const params = {};
+    
+    if (filters.dot_filter) {
+      params.dot_ids = filters.dot_filter;
+    }
+    if (filters.actel_code_filter) {
+      params.actel_codes = filters.actel_code_filter;
+    }
+    if (filters.subscriber_status_filter) {
+      params.subscriber_statuses = filters.subscriber_status_filter;
+    }
+    if (filters.telecom_type_filter) {
+      params.telecom_types = filters.telecom_type_filter;
+    }
+    
+    return params;
+  };
+
   useEffect(() => {
     fetchAllData();
   }, []);
 
+  // Refetch data when filters change
+  useEffect(() => {
+    fetchAllData();
+  }, [filters]);
+
   const fetchAllData = async () => {
     try {
       setLoading(true);
+      const filterParams = buildFilterParams();
+      
       const [
         overviewRes,
         telecomRes,
@@ -157,12 +184,12 @@ const ParcCorporateNGBSSPage = () => {
         dotRes,
         filtersRes,
       ] = await Promise.all([
-        getParkAnalyticsOverview(),
-        getParkAnalyticsByTelecomType(),
-        getParkAnalyticsBySubscriberStatus(),
-        getParkAnalyticsByCustomerL2(),
-        getParkAnalyticsByCustomerL3(),
-        getParkAnalyticsByDOT(),
+        getParkAnalyticsOverview(filterParams),
+        getParkAnalyticsByTelecomType(filterParams),
+        getParkAnalyticsBySubscriberStatus(filterParams),
+        getParkAnalyticsByCustomerL2(filterParams),
+        getParkAnalyticsByCustomerL3(filterParams),
+        getParkAnalyticsByDOT(filterParams),
         getParkAnalyticsAvailableFilters(),
       ]);
 

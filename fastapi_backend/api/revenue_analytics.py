@@ -147,6 +147,8 @@ async def get_revenue_overview(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -171,6 +173,13 @@ async def get_revenue_overview(
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if typ_fact:
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+        if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
 
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
@@ -346,6 +355,9 @@ async def get_revenue_preview_data(
     PermissionService.require_permission(
         current_user, db, "can_view_analytics")
     
+    logger.info(f"🔍 [BACKEND /preview-data] Endpoint called with cpt_comptable={cpt_comptable}")
+    logger.info(f"🔍 [BACKEND /preview-data] cpt_comptable details: type={type(cpt_comptable)}, is_list={isinstance(cpt_comptable, list) if cpt_comptable else None}, value={cpt_comptable}")
+    
     try:
         # Build query
         query = db.query(RevenueJournal)
@@ -413,7 +425,10 @@ async def get_revenue_preview_data(
         if devise:
             query = query.filter(RevenueJournal.devise.in_(devise))
         if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND /preview-data] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
             query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND /preview-data] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
         if periode_de_facturation:
             query = query.filter(RevenueJournal.periode_de_facturation.in_(periode_de_facturation))
         if creer_par:
@@ -802,6 +817,9 @@ async def get_account_descriptions_preview(
 async def get_revenue_by_org(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -822,7 +840,23 @@ async def get_revenue_by_org(
             func.count(RevenueJournal.id).label('record_count')
         )
 
-        # Apply date filters
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
+        # Apply filters
+        if org_name:
+            query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if typ_fact:
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+        if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
@@ -866,6 +900,7 @@ async def get_revenue_by_account(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -884,9 +919,21 @@ async def get_revenue_by_account(
             func.count(RevenueJournal.id).label('record_count')
         )
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
@@ -922,6 +969,8 @@ async def get_revenue_by_month(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -933,6 +982,8 @@ async def get_revenue_by_month(
 
     Parameters:
     - org_name: Optional list of organization names to filter by
+    - typ_fact: Optional list of invoice types to filter by
+    - cpt_comptable: Optional list of account codes to filter by
     - start_date: Optional start date filter (YYYY-MM-DD)
     - end_date: Optional end date filter (YYYY-MM-DD)
 
@@ -952,9 +1003,23 @@ async def get_revenue_by_month(
             func.count(RevenueJournal.id).label('record_count')
         )
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if typ_fact:
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+        if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
@@ -1000,6 +1065,8 @@ async def get_revenue_by_type_fact(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -1010,6 +1077,8 @@ async def get_revenue_by_type_fact(
 
     Parameters:
     - org_name: Optional list of organization names to filter by
+    - typ_fact: Optional list of invoice types to filter by
+    - cpt_comptable: Optional list of account codes to filter by
     - start_date: Optional start date filter (YYYY-MM-DD)
     - end_date: Optional end date filter (YYYY-MM-DD)
 
@@ -1029,9 +1098,23 @@ async def get_revenue_by_type_fact(
             func.count(RevenueJournal.id).label('record_count')
         )
 
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if typ_fact:
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+        if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
@@ -1069,6 +1152,8 @@ async def get_revenue_by_taux_ca(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -1079,6 +1164,8 @@ async def get_revenue_by_taux_ca(
 
     Parameters:
     - org_name: Optional list of organization names to filter by
+    - typ_fact: Optional list of invoice types to filter by
+    - cpt_comptable: Optional list of account codes to filter by
     - start_date: Optional start date filter (YYYY-MM-DD)
     - end_date: Optional end date filter (YYYY-MM-DD)
 
@@ -1102,6 +1189,13 @@ async def get_revenue_by_taux_ca(
         # Apply filters
         if org_name:
             query = query.filter(RevenueJournal.org_name.in_(org_name))
+        if typ_fact:
+            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+        if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
+            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
         if start_date:
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
@@ -1608,7 +1702,10 @@ async def export_revenue_data(
         if typ_fact:
             query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
         if cpt_comptable:
+            # Filter directly on revenue_journal.cpt_comptable
+            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
             query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
 
         # Date GL filters
         if start_date:
@@ -1798,6 +1895,179 @@ async def export_revenue_anomalies(
     except Exception as e:
         logger.error(f"Error exporting revenue anomalies: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class RevenueAnomalyResponse(BaseModel):
+    """Response schema for revenue anomaly"""
+    id: int
+    org_name: Optional[str]
+    n_fact: Optional[str]
+    cpt_comptable: Optional[str]
+    description_ligne_de_produit: Optional[str]
+    anomaly_type: Optional[str]
+    anomaly_reason: Optional[str]
+    file_upload_id: Optional[int]
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class RevenueAnomalyListResponse(BaseModel):
+    """Response schema for list of revenue anomalies"""
+    items: List[RevenueAnomalyResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+@router.get("/anomalies", response_model=RevenueAnomalyListResponse)
+async def list_revenue_anomalies(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(25, ge=1, le=100, description="Items per page"),
+    org_name: Optional[List[str]] = Query(None, description="Filter by organization name"),
+    cpt_comptable: Optional[List[str]] = Query(None, description="Filter by account code"),
+    search: Optional[str] = Query(None, description="Search in org_name, n_fact, or cpt_comptable")
+):
+    """
+    List revenue anomalies with pagination and filtering
+    
+    Returns anomalies detected during revenue file processing where:
+    - Cpt Comptable contains 'A'
+    - Description doesn't start with '@'
+    
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(RevenueAnomaly)
+
+        # Apply filters
+        if org_name:
+            query = query.filter(RevenueAnomaly.org_name.in_(org_name))
+        if cpt_comptable:
+            query = query.filter(RevenueAnomaly.cpt_comptable.in_(cpt_comptable))
+        if search:
+            search_filter = or_(
+                RevenueAnomaly.org_name.ilike(f"%{search}%"),
+                RevenueAnomaly.n_fact.ilike(f"%{search}%"),
+                RevenueAnomaly.cpt_comptable.ilike(f"%{search}%")
+            )
+            query = query.filter(search_filter)
+
+        # Get total count
+        total = query.count()
+
+        # Apply pagination
+        skip = (page - 1) * page_size
+        anomalies = query.order_by(RevenueAnomaly.created_at.desc()).offset(skip).limit(page_size).all()
+
+        # Calculate total pages
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+
+        # Convert to response models
+        items = [
+            RevenueAnomalyResponse(
+                id=anomaly.id,
+                org_name=anomaly.org_name,
+                n_fact=anomaly.n_fact,
+                cpt_comptable=anomaly.cpt_comptable,
+                description_ligne_de_produit=anomaly.description_ligne_de_produit,
+                anomaly_type=anomaly.anomaly_type,
+                anomaly_reason=anomaly.anomaly_reason,
+                file_upload_id=anomaly.file_upload_id,
+                created_at=anomaly.created_at
+            )
+            for anomaly in anomalies
+        ]
+
+        logger.info(f"Retrieved {len(items)} anomalies (page {page}, total: {total})")
+
+        return RevenueAnomalyListResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+
+    except Exception as e:
+        logger.error(f"Error listing revenue anomalies: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve anomalies: {str(e)}")
+
+
+@router.get("/anomalies/statistics")
+async def get_revenue_anomalies_statistics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get statistics about revenue anomalies
+    
+    Returns:
+    - Total count of anomalies
+    - Count by organization
+    - Count by Cpt Comptable pattern
+    - Recent anomalies
+    
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_view_analytics")
+
+    try:
+        # Total count
+        total = db.query(func.count(RevenueAnomaly.id)).scalar()
+
+        # Count by organization
+        by_org = db.query(
+            RevenueAnomaly.org_name,
+            func.count(RevenueAnomaly.id).label('count')
+        ).group_by(RevenueAnomaly.org_name).order_by(func.count(RevenueAnomaly.id).desc()).limit(20).all()
+
+        # Count by Cpt Comptable
+        by_cpt = db.query(
+            RevenueAnomaly.cpt_comptable,
+            func.count(RevenueAnomaly.id).label('count')
+        ).group_by(RevenueAnomaly.cpt_comptable).order_by(func.count(RevenueAnomaly.id).desc()).limit(20).all()
+
+        # Recent anomalies (last 10)
+        recent = db.query(RevenueAnomaly).order_by(
+            RevenueAnomaly.created_at.desc()
+        ).limit(10).all()
+
+        return {
+            "total_anomalies": total,
+            "by_organization": [
+                {"org_name": org or "Unknown", "count": count}
+                for org, count in by_org
+            ],
+            "by_cpt_comptable": [
+                {"cpt_comptable": cpt or "Unknown", "count": count}
+                for cpt, count in by_cpt
+            ],
+            "recent_anomalies": [
+                {
+                    "id": a.id,
+                    "org_name": a.org_name,
+                    "n_fact": a.n_fact,
+                    "cpt_comptable": a.cpt_comptable,
+                    "anomaly_reason": a.anomaly_reason,
+                    "created_at": a.created_at.isoformat() if a.created_at else None
+                }
+                for a in recent
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting anomaly statistics: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve anomaly statistics: {str(e)}")
 
 # Store active export tasks
 export_tasks = {}
@@ -2174,6 +2444,16 @@ async def export_revenue_data_async(
     """Start async export with progress tracking - returns task_id for monitoring"""
     PermissionService.require_permission(
         current_user, db, "can_export_analytics")
+    
+    # Convert empty strings to None
+    if org_name == "":
+        org_name = None
+    if typ_fact == "":
+        typ_fact = None
+    if cpt_comptable == "":
+        cpt_comptable = None
+    
+    logger.info(f"🔍 [BACKEND /export-async] Received params: org_name={org_name}, typ_fact={typ_fact}, cpt_comptable={cpt_comptable}, format={format}, export_type={export_type}")
 
     # Generate unique task ID
     task_id = str(uuid.uuid4())

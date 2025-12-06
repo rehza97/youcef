@@ -222,12 +222,23 @@ class ParcCorporateNGBSSETL:
             # Apply DOT-Actel Code mapping
             if 'actel_code' in processed_df.columns and 'dot' in processed_df.columns:
                 for actel_pattern, dot_value in self.dot_actel_mapping.items():
-                    mask = processed_df['actel_code'].str.contains(
-                        actel_pattern, case=False, na=False, regex=False
-                    )
+                    # Special handling for '99|Grand Compte' to ensure it always maps to SIEGE
+                    if '99|Grand Compte' in actel_pattern or '99' in actel_pattern and 'Grand Compte' in actel_pattern:
+                        # Match any Actel code containing '99' and 'Grand Compte' (case-insensitive)
+                        mask = (
+                            processed_df['actel_code'].str.contains('99', case=False, na=False, regex=False) &
+                            processed_df['actel_code'].str.contains('Grand Compte', case=False, na=False, regex=False)
+                        )
+                    else:
+                        # For other patterns, use simple contains match
+                        mask = processed_df['actel_code'].str.contains(
+                            actel_pattern, case=False, na=False, regex=False
+                        )
+                    
                     processed_df.loc[mask, 'dot'] = dot_value
                     if mask.any():
                         step.add_warning(f"Mapped {mask.sum()} records: {actel_pattern} -> {dot_value}")
+                        logger.info(f"✅ Applied DOT mapping: {actel_pattern} -> {dot_value} ({mask.sum()} records)")
 
             step.metadata["business_rules_applied"] = [
                 "DOT-Actel Code mapping",
@@ -255,10 +266,18 @@ class ParcCorporateNGBSSETL:
             step.records_processed = len(df)
             anomalies_list = []
 
-            # 1. Check for anomaly offer names (Moohtarif, Solutions Hébergements)
+            # 1. Check for anomaly offer names (Moohtarif, Solutions Hébergements/Hebergements)
             if 'offer_name' in df.columns:
                 for offer_pattern in self.anomaly_offer_names:
-                    anomaly_mask = df['offer_name'].str.contains(offer_pattern, case=False, na=False)
+                    # Handle "Solutions Hébergements" with both é and e
+                    if "Hébergement" in offer_pattern or "Hebergement" in offer_pattern:
+                        # Use regex to match both "Hébergement" and "Hebergement" (case-insensitive)
+                        pattern = r"Solutions\s+[Hh][ée]bergement"
+                        anomaly_mask = df['offer_name'].str.contains(pattern, case=False, na=False, regex=True)
+                    else:
+                        # For other patterns like "Moohtarif", use simple contains
+                        anomaly_mask = df['offer_name'].str.contains(offer_pattern, case=False, na=False)
+                    
                     anomaly_records = df[anomaly_mask].copy()
 
                     if not anomaly_records.empty:

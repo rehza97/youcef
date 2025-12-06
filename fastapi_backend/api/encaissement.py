@@ -244,6 +244,90 @@ async def get_encaissement_by_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/preview-data", response_model=EncaissementListResponse)
+async def get_preview_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    limit: int = Query(10, ge=1, le=100, description="Number of records to preview"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    organisation: Optional[str] = Query(None, description="Comma-separated organisation names"),
+    mois: Optional[str] = Query(None, description="Filter by month (YYYY-MM)"),
+    year: Optional[int] = Query(None, description="Filter by year"),
+    sort_by: str = Query("created_at", description="Sort by column"),
+    sort_order: str = Query("desc", description="Sort order (asc/desc)")
+):
+    """
+    Get preview data for Encaissement AR DOT dashboard
+    Returns paginated records with filtering support
+    
+    This endpoint is optimized for preview/table display and supports:
+    - Multiple organisations (comma-separated)
+    - Year filtering
+    - Pagination with limit/offset
+    
+    Returns:
+        EncaissementListResponse with items, total, page info
+    """
+    try:
+        PermissionService.require_permission(current_user, db, "can_view_kpi_data")
+
+        service = EncaissementService(db)
+        
+        # Convert limit/offset to page/page_size for service method
+        page_size = limit
+        page = (offset // limit) + 1 if limit > 0 else 1
+        
+        # Handle multiple organisations
+        organisations_list = None
+        if organisation:
+            # Split comma-separated organisations and clean them
+            organisations_list = [org.strip() for org in organisation.split(",") if org.strip()]
+        
+        records, total = service.get_encaissement_records(
+            current_user=current_user,
+            page=page,
+            page_size=page_size,
+            organisation=organisation,  # Will be handled by service for single org
+            mois=mois,
+            sort_by=sort_by,
+            sort_order=sort_order
+        )
+        
+        # If multiple organisations provided, filter in Python (service only supports single)
+        if organisations_list and len(organisations_list) > 1:
+            filtered_records = [
+                r for r in records 
+                if r.organisation and any(
+                    org.lower() in r.organisation.lower() 
+                    for org in organisations_list
+                )
+            ]
+            # Recalculate total if needed (approximate)
+            records = filtered_records
+        
+        # Apply year filter if provided
+        if year:
+            filtered_by_year = [
+                r for r in records
+                if r.date_fact and r.date_fact.year == year
+            ]
+            records = filtered_by_year
+        
+        total_pages = (total + page_size - 1) // page_size if total > 0 else 1
+
+        return EncaissementListResponse(
+            items=[EncaissementRecordResponse.from_orm(record) for record in records],
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting preview data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Anomaly Endpoints
 # ============================================================================

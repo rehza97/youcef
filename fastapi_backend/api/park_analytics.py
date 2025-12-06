@@ -184,7 +184,18 @@ def _run_export_background(task_id: str, export_params: dict):
 
             anomaly_conditions = []
             for offer in anomaly_offer_names:
-                anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+                # Handle "Solutions Hébergements" with both é and e
+                if "Hébergement" in offer or "Hebergement" in offer:
+                    # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
+                    anomaly_conditions.append(
+                        or_(
+                            Park.offer_name.ilike("%Solutions Hébergement%"),
+                            Park.offer_name.ilike("%Solutions Hebergement%")
+                        )
+                    )
+                else:
+                    # For other patterns like "Moohtarif", use simple ilike
+                    anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
             anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
             anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
 
@@ -265,7 +276,18 @@ def _run_export_background(task_id: str, export_params: dict):
 
                 anomaly_conditions = []
                 for offer in anomaly_offer_names:
-                    anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+                    # Handle "Solutions Hébergements" with both é and e
+                    if "Hébergement" in offer or "Hebergement" in offer:
+                        # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
+                        anomaly_conditions.append(
+                            or_(
+                                Park.offer_name.ilike("%Solutions Hébergement%"),
+                                Park.offer_name.ilike("%Solutions Hebergement%")
+                            )
+                        )
+                    else:
+                        # For other patterns like "Moohtarif", use simple ilike
+                        anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
                 anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
                 anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
 
@@ -1747,7 +1769,18 @@ async def export_data(
 
         anomaly_conditions = []
         for offer in anomaly_offer_names:
-            anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+            # Handle "Solutions Hébergements" with both é and e
+            if "Hébergement" in offer or "Hebergement" in offer:
+                # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
+                anomaly_conditions.append(
+                    or_(
+                        Park.offer_name.ilike("%Solutions Hébergement%"),
+                        Park.offer_name.ilike("%Solutions Hebergement%")
+                    )
+                )
+            else:
+                # For other patterns like "Moohtarif", use simple ilike
+                anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
         anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
         anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
 
@@ -1800,7 +1833,18 @@ async def export_data(
 
             anomaly_conditions = []
             for offer in anomaly_offer_names:
-                anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
+                # Handle "Solutions Hébergements" with both é and e
+                if "Hébergement" in offer or "Hebergement" in offer:
+                    # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
+                    anomaly_conditions.append(
+                        or_(
+                            Park.offer_name.ilike("%Solutions Hébergement%"),
+                            Park.offer_name.ilike("%Solutions Hebergement%")
+                        )
+                    )
+                else:
+                    # For other patterns like "Moohtarif", use simple ilike
+                    anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
             anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
             anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
 

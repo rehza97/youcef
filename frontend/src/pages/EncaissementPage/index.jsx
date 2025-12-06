@@ -112,6 +112,44 @@ const OverviewCard = ({ title, value, icon: Icon, subtitle }) => (
   </Card>
 );
 
+// Telecom Type Color Mapping
+const TELECOM_COLORS = {
+  UNKNOWN: "#8884D8",
+  PSTN: "#0088FE",
+  xDSL: "#00C49F",
+  "Specialized Line": "#FFBB28",
+  LTE: "#FF8042",
+  FTTx: "#82CA9D",
+  VOIP: "#FFC658",
+  X25: "#FF7C7C",
+  x25: "#FF7C7C",
+  WIMAX: "#8DD1E1",
+  WIFI: "#8DD1E1",
+};
+
+// Subscriber Status Color Mapping
+const STATUS_COLORS = {
+  Active: "#00C49F", // Green - active is good
+  Suspend: "#FF8042", // Orange - suspended
+  Barring: "#FF7C7C", // Red - barred
+  Predeactivated: "#FFBB28", // Yellow - predeactivated
+  Idle: "#8884D8", // Purple - idle
+  Inactive: "#8DD1E1", // Light blue - inactive
+  Suspended: "#FF8042", // Orange variant
+};
+
+// Customer L2 Code Color Mapping
+const CUSTOMER_L2_COLORS = {
+  201: "#0088FE", // Blue - Company
+  301: "#00C49F", // Green - Administration & organization
+  302: "#FFBB28", // Yellow - Officially agreed professional customer
+  203: "#FF8042", // Orange - Liberal profession & Craftsman
+  501: "#82CA9D", // Light green - Line of exploitation
+  202: "#FFC658", // Gold - Trade
+  410: "#8DD1E1", // Light blue - Officially agreed professional customer DOT
+  UNKNOWN: "#8884D8", // Purple - Unknown
+};
+
 const EmptyState = ({ message = "Aucune donnée disponible" }) => (
   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
     <AlertCircle className="h-12 w-12 mb-4" />
@@ -154,9 +192,9 @@ const EncaissementPage = () => {
   const [exportProgress, setExportProgress] = useState({
     isOpen: false,
     taskId: null,
-    status: 'idle',
+    status: "idle",
     progress: 0,
-    message: '',
+    message: "",
     filename: null,
     downloadUrl: null,
   });
@@ -164,7 +202,7 @@ const EncaissementPage = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
-  
+
   // Preview data state
   const [previewData, setPreviewData] = useState([]);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -282,7 +320,7 @@ const EncaissementPage = () => {
 
     try {
       setPreviewLoading(true);
-      
+
       // Build filter params - convert arrays to comma-separated strings
       const filterParams = {};
       Object.entries(filters).forEach(([key, value]) => {
@@ -306,7 +344,8 @@ const EncaissementPage = () => {
       console.error("Error fetching preview data:", err);
       handleApiError(err, {
         showToast: true,
-        fallbackMessage: "Erreur lors du chargement des données de prévisualisation",
+        fallbackMessage:
+          "Erreur lors du chargement des données de prévisualisation",
       });
     } finally {
       setPreviewLoading(false);
@@ -323,65 +362,69 @@ const EncaissementPage = () => {
   const handleFilterChange = (key, value) => {
     setFilters((prev) => {
       const newFilters = { ...prev, [key]: value };
-      
+
       // When DOTs change, filter out Actel Codes that don't belong to selected DOTs
       if (key === "dot_ids") {
         if (value && value.length > 0) {
           const selectedDotIds = value;
           const validActelCodes = new Set();
-          
+
           selectedDotIds.forEach((dotId) => {
             const codes = dotActelMapping[dotId] || [];
             codes.forEach((code) => validActelCodes.add(code));
           });
-          
+
           // Filter out Actel Codes that don't belong to selected DOTs
           const filteredActelCodes = (prev.actel_codes || []).filter((code) =>
             validActelCodes.has(code)
           );
-          
+
           newFilters.actel_codes = filteredActelCodes;
         } else {
           // If no DOTs selected, keep all selected Actel Codes
           // (they will be available in the dropdown)
         }
       }
-      
+
       // When L2 codes change, filter out L3 codes that don't belong to selected L2 codes
       if (key === "customer_l2_codes") {
         if (value && value.length > 0) {
           const selectedL2Codes = value;
           const validL3Codes = new Set();
-          
+
           selectedL2Codes.forEach((l2Code) => {
             const l3Codes = l2L3Mapping[l2Code] || [];
             l3Codes.forEach((l3) => validL3Codes.add(l3.code));
           });
-          
+
           // Filter out L3 codes that don't belong to selected L2 codes
-          const filteredL3Codes = (prev.customer_l3_codes || []).filter((l3Code) =>
-            validL3Codes.has(l3Code)
+          const filteredL3Codes = (prev.customer_l3_codes || []).filter(
+            (l3Code) => validL3Codes.has(l3Code)
           );
-          
+
           newFilters.customer_l3_codes = filteredL3Codes;
         } else {
           // If no L2 codes selected, keep all selected L3 codes
           // (they will be available in the dropdown)
         }
       }
-      
+
       // When Subscriber Status changes, filter Telecom Types and Offer Names
       if (key === "subscriber_statuses") {
         if (value && value.length > 0) {
           const selectedStatuses = value;
           const validTelecoms = new Set();
           const validOffers = new Set();
-          
+
           selectedStatuses.forEach((status) => {
-            (statusTelecomMapping[status] || []).forEach((t) => validTelecoms.add(t));
-            (statusOfferMapping[status] || []).forEach((o) => validOffers.add(o));
+            (statusTelecomMapping[status] || []).forEach((t) =>
+              validTelecoms.add(t)
+            );
+            (statusOfferMapping[status] || []).forEach((o) =>
+              validOffers.add(o)
+            );
           });
-          
+
           // Filter out invalid selections - only keep items that are in the valid set
           if (validTelecoms.size > 0) {
             newFilters.telecom_types = (prev.telecom_types || []).filter((t) =>
@@ -395,24 +438,28 @@ const EncaissementPage = () => {
           }
         }
       }
-      
+
       // When Telecom Type changes, filter Subscriber Statuses and Offer Names
       if (key === "telecom_types") {
         if (value && value.length > 0) {
           const selectedTelecoms = value;
           const validStatuses = new Set();
           const validOffers = new Set();
-          
+
           selectedTelecoms.forEach((telecom) => {
-            (telecomStatusMapping[telecom] || []).forEach((s) => validStatuses.add(s));
-            (telecomOfferMapping[telecom] || []).forEach((o) => validOffers.add(o));
+            (telecomStatusMapping[telecom] || []).forEach((s) =>
+              validStatuses.add(s)
+            );
+            (telecomOfferMapping[telecom] || []).forEach((o) =>
+              validOffers.add(o)
+            );
           });
-          
+
           // Filter out invalid selections - only keep items that are in the valid set
           if (validStatuses.size > 0) {
-            newFilters.subscriber_statuses = (prev.subscriber_statuses || []).filter((s) =>
-              validStatuses.has(s)
-            );
+            newFilters.subscriber_statuses = (
+              prev.subscriber_statuses || []
+            ).filter((s) => validStatuses.has(s));
           }
           if (validOffers.size > 0) {
             newFilters.offer_names = (prev.offer_names || []).filter((o) =>
@@ -421,24 +468,28 @@ const EncaissementPage = () => {
           }
         }
       }
-      
+
       // When Offer Name changes, filter Subscriber Statuses and Telecom Types
       if (key === "offer_names") {
         if (value && value.length > 0) {
           const selectedOffers = value;
           const validStatuses = new Set();
           const validTelecoms = new Set();
-          
+
           selectedOffers.forEach((offer) => {
-            (offerStatusMapping[offer] || []).forEach((s) => validStatuses.add(s));
-            (offerTelecomMapping[offer] || []).forEach((t) => validTelecoms.add(t));
+            (offerStatusMapping[offer] || []).forEach((s) =>
+              validStatuses.add(s)
+            );
+            (offerTelecomMapping[offer] || []).forEach((t) =>
+              validTelecoms.add(t)
+            );
           });
-          
+
           // Filter out invalid selections - only keep items that are in the valid set
           if (validStatuses.size > 0) {
-            newFilters.subscriber_statuses = (prev.subscriber_statuses || []).filter((s) =>
-              validStatuses.has(s)
-            );
+            newFilters.subscriber_statuses = (
+              prev.subscriber_statuses || []
+            ).filter((s) => validStatuses.has(s));
           }
           if (validTelecoms.size > 0) {
             newFilters.telecom_types = (prev.telecom_types || []).filter((t) =>
@@ -447,7 +498,7 @@ const EncaissementPage = () => {
           }
         }
       }
-      
+
       return newFilters;
     });
   };
@@ -487,9 +538,12 @@ const EncaissementPage = () => {
   // WebSocket listener for export progress
   useEffect(() => {
     const handleExportUpdate = (message) => {
-      if (message.type === 'processing_update' && message.task_id === exportProgress.taskId) {
+      if (
+        message.type === "processing_update" &&
+        message.task_id === exportProgress.taskId
+      ) {
         const updateData = message.data;
-        setExportProgress(prev => ({
+        setExportProgress((prev) => ({
           ...prev,
           status: updateData.status || prev.status,
           progress: updateData.progress || prev.progress,
@@ -537,9 +591,9 @@ const EncaissementPage = () => {
       setExportProgress({
         isOpen: true,
         taskId,
-        status: 'processing',
+        status: "processing",
         progress: 0,
-        message: 'Démarrage de l\'export...',
+        message: "Démarrage de l'export...",
         filename: null,
         downloadUrl: null,
       });
@@ -562,7 +616,9 @@ const EncaissementPage = () => {
 
       // Response is a blob
       const blob = response.data;
-      const filename = exportProgress.filename || `parc_export_${new Date().toISOString().split('T')[0]}.zip`;
+      const filename =
+        exportProgress.filename ||
+        `parc_export_${new Date().toISOString().split("T")[0]}.zip`;
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
@@ -575,7 +631,7 @@ const EncaissementPage = () => {
       document.body.removeChild(a);
 
       toast.success("Export téléchargé avec succès");
-      setExportProgress(prev => ({ ...prev, isOpen: false }));
+      setExportProgress((prev) => ({ ...prev, isOpen: false }));
     } catch (error) {
       handleApiError(error, {
         showToast: true,
@@ -766,14 +822,12 @@ const EncaissementPage = () => {
                 <div>
                   <Label>DOT</Label>
                   <MultiSelect
-                    options={
-                      (availableFilters.dots || [])
-                        .map((d) => ({
-                          label: d.name,
-                          value: d.id.toString(),
-                        }))
-                        .sort((a, b) => a.label.localeCompare(b.label))
-                    }
+                    options={(availableFilters.dots || [])
+                      .map((d) => ({
+                        label: d.name,
+                        value: d.id.toString(),
+                      }))
+                      .sort((a, b) => a.label.localeCompare(b.label))}
                     selected={filters.dot_ids}
                     onChange={(values) => handleFilterChange("dot_ids", values)}
                     placeholder="Tous les DOTs"
@@ -786,27 +840,38 @@ const EncaissementPage = () => {
                     options={(() => {
                       // Filter based on selected Telecom Types and Offer Names
                       // Use intersection: show only statuses that exist with BOTH selected telecoms AND offers
-                      let filteredStatuses = availableFilters.subscriber_statuses || [];
-                      
-                      if (filters.telecom_types && filters.telecom_types.length > 0) {
+                      let filteredStatuses =
+                        availableFilters.subscriber_statuses || [];
+
+                      if (
+                        filters.telecom_types &&
+                        filters.telecom_types.length > 0
+                      ) {
                         const validStatuses = new Set();
                         filters.telecom_types.forEach((telecom) => {
                           const statuses = telecomStatusMapping[telecom] || [];
                           statuses.forEach((s) => validStatuses.add(s));
                         });
-                        filteredStatuses = filteredStatuses.filter((s) => validStatuses.has(s));
+                        filteredStatuses = filteredStatuses.filter((s) =>
+                          validStatuses.has(s)
+                        );
                       }
-                      
-                      if (filters.offer_names && filters.offer_names.length > 0) {
+
+                      if (
+                        filters.offer_names &&
+                        filters.offer_names.length > 0
+                      ) {
                         const validStatuses = new Set();
                         filters.offer_names.forEach((offer) => {
                           const statuses = offerStatusMapping[offer] || [];
                           statuses.forEach((s) => validStatuses.add(s));
                         });
                         // Intersection: keep only statuses that are in both sets
-                        filteredStatuses = filteredStatuses.filter((s) => validStatuses.has(s));
+                        filteredStatuses = filteredStatuses.filter((s) =>
+                          validStatuses.has(s)
+                        );
                       }
-                      
+
                       return filteredStatuses
                         .map((s) => ({
                           label: s,
@@ -827,26 +892,37 @@ const EncaissementPage = () => {
                   <MultiSelect
                     options={(() => {
                       // Filter based on selected Subscriber Statuses and Offer Names
-                      let filteredTelecoms = availableFilters.telecom_types || [];
-                      
-                      if (filters.subscriber_statuses && filters.subscriber_statuses.length > 0) {
+                      let filteredTelecoms =
+                        availableFilters.telecom_types || [];
+
+                      if (
+                        filters.subscriber_statuses &&
+                        filters.subscriber_statuses.length > 0
+                      ) {
                         const validTelecoms = new Set();
                         filters.subscriber_statuses.forEach((status) => {
                           const telecoms = statusTelecomMapping[status] || [];
                           telecoms.forEach((t) => validTelecoms.add(t));
                         });
-                        filteredTelecoms = filteredTelecoms.filter((t) => validTelecoms.has(t));
+                        filteredTelecoms = filteredTelecoms.filter((t) =>
+                          validTelecoms.has(t)
+                        );
                       }
-                      
-                      if (filters.offer_names && filters.offer_names.length > 0) {
+
+                      if (
+                        filters.offer_names &&
+                        filters.offer_names.length > 0
+                      ) {
                         const validTelecoms = new Set();
                         filters.offer_names.forEach((offer) => {
                           const telecoms = offerTelecomMapping[offer] || [];
                           telecoms.forEach((t) => validTelecoms.add(t));
                         });
-                        filteredTelecoms = filteredTelecoms.filter((t) => validTelecoms.has(t));
+                        filteredTelecoms = filteredTelecoms.filter((t) =>
+                          validTelecoms.has(t)
+                        );
                       }
-                      
+
                       return filteredTelecoms
                         .map((t) => ({
                           label: t,
@@ -870,12 +946,12 @@ const EncaissementPage = () => {
                       if (filters.dot_ids && filters.dot_ids.length > 0) {
                         const selectedDotIds = filters.dot_ids;
                         const filteredCodes = new Set();
-                        
+
                         selectedDotIds.forEach((dotId) => {
                           const codes = dotActelMapping[dotId] || [];
                           codes.forEach((code) => filteredCodes.add(code));
                         });
-                        
+
                         return Array.from(filteredCodes)
                           .sort()
                           .map((code) => ({
@@ -883,7 +959,7 @@ const EncaissementPage = () => {
                             value: code,
                           }));
                       }
-                      
+
                       // If no DOTs selected, show all Actel Codes
                       return (
                         availableFilters.actel_codes
@@ -915,25 +991,35 @@ const EncaissementPage = () => {
                     options={(() => {
                       // Filter based on selected Subscriber Statuses and Telecom Types
                       let filteredOffers = availableFilters.offer_names || [];
-                      
-                      if (filters.subscriber_statuses && filters.subscriber_statuses.length > 0) {
+
+                      if (
+                        filters.subscriber_statuses &&
+                        filters.subscriber_statuses.length > 0
+                      ) {
                         const validOffers = new Set();
                         filters.subscriber_statuses.forEach((status) => {
                           const offers = statusOfferMapping[status] || [];
                           offers.forEach((o) => validOffers.add(o));
                         });
-                        filteredOffers = filteredOffers.filter((o) => validOffers.has(o));
+                        filteredOffers = filteredOffers.filter((o) =>
+                          validOffers.has(o)
+                        );
                       }
-                      
-                      if (filters.telecom_types && filters.telecom_types.length > 0) {
+
+                      if (
+                        filters.telecom_types &&
+                        filters.telecom_types.length > 0
+                      ) {
                         const validOffers = new Set();
                         filters.telecom_types.forEach((telecom) => {
                           const offers = telecomOfferMapping[telecom] || [];
                           offers.forEach((o) => validOffers.add(o));
                         });
-                        filteredOffers = filteredOffers.filter((o) => validOffers.has(o));
+                        filteredOffers = filteredOffers.filter((o) =>
+                          validOffers.has(o)
+                        );
                       }
-                      
+
                       return filteredOffers
                         .map((offer) => ({
                           label: offer,
@@ -950,26 +1036,7 @@ const EncaissementPage = () => {
                 </div>
 
                 <div>
-                  <Label>Type d'Offre</Label>
-                  <MultiSelect
-                    options={
-                      availableFilters.offer_types
-                        ?.map((type) => ({
-                          label: type,
-                          value: type,
-                        }))
-                        .sort((a, b) => a.label.localeCompare(b.label)) || []
-                    }
-                    selected={filters.offer_types}
-                    onChange={(values) =>
-                      handleFilterChange("offer_types", values)
-                    }
-                    placeholder="Tous les types"
-                  />
-                </div>
-
-                <div>
-                  <Label>Client L2</Label>
+                  <Label>Code Client 2</Label>
                   <MultiSelect
                     options={
                       availableFilters.customer_l2_codes
@@ -988,19 +1055,22 @@ const EncaissementPage = () => {
                 </div>
 
                 <div>
-                  <Label>Client L3</Label>
+                  <Label>Code Client 3</Label>
                   <MultiSelect
                     options={(() => {
                       // If L2 codes are selected, filter L3 codes to show only those belonging to selected L2 codes
-                      if (filters.customer_l2_codes && filters.customer_l2_codes.length > 0) {
+                      if (
+                        filters.customer_l2_codes &&
+                        filters.customer_l2_codes.length > 0
+                      ) {
                         const selectedL2Codes = filters.customer_l2_codes;
                         const filteredL3Codes = new Set();
-                        
+
                         selectedL2Codes.forEach((l2Code) => {
                           const l3Codes = l2L3Mapping[l2Code] || [];
                           l3Codes.forEach((l3) => filteredL3Codes.add(l3.code));
                         });
-                        
+
                         // Get full L3 info from available filters
                         return (
                           availableFilters.customer_l3_codes
@@ -1009,10 +1079,11 @@ const EncaissementPage = () => {
                               label: `${l3.code} - ${l3.description}`,
                               value: l3.code,
                             }))
-                            .sort((a, b) => a.label.localeCompare(b.label)) || []
+                            .sort((a, b) => a.label.localeCompare(b.label)) ||
+                          []
                         );
                       }
-                      
+
                       // If no L2 codes selected, show all L3 codes
                       return (
                         availableFilters.customer_l3_codes
@@ -1028,7 +1099,8 @@ const EncaissementPage = () => {
                       handleFilterChange("customer_l3_codes", values)
                     }
                     placeholder={
-                      filters.customer_l2_codes && filters.customer_l2_codes.length > 0
+                      filters.customer_l2_codes &&
+                      filters.customer_l2_codes.length > 0
                         ? "Codes L3 des L2 sélectionnés"
                         : "Tous L3"
                     }
@@ -1045,28 +1117,6 @@ const EncaissementPage = () => {
                     value={filters.search}
                     onChange={(e) =>
                       handleFilterChange("search", e.target.value)
-                    }
-                  />
-                </div>
-
-                <div>
-                  <Label>Date de Début</Label>
-                  <Input
-                    type="date"
-                    value={filters.date_from}
-                    onChange={(e) =>
-                      handleFilterChange("date_from", e.target.value)
-                    }
-                  />
-                </div>
-
-                <div>
-                  <Label>Date de Fin</Label>
-                  <Input
-                    type="date"
-                    value={filters.date_to}
-                    onChange={(e) =>
-                      handleFilterChange("date_to", e.target.value)
                     }
                   />
                 </div>
@@ -1094,8 +1144,8 @@ const EncaissementPage = () => {
                           telecom_types: "Type Télécom",
                           offer_names: "Offre",
                           offer_types: "Type Offre",
-                          customer_l2_codes: "L2",
-                          customer_l3_codes: "L3",
+                          customer_l2_codes: "Code Client 2",
+                          customer_l3_codes: "Code Client 3",
                           search: "Recherche",
                           date_from: "Depuis",
                           date_to: "Jusqu'à",
@@ -1174,6 +1224,7 @@ const EncaissementPage = () => {
                         data={telecomTypeData.map((d) => ({
                           label: d.type,
                           value: d.count,
+                          color: TELECOM_COLORS[d.type] || undefined, // Use specific color if available
                         }))}
                         height={350}
                         showLabels={true}
@@ -1202,6 +1253,7 @@ const EncaissementPage = () => {
                         data={subscriberStatusData.map((d) => ({
                           label: d.status,
                           value: d.count,
+                          color: STATUS_COLORS[d.status] || undefined, // Use specific color if available
                         }))}
                         height={350}
                         showLabels={true}
@@ -1232,6 +1284,7 @@ const EncaissementPage = () => {
                       data={customerL2Data.map((d) => ({
                         label: d.description,
                         value: d.count,
+                        color: CUSTOMER_L2_COLORS[d.code] || undefined, // Use specific color if available
                       }))}
                       height={450}
                       showLabels={true}
@@ -1262,6 +1315,7 @@ const EncaissementPage = () => {
                   data={telecomTypeData.map((d) => ({
                     label: d.type,
                     value: d.count,
+                    color: TELECOM_COLORS[d.type] || undefined, // Use specific color if available
                   }))}
                   height={450}
                   showValues={true}
@@ -1309,6 +1363,7 @@ const EncaissementPage = () => {
                   data={customerL2Data.map((d) => ({
                     label: d.description,
                     value: d.count,
+                    color: CUSTOMER_L2_COLORS[d.code] || undefined, // Use specific color if available
                   }))}
                   height={550}
                   showLegendBelow={true}
@@ -1391,7 +1446,9 @@ const EncaissementPage = () => {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="sticky left-0 bg-background z-10">ID</TableHead>
+                          <TableHead className="sticky left-0 bg-background z-10">
+                            ID
+                          </TableHead>
                           <TableHead>Date Extraction</TableHead>
                           <TableHead>DOT</TableHead>
                           <TableHead>Code Actel</TableHead>
@@ -1446,7 +1503,9 @@ const EncaissementPage = () => {
                             </TableCell>
                             <TableCell className="text-xs">
                               {record.extraction_date
-                                ? new Date(record.extraction_date).toLocaleDateString("fr-FR")
+                                ? new Date(
+                                    record.extraction_date
+                                  ).toLocaleDateString("fr-FR")
                                 : "-"}
                             </TableCell>
                             <TableCell>{record.dot_name || "-"}</TableCell>
@@ -1503,26 +1562,36 @@ const EncaissementPage = () => {
                             </TableCell>
                             <TableCell className="text-xs">
                               {record.status_date
-                                ? new Date(record.status_date).toLocaleDateString("fr-FR")
+                                ? new Date(
+                                    record.status_date
+                                  ).toLocaleDateString("fr-FR")
                                 : "-"}
                             </TableCell>
                             <TableCell className="text-xs">
                               {record.creation_date
-                                ? new Date(record.creation_date).toLocaleDateString("fr-FR")
+                                ? new Date(
+                                    record.creation_date
+                                  ).toLocaleDateString("fr-FR")
                                 : "-"}
                             </TableCell>
                             <TableCell className="text-xs">
                               {record.active_date
-                                ? new Date(record.active_date).toLocaleDateString("fr-FR")
+                                ? new Date(
+                                    record.active_date
+                                  ).toLocaleDateString("fr-FR")
                                 : "-"}
                             </TableCell>
                             <TableCell className="text-xs">
                               {record.expiry_date
-                                ? new Date(record.expiry_date).toLocaleDateString("fr-FR")
+                                ? new Date(
+                                    record.expiry_date
+                                  ).toLocaleDateString("fr-FR")
                                 : "-"}
                             </TableCell>
                             <TableCell>{record.csr_name || "-"}</TableCell>
-                            <TableCell>{record.department_name || "-"}</TableCell>
+                            <TableCell>
+                              {record.department_name || "-"}
+                            </TableCell>
                             <TableCell>{record.state || "-"}</TableCell>
                             <TableCell>{record.area || "-"}</TableCell>
                             <TableCell>{record.town || "-"}</TableCell>
@@ -1547,15 +1616,21 @@ const EncaissementPage = () => {
                             <TableCell className="font-mono text-xs">
                               {record.imsi || "-"}
                             </TableCell>
-                            <TableCell>{record.contact_number || "-"}</TableCell>
+                            <TableCell>
+                              {record.contact_number || "-"}
+                            </TableCell>
                             <TableCell className="text-xs">
                               {record.created_at
-                                ? new Date(record.created_at).toLocaleString("fr-FR")
+                                ? new Date(record.created_at).toLocaleString(
+                                    "fr-FR"
+                                  )
                                 : "-"}
                             </TableCell>
                             <TableCell className="text-xs">
                               {record.updated_at
-                                ? new Date(record.updated_at).toLocaleString("fr-FR")
+                                ? new Date(record.updated_at).toLocaleString(
+                                    "fr-FR"
+                                  )
                                 : "-"}
                             </TableCell>
                           </TableRow>
@@ -1592,7 +1667,9 @@ const EncaissementPage = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                        onClick={() =>
+                          setPreviewPage((p) => Math.max(1, p - 1))
+                        }
                         disabled={previewPage === 1 || previewLoading}
                       >
                         Précédent
@@ -1642,12 +1719,19 @@ const EncaissementPage = () => {
       </div>
 
       {/* Export Progress Dialog */}
-      <Dialog open={exportProgress.isOpen} onOpenChange={(open) => setExportProgress(prev => ({ ...prev, isOpen: open }))}>
+      <Dialog
+        open={exportProgress.isOpen}
+        onOpenChange={(open) =>
+          setExportProgress((prev) => ({ ...prev, isOpen: open }))
+        }
+      >
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Progression de l'Export</DialogTitle>
             <DialogDescription>
-              {exportProgress.status === 'completed' ? 'Export terminé avec succès !' : 'Veuillez patienter pendant l\'export de vos données...'}
+              {exportProgress.status === "completed"
+                ? "Export terminé avec succès !"
+                : "Veuillez patienter pendant l'export de vos données..."}
             </DialogDescription>
           </DialogHeader>
 
@@ -1663,22 +1747,25 @@ const EncaissementPage = () => {
 
             {/* Status Icon and Message */}
             <div className="flex items-start space-x-3">
-              {exportProgress.status === 'processing' && (
+              {exportProgress.status === "processing" && (
                 <Loader2 className="h-5 w-5 animate-spin text-blue-500 mt-0.5" />
               )}
-              {exportProgress.status === 'completed' && (
+              {exportProgress.status === "completed" && (
                 <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
               )}
-              {exportProgress.status === 'failed' && (
+              {exportProgress.status === "failed" && (
                 <XCircle className="h-5 w-5 text-red-500 mt-0.5" />
               )}
               <div className="flex-1 space-y-1">
                 <p className="text-sm font-medium">
-                  {exportProgress.status === 'completed' && 'Export Prêt'}
-                  {exportProgress.status === 'processing' && 'Traitement en cours...'}
-                  {exportProgress.status === 'failed' && 'Échec de l\'Export'}
+                  {exportProgress.status === "completed" && "Export Prêt"}
+                  {exportProgress.status === "processing" &&
+                    "Traitement en cours..."}
+                  {exportProgress.status === "failed" && "Échec de l'Export"}
                 </p>
-                <p className="text-sm text-muted-foreground">{exportProgress.message}</p>
+                <p className="text-sm text-muted-foreground">
+                  {exportProgress.message}
+                </p>
                 {exportProgress.filename && (
                   <p className="text-xs text-muted-foreground mt-2">
                     Fichier : {exportProgress.filename}
@@ -1688,7 +1775,7 @@ const EncaissementPage = () => {
             </div>
 
             {/* Download Button */}
-            {exportProgress.status === 'completed' && (
+            {exportProgress.status === "completed" && (
               <Button
                 onClick={handleDownloadExport}
                 className="w-full"
@@ -1700,9 +1787,12 @@ const EncaissementPage = () => {
             )}
 
             {/* Close Button */}
-            {(exportProgress.status === 'completed' || exportProgress.status === 'failed') && (
+            {(exportProgress.status === "completed" ||
+              exportProgress.status === "failed") && (
               <Button
-                onClick={() => setExportProgress(prev => ({ ...prev, isOpen: false }))}
+                onClick={() =>
+                  setExportProgress((prev) => ({ ...prev, isOpen: false }))
+                }
                 className="w-full"
                 variant="outline"
               >

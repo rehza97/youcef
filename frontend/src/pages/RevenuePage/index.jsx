@@ -406,7 +406,7 @@ const RevenuePage = () => {
     date_fact_end: "", // Date Fact end (month)
     date_gl_start: "", // Date GL start (month)
     date_gl_end: "", // Date GL end (month)
-    cpt_comptable_search: "", // Cpt Comptable search
+    cpt_comptable: [], // Cpt Comptable codes (multi-select)
     taux_ca_min: "", // Taux CA minimum
     taux_ca_max: "", // Taux CA maximum
     search: "", // Global search
@@ -469,6 +469,7 @@ const RevenuePage = () => {
       const filterParams = {
         org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
         typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
+        cpt_comptable: filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
         start_date: filters.date_gl_start || undefined,
         end_date: filters.date_gl_end || undefined,
         start_date_fact: filters.date_fact_start || undefined,
@@ -478,10 +479,27 @@ const RevenuePage = () => {
         search: filters.search || undefined,
       };
 
+      // Log filter params before sending
+      console.log("🔍 [FRONTEND] Filter params before cleanup:", {
+        cpt_comptable: filterParams.cpt_comptable,
+        cpt_comptable_type: typeof filterParams.cpt_comptable,
+        cpt_comptable_isArray: Array.isArray(filterParams.cpt_comptable),
+        cpt_comptable_length: filterParams.cpt_comptable?.length,
+        all_filters: filterParams
+      });
+
       // Remove undefined values
       Object.keys(filterParams).forEach(
         (key) => filterParams[key] === undefined && delete filterParams[key]
       );
+
+      console.log("🔍 [FRONTEND] Filter params after cleanup:", {
+        cpt_comptable: filterParams.cpt_comptable,
+        cpt_comptable_type: typeof filterParams.cpt_comptable,
+        cpt_comptable_isArray: Array.isArray(filterParams.cpt_comptable),
+        cpt_comptable_length: filterParams.cpt_comptable?.length,
+        all_filters: filterParams
+      });
 
       // Load all data simultaneously
       const [ovRes, orgRes, accRes, typeFactRes, monthRes, tauxCARes] =
@@ -613,15 +631,30 @@ const RevenuePage = () => {
       setExporting(true);
 
       const exportParams = { ...filters, format };
-      if (Array.isArray(exportParams.org_name) && exportParams.org_name.length > 0) {
-        exportParams.org_name = exportParams.org_name.join(",");
+      
+      // Convert arrays to comma-separated strings, or remove if empty
+      if (Array.isArray(exportParams.org_name)) {
+        exportParams.org_name = exportParams.org_name.length > 0 
+          ? exportParams.org_name.join(",") 
+          : undefined;
       }
-      if (Array.isArray(exportParams.typ_fact) && exportParams.typ_fact.length > 0) {
-        exportParams.typ_fact = exportParams.typ_fact.join(",");
+      if (Array.isArray(exportParams.typ_fact)) {
+        exportParams.typ_fact = exportParams.typ_fact.length > 0 
+          ? exportParams.typ_fact.join(",") 
+          : undefined;
       }
-      if (Array.isArray(exportParams.cpt_comptable) && exportParams.cpt_comptable.length > 0) {
-        exportParams.cpt_comptable = exportParams.cpt_comptable.join(",");
+      if (Array.isArray(exportParams.cpt_comptable)) {
+        exportParams.cpt_comptable = exportParams.cpt_comptable.length > 0 
+          ? exportParams.cpt_comptable.join(",") 
+          : undefined;
       }
+      
+      // Remove empty strings and undefined values
+      Object.keys(exportParams).forEach((key) => {
+        if (exportParams[key] === undefined || exportParams[key] === "" || exportParams[key] === null) {
+          delete exportParams[key];
+        }
+      });
 
       console.log("🚀 Starting async revenue export with filters:", exportParams);
 
@@ -701,6 +734,7 @@ const RevenuePage = () => {
   }, [exportProgress.taskId, subscribeTask]);
 
   const applyFilters = () => {
+    // Fetch all data with current filters - this will update all tabs
     fetchData();
     toast.success("Filtres appliqués");
   };
@@ -713,7 +747,7 @@ const RevenuePage = () => {
       date_fact_end: "",
       date_gl_start: "",
       date_gl_end: "",
-      cpt_comptable_search: "",
+      cpt_comptable: [],
       taux_ca_min: "",
       taux_ca_max: "",
       search: "",
@@ -739,7 +773,10 @@ const RevenuePage = () => {
         );
       } else if (previewTableType === "account-descriptions") {
         response = await getAccountDescriptionsPreview(
-          { search: filters.search || filters.cpt_comptable_search },
+          { 
+            search: filters.search || undefined,
+            cpt_comptable: filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
+          },
           previewPageSize,
           offset
         );
@@ -750,6 +787,7 @@ const RevenuePage = () => {
           ...columnFilters, // Include all column-specific filters
           org_name: filters.org_name.length > 0 ? filters.org_name : columnFilters.org_name || undefined,
           typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : columnFilters.typ_fact || undefined,
+          cpt_comptable: filters.cpt_comptable.length > 0 ? filters.cpt_comptable : columnFilters.cpt_comptable || undefined,
           start_date: filters.date_gl_start || undefined,
           end_date: filters.date_gl_end || undefined,
           start_date_fact: filters.date_fact_start || undefined,
@@ -1081,16 +1119,24 @@ const RevenuePage = () => {
 
             <div>
                   <Label>Compte comptable</Label>
-              <Input
-                    type="text"
-                    placeholder="Rechercher par description..."
-                    value={filters.cpt_comptable_search}
-                onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        cpt_comptable_search: e.target.value,
-                      }))
-                }
+              <MultiSelect
+                options={filterOptions.cpt_comptable_list.map((item) => ({
+                  label: `${item.code} - ${item.description || "Sans description"}`,
+                  value: item.code,
+                }))}
+                selected={filters.cpt_comptable}
+                onChange={(values) => {
+                  console.log("🔍 [FRONTEND] Compte comptable filter changed:", {
+                    values: values,
+                    values_type: typeof values,
+                    values_isArray: Array.isArray(values),
+                    values_length: values?.length,
+                    values_content: values
+                  });
+                  setFilters((f) => ({ ...f, cpt_comptable: values }))
+                }}
+                placeholder="Tous les comptes comptables"
+                showSelectAll={true}
               />
             </div>
 
@@ -1210,14 +1256,19 @@ const RevenuePage = () => {
                           date_fact_end: "Date Fact Fin",
                           date_gl_start: "Date GL Début",
                           date_gl_end: "Date GL Fin",
-                          cpt_comptable_search: "Compte",
+                          cpt_comptable: "Compte comptable",
                           taux_ca_min: "Taux Min",
                           taux_ca_max: "Taux Max",
                           search: "Recherche",
                         };
 
                         const displayValue = Array.isArray(value)
-                          ? `${value.length} sélectionné(s)`
+                          ? key === "cpt_comptable"
+                            ? value.map(code => {
+                                const item = filterOptions.cpt_comptable_list.find(c => c.code === code);
+                                return item ? `${code} - ${item.description?.substring(0, 30) || "Sans description"}` : code;
+                              }).join(", ")
+                            : `${value.length} sélectionné(s)`
                           : value;
 
                         return (

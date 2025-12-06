@@ -976,6 +976,13 @@ export const downloadParkAnalyticsExport = (taskId) => {
 
 // Revenue Analytics API methods
 export const getRevenueOverview = (params = {}) => {
+  console.log("🔍 [FRONTEND API] getRevenueOverview called with params:", params);
+  console.log("🔍 [FRONTEND API] cpt_comptable in params:", {
+    value: params.cpt_comptable,
+    type: typeof params.cpt_comptable,
+    isArray: Array.isArray(params.cpt_comptable),
+    length: params.cpt_comptable?.length
+  });
   const query = new URLSearchParams();
   if (params.org_name) {
     (Array.isArray(params.org_name)
@@ -983,9 +990,26 @@ export const getRevenueOverview = (params = {}) => {
       : [params.org_name]
     ).forEach((v) => query.append("org_name", v));
   }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    console.log("🔍 [FRONTEND API] Adding cpt_comptable to query:", params.cpt_comptable);
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => {
+      console.log("🔍 [FRONTEND API] Appending cpt_comptable value:", v);
+      query.append("cpt_comptable", v);
+    });
+  }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
   const qs = query.toString();
+  console.log("🔍 [FRONTEND API] Final query string for /overview:", qs);
   return api.get(`/api/revenue/overview${qs ? `?${qs}` : ""}`);
 };
 
@@ -1018,6 +1042,24 @@ export const listRevenueJournals = (params = {}) => {
 
 export const getRevenueByOrg = (params = {}) => {
   const query = new URLSearchParams();
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => query.append("cpt_comptable", v));
+  }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
   return api.get(
@@ -1032,6 +1074,18 @@ export const getRevenueByAccount = (params = {}) => {
       ? params.org_name
       : [params.org_name]
     ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => query.append("cpt_comptable", v));
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
@@ -1048,6 +1102,18 @@ export const getRevenueByTypeFact = (params = {}) => {
       : [params.org_name]
     ).forEach((v) => query.append("org_name", v));
   }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => query.append("cpt_comptable", v));
+  }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
   return api.get(
@@ -1063,6 +1129,18 @@ export const getRevenueByTauxCA = (params = {}) => {
       : [params.org_name]
     ).forEach((v) => query.append("org_name", v));
   }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => query.append("cpt_comptable", v));
+  }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
   return api.get(
@@ -1077,6 +1155,18 @@ export const getRevenueByMonth = (params = {}) => {
       ? params.org_name
       : [params.org_name]
     ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => query.append("cpt_comptable", v));
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
@@ -1131,12 +1221,20 @@ export const startRevenueExport = (filters = {}, exportType = "both") => {
   const format = filters.format || "xlsx";
   const { format: _, ...filterParams } = filters;
 
-  const params = new URLSearchParams({
-    format,
-    export_type: exportType,
-    ...filterParams,
+  // Build URLSearchParams, only including non-empty values
+  const params = new URLSearchParams();
+  params.append("format", format);
+  params.append("export_type", exportType);
+  
+  // Only add filter params that have values
+  Object.keys(filterParams).forEach((key) => {
+    const value = filterParams[key];
+    if (value !== undefined && value !== null && value !== "") {
+      params.append(key, value);
+    }
   });
 
+  console.log("🔍 [FRONTEND API] startRevenueExport - params:", params.toString());
   return api.post(`/api/revenue/export-async?${params.toString()}`);
 };
 

@@ -1093,32 +1093,118 @@ class BackgroundProcessor:
 
             if dot_col:
                 # Vectorized: Get unique DOT names (1 operation instead of 5000 iterations)
-                unique_dot_names = df[dot_col].dropna(
-                ).str.strip().str.upper().unique()
+                # Filter out empty strings, NaN values, and the string 'nan'
+                # First, handle NaN properly - convert to empty string, then filter
+                df[dot_col] = df[dot_col].fillna('').astype(str).str.strip()
+                # Filter out empty strings and 'nan' (case-insensitive)
+                valid_dot_mask = (df[dot_col] != '') & (df[dot_col].str.upper() != 'NAN')
+                unique_dot_names = df[valid_dot_mask][dot_col].str.upper().unique()
 
                 if len(unique_dot_names) > 0:
                     logger.debug(
                         f"📊 {len(unique_dot_names)} unique DOTs in batch of {len(df)} records")
 
                     # ✅ STEP 3: Use thread-local cache (reduces lock contention)
-                    for dot_name in unique_dot_names:
-                        self._get_dot_id_thread_local(dot_name)
+                    # Filter out invalid DOT names like 'nan', 'none', 'null', etc.
+                    valid_dot_names = [name for name in unique_dot_names 
+                                      if name and str(name).strip().upper() not in ['NAN', 'NONE', 'NULL', '', 'NAT']]
+                    for dot_name in valid_dot_names:
+                        try:
+                            self._get_dot_id_thread_local(dot_name)
+                        except (ValueError, Exception) as e:
+                            logger.warning(f"Skipping invalid DOT name '{dot_name}': {e}")
+                            continue
 
                     # ✅ VECTORIZATION: Map all DOT names to IDs at once
-                    df['dot_id'] = df[dot_col].str.strip().str.upper().map(
-                        self._get_thread_local_dot_cache())
+                    # Handle empty strings and NaN by setting them to None first
+                    df['dot_id'] = df[dot_col].fillna('').astype(str).str.strip().str.upper()
+                    # Set empty strings, 'NAN', 'NONE', 'NULL' to None (will be handled by Actel code check or default)
+                    invalid_values = ['', 'NAN', 'NONE', 'NULL', 'NAT']
+                    df.loc[df['dot_id'].isin(invalid_values), 'dot_id'] = None
+                    # Map valid DOT names to IDs (only for non-None values)
+                    dot_cache = self._get_thread_local_dot_cache()
+                    df['dot_id'] = df['dot_id'].apply(lambda x: dot_cache.get(x) if x is not None and x in dot_cache else None)
 
-                    # Fill NaN with default DOT
+                    # ✅ BUSINESS RULE: If DOT is empty/NaN, check Actel code for "99|Grand Compte" -> SIEGE
+                    if 'actel_code' in df.columns:
+                        # Find rows where dot_id is NaN/empty (including empty strings that became NaN)
+                        empty_dot_mask = df['dot_id'].isna()
+                        
+                        if empty_dot_mask.any():
+                            # Check Actel codes for "99|Grand Compte" pattern
+                            actel_upper = df.loc[empty_dot_mask, 'actel_code'].astype(str).str.upper()
+                            
+                            # Match rows with "99" AND ("GRAND COMPTE" OR "GRAND COM")
+                            grand_compte_mask = (
+                                actel_upper.str.contains('99', na=False, regex=False) &
+                                (actel_upper.str.contains('GRAND COMPTE', na=False, regex=False) |
+                                 actel_upper.str.contains('GRAND COM', na=False, regex=False))
+                            )
+                            
+                            if grand_compte_mask.any():
+                                siege_dot_id = self._get_dot_id_thread_local("SIEGE")
+                                # Get the actual indices from the empty_dot_mask
+                                empty_indices = df[empty_dot_mask].index
+                                grand_compte_indices = empty_indices[grand_compte_mask]
+                                df.loc[grand_compte_indices, 'dot_id'] = siege_dot_id
+                                logger.info(
+                                    f"✅ Applied business rule: {len(grand_compte_indices)} records with '99|Grand Compte' in Actel code -> DOT set to SIEGE")
+                    
+                    # Fill remaining NaN with default DOT
                     df['dot_id'] = df['dot_id'].fillna(
                         default_dot_id).astype('Int64')
                 else:
-                    # No DOT names found, use default
+                    # No valid DOT names found - check Actel code for business rules
+                    if 'actel_code' in df.columns:
+                        # Initialize with default, then override based on Actel code
+                        df['dot_id'] = pd.Series(
+                            [default_dot_id] * len(df), dtype='Int64')
+                        
+                        # Check Actel codes for "99|Grand Compte" pattern
+                        actel_upper = df['actel_code'].astype(str).str.upper()
+                        
+                        # Match rows with "99" AND ("GRAND COMPTE" OR "GRAND COM")
+                        grand_compte_mask = (
+                            actel_upper.str.contains('99', na=False, regex=False) &
+                            (actel_upper.str.contains('GRAND COMPTE', na=False, regex=False) |
+                             actel_upper.str.contains('GRAND COM', na=False, regex=False))
+                        )
+                        
+                        if grand_compte_mask.any():
+                            siege_dot_id = self._get_dot_id_thread_local("SIEGE")
+                            df.loc[grand_compte_mask, 'dot_id'] = siege_dot_id
+                            logger.info(
+                                f"✅ Applied business rule (empty DOT column): {grand_compte_mask.sum()} records with '99|Grand Compte' in Actel code -> DOT set to SIEGE")
+                    else:
+                        # No DOT names found and no Actel code, use default
+                        df['dot_id'] = pd.Series(
+                            [default_dot_id] * len(df), dtype='Int64')
+            else:
+                # No DOT column found - check Actel code for business rules
+                if 'actel_code' in df.columns:
+                    # Initialize with default, then override based on Actel code
                     df['dot_id'] = pd.Series(
                         [default_dot_id] * len(df), dtype='Int64')
-            else:
-                # No DOT column found, use default
-                df['dot_id'] = pd.Series(
-                    [default_dot_id] * len(df), dtype='Int64')
+                    
+                    # Check Actel codes for "99|Grand Compte" pattern
+                    actel_upper = df['actel_code'].astype(str).str.upper()
+                    
+                    # Match rows with "99" AND ("GRAND COMPTE" OR "GRAND COM")
+                    grand_compte_mask = (
+                        actel_upper.str.contains('99', na=False, regex=False) &
+                        (actel_upper.str.contains('GRAND COMPTE', na=False, regex=False) |
+                         actel_upper.str.contains('GRAND COM', na=False, regex=False))
+                    )
+                    
+                    if grand_compte_mask.any():
+                        siege_dot_id = self._get_dot_id_thread_local("SIEGE")
+                        df.loc[grand_compte_mask, 'dot_id'] = siege_dot_id
+                        logger.info(
+                            f"✅ Applied business rule (no DOT column): {grand_compte_mask.sum()} records with '99|Grand Compte' in Actel code -> DOT set to SIEGE")
+                else:
+                    # No DOT column and no Actel code - use default
+                    df['dot_id'] = pd.Series(
+                        [default_dot_id] * len(df), dtype='Int64')
 
             # ✅ STEP 3: Remove ALL dot_name-related columns (critical - prevents SQL errors)
             dot_columns_to_remove = [
@@ -1250,16 +1336,19 @@ class BackgroundProcessor:
             if 'dot_id' in park_dict and park_dict.get('dot_id') is not None:
                 # DOT ID already set
                 dot_id = self._safe_int(park_dict.get('dot_id'))
-            elif dot_name:
-                # Use DOT name from file (most reliable source)
+            elif dot_name and str(dot_name).strip():
+                # Use DOT name from file (most reliable source) - only if not empty
                 dot_id = self._get_or_create_dot_id(dot_name)
                 logger.debug(
                     f"DOT assigned from file: {dot_name} -> ID {dot_id}")
-            elif actel_code:
-                # Auto-assign DOT based on actel code
+            
+            # If DOT is still not set, check Actel code for business rules
+            # This handles cases where DOT is empty in Excel but Actel code contains "99|Grand Compte"
+            if dot_id is None and actel_code:
                 dot_id = self._get_dot_id_from_actel_code(actel_code)
-                logger.debug(
-                    f"DOT assigned from actel code: {actel_code} -> ID {dot_id}")
+                if dot_id:
+                    logger.info(
+                        f"✅ DOT assigned from actel code business rule: {actel_code} -> ID {dot_id}")
 
             # Fallback: assign to OUARGLA if no DOT is determined
             if dot_id is None:
@@ -1520,17 +1609,26 @@ class BackgroundProcessor:
         actel_str = str(actel_code).upper()
 
         # Business rules for DOT assignment based on actel code
+        # Priority 1: Check for "99|Grand Compte" or "99|Grand Com" (handle truncation)
+        if "99" in actel_str and ("GRAND COMPTE" in actel_str or "GRAND COM" in actel_str):
+            logger.info(f"✅ Actel code '{actel_code}' matches '99|Grand Compte' pattern -> Setting DOT to SIEGE")
+            return self._get_or_create_dot_id("SIEGE")
+        
+        # Priority 2: Check for "2B|Hassi Messaoud"
         if "2B" in actel_str and "HASSI MESSAOUD" in actel_str:
             return self._get_or_create_dot_id("OUARGLA")
-        elif "99" in actel_str and "GRAND COMPTE" in actel_str:
-            return self._get_or_create_dot_id("SIEGE")
+        
+        # Priority 3: Check for standalone "2B"
         elif "2B" in actel_str:
             return self._get_or_create_dot_id("OUARGLA")
+        
+        # Priority 4: Check for standalone "99" (but only if not already handled above)
         elif "99" in actel_str:
+            logger.info(f"✅ Actel code '{actel_code}' contains '99' -> Setting DOT to SIEGE")
             return self._get_or_create_dot_id("SIEGE")
 
         # Default fallback
-        return self._get_or_create_dot_id("OUARGLA")
+        return None
 
     def _safe_date(self, value) -> Optional[datetime]:
         """Safely convert value to date"""
