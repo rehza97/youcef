@@ -38,7 +38,7 @@ class Park(Base):
     # Telecom and Offer information
     telecom_type = Column(String(100), nullable=True, index=True)
     offer_type = Column(String(100), nullable=True, index=True)
-    offer_name = Column(String(255), nullable=True)
+    offer_name = Column(String(255), nullable=True, index=True)
     rental_fees = Column(Numeric(10, 2), nullable=True)
 
     # Customer and Service information

@@ -896,8 +896,22 @@ def get_filter_options(db: Session = Depends(get_db)):
         Park.subscriber_status.isnot(None)).distinct().all()
     telecom_types = db.query(Park.telecom_type).filter(
         Park.telecom_type.isnot(None)).distinct().all()
-    offer_names = db.query(Park.offer_name).filter(
+
+    # Get offer names with case-insensitive deduplication
+    offer_names_raw = db.query(Park.offer_name).filter(
         Park.offer_name.isnot(None)).distinct().all()
+
+    # Deduplicate by case-insensitive comparison, keeping the most common capitalization
+    offer_name_map = {}
+    for (offer_name,) in offer_names_raw:
+        lower_name = offer_name.lower()
+        if lower_name not in offer_name_map:
+            offer_name_map[lower_name] = offer_name
+        # If we see the same name with different capitalization, prefer title case or the one we saw first
+        # This ensures consistent display in the dropdown
+
+    offer_names = [(name,) for name in sorted(offer_name_map.values())]
+
     customer_l2_codes = db.query(Park.customer_l2_code, Park.customer_l2_description).filter(
         Park.customer_l2_code.isnot(None)).distinct().all()
     customer_l3_codes = db.query(Park.customer_l3_code, Park.customer_l3_description).filter(
@@ -964,7 +978,9 @@ def get_filtered_parks(
     if offer_names:
         offer_list = [offer.strip()
                       for offer in offer_names.split(',') if offer.strip()]
-        query = query.filter(Park.offer_name.in_(offer_list))
+        # Use case-insensitive matching to handle variations like "Moohtarif" vs "moohtarif"
+        offer_conditions = [Park.offer_name.ilike(offer) for offer in offer_list]
+        query = query.filter(or_(*offer_conditions))
 
     if customer_l2_codes:
         l2_list = [code.strip()

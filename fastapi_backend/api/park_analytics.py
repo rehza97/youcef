@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_, text
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import logging
 import pandas as pd
 import io
@@ -421,7 +421,9 @@ def apply_filters_to_query(
     if offer_names:
         offer_list = [offer.strip()
                       for offer in offer_names.split(',') if offer.strip()]
-        query = query.filter(Park.offer_name.in_(offer_list))
+        # Use case-insensitive matching to handle variations like "Moohtarif" vs "moohtarif"
+        offer_conditions = [Park.offer_name.ilike(offer) for offer in offer_list]
+        query = query.filter(or_(*offer_conditions))
 
     if offer_types:
         offer_type_list = [otype.strip()
@@ -1148,19 +1150,34 @@ async def get_available_filters(
         None)).with_entities(Park.subscriber_status).distinct().all()
     telecom_types = query.filter(Park.telecom_type.isnot(
         None)).with_entities(Park.telecom_type).distinct().all()
-    offer_names = query.filter(Park.offer_name.isnot(None)).with_entities(
-        Park.offer_name).distinct().limit(100).all()
+
+    # Get offer names with case-insensitive deduplication
+    # No limit - get all unique offer names
+    offer_names_raw = query.filter(Park.offer_name.isnot(None)).with_entities(
+        Park.offer_name).distinct().all()
+
+    # Deduplicate by case-insensitive comparison
+    offer_name_map = {}
+    for (offer_name,) in offer_names_raw:
+        if offer_name:
+            lower_name = offer_name.lower()
+            if lower_name not in offer_name_map:
+                offer_name_map[lower_name] = offer_name
+
+    offer_names = [(name,) for name in sorted(offer_name_map.values())]
+
     offer_types = query.filter(Park.offer_type.isnot(None)).with_entities(
         Park.offer_type).distinct().all()
     
     # Get relationships between Subscriber Status, Telecom Type, and Offer Name
+    # No limit - get all relationships to build complete mappings
     status_telecom_offer_relationships = query.filter(
         Park.subscriber_status.isnot(None),
         Park.telecom_type.isnot(None),
         Park.offer_name.isnot(None)
     ).with_entities(
         Park.subscriber_status, Park.telecom_type, Park.offer_name
-    ).distinct().limit(500).all()
+    ).distinct().all()
     
     # Build mappings for filtering
     # Map: subscriber_status -> set of telecom_types
@@ -1437,6 +1454,175 @@ async def get_preview_data(
             status_code=500,
             detail=f"Error retrieving preview data: {str(e)}"
         )
+
+
+@park_analytics_router.get("/preview-data/column-values")
+async def get_park_column_values(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    column: str = Query(..., description="Column name to get unique values for"),
+    limit: Optional[int] = Query(None, ge=1, description="Maximum number of values to return (None = unlimited)"),
+    # Filter parameters to respect active filters
+    dot_ids: Optional[str] = Query(None, description="Comma-separated DOT IDs"),
+    actel_codes: Optional[str] = Query(None, description="Comma-separated Actel codes"),
+    subscriber_statuses: Optional[str] = Query(None, description="Comma-separated subscriber statuses"),
+    telecom_types: Optional[str] = Query(None, description="Comma-separated telecom types"),
+    offer_names: Optional[str] = Query(None, description="Comma-separated offer names"),
+    offer_types: Optional[str] = Query(None, description="Comma-separated offer types"),
+    customer_l2_codes: Optional[str] = Query(None, description="Comma-separated Customer L2 codes"),
+    customer_l3_codes: Optional[str] = Query(None, description="Comma-separated Customer L3 codes"),
+    search: Optional[str] = Query(None, description="Search filter"),
+    date_from: Optional[str] = Query(None, description="Filter from date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter to date (YYYY-MM-DD)")
+):
+    """
+    Get unique values for a specific column in parks table.
+    Used for populating Excel-like dropdown filters.
+    Supports ALL columns in the parks table.
+    Only returns values from parks accessible to the user based on DOT permissions.
+    Respects active filters - only returns values that exist in filtered results.
+    Returns ALL unique values by default (no limit).
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_view_encaissement_data")
+    
+    try:
+        # Apply DOT-based permission filtering
+        accessible_dots = DOTService.get_user_accessible_dots(
+            db=db, user_id=current_user.id, module=MODULE_PARC_CORPORATE_NGBSS)
+        
+        if not accessible_dots:
+            return {
+                "column": column,
+                "values": [],
+                "count": 0
+            }
+        
+        # Start with base query filtered by accessible DOTs
+        base_query = db.query(Park).filter(Park.dot_id.in_(accessible_dots))
+        
+        # Apply all active filters to the base query
+        # This ensures we only get values that exist in the filtered dataset
+        base_query = apply_filters_to_query(
+            query=base_query,
+            dot_ids=dot_ids,
+            actel_codes=actel_codes,
+            subscriber_statuses=subscriber_statuses,
+            telecom_types=telecom_types,
+            offer_names=offer_names,
+            offer_types=offer_types,
+            customer_l2_codes=customer_l2_codes,
+            customer_l3_codes=customer_l3_codes,
+            search=search,
+            date_from=date_from,
+            date_to=date_to
+        )
+        
+        # Map column names to actual model attributes
+        column_map = {
+            "id": Park.id,
+            "file_upload_id": Park.file_upload_id,
+            "extraction_date": Park.extraction_date,
+            "dot_id": Park.dot_id,
+            "actel_code": Park.actel_code,
+            "customer_l1_code": Park.customer_l1_code,
+            "customer_l1_description": Park.customer_l1_description,
+            "customer_l2_code": Park.customer_l2_code,
+            "customer_l2_description": Park.customer_l2_description,
+            "customer_l3_code": Park.customer_l3_code,
+            "customer_l3_description": Park.customer_l3_description,
+            "telecom_type": Park.telecom_type,
+            "offer_type": Park.offer_type,
+            "offer_name": Park.offer_name,
+            "rental_fees": Park.rental_fees,
+            "customer_code": Park.customer_code,
+            "service_number": Park.service_number,
+            "related_service_number": Park.related_service_number,
+            "username": Park.username,
+            "subscriber_status": Park.subscriber_status,
+            "status_date": Park.status_date,
+            "creation_date": Park.creation_date,
+            "active_date": Park.active_date,
+            "csr_name": Park.csr_name,
+            "department_name": Park.department_name,
+            "state": Park.state,
+            "area": Park.area,
+            "town": Park.town,
+            "grid": Park.grid,
+            "street": Park.street,
+            "street_number": Park.street_number,
+            "building_no": Park.building_no,
+            "unit": Park.unit,
+            "floor": Park.floor,
+            "house_no": Park.house_no,
+            "additional_address_info": Park.additional_address_info,
+            "customer_full_name": Park.customer_full_name,
+            "province": Park.province,
+            "district": Park.district,
+            "city": Park.city,
+            "postal_code": Park.postal_code,
+            "expiry_date": Park.expiry_date,
+            "iccid": Park.iccid,
+            "imsi": Park.imsi,
+            "contact_number": Park.contact_number,
+            "created_at": Park.created_at,
+            "updated_at": Park.updated_at,
+        }
+        
+        # Special handling for dot_name (need to join with DOT table)
+        if column == "dot_name":
+            # Use the filtered base_query to get distinct DOT names
+            query = base_query.join(DOT, DOT.id == Park.dot_id) \
+                .with_entities(DOT.name) \
+                .filter(DOT.name.isnot(None)) \
+                .distinct() \
+                .order_by(DOT.name.asc())
+            # Apply limit only if specified
+            if limit is not None:
+                query = query.limit(limit)
+            values = query.all()
+        elif column not in column_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Column '{column}' not found. Available columns: {list(column_map.keys()) + ['dot_name']}"
+            )
+        else:
+            # Get unique values from the filtered query
+            # Use the filtered base_query to ensure we only get values that exist in filtered results
+            query = base_query.with_entities(column_map[column]) \
+                .filter(column_map[column].isnot(None)) \
+                .distinct() \
+                .order_by(column_map[column].asc())
+            # Apply limit only if specified
+            if limit is not None:
+                query = query.limit(limit)
+            values = query.all()
+        
+        # Convert to list of strings, filtering out None
+        unique_values = []
+        for v in values:
+            if v[0] is not None:
+                # Format based on type
+                if isinstance(v[0], (datetime, date)):
+                    unique_values.append(v[0].isoformat())
+                elif isinstance(v[0], bool):
+                    unique_values.append("Oui" if v[0] else "Non")
+                elif isinstance(v[0], (int, float)):
+                    unique_values.append(str(v[0]))
+                else:
+                    unique_values.append(str(v[0]))
+        
+        return {
+            "column": column,
+            "values": unique_values,
+            "count": len(unique_values)
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting column values for {column}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @park_analytics_router.post("/export-async")

@@ -20,7 +20,8 @@
       "Bash(/Users/fathallah/projects/youcef/DETAILED_UNUSED_ENDPOINTS.md)",
       "Bash(python3:*)",
       "Bash(docker-compose logs:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(ls:*)"
     ],
     "deny": [],
     "ask": []

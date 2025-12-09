@@ -5,7 +5,7 @@ Handles data retrieval, filtering, and aggregations for encaissement (collection
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, String
 from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
@@ -20,7 +20,90 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-encaissement_analytics_router = APIRouter(prefix="/api/encaissement", tags=["Encaissement Analytics"])
+encaissement_analytics_router = APIRouter(tags=["Encaissement Analytics"])
+
+
+# ============================================================================
+# Helper function to apply filters to query
+# ============================================================================
+
+def apply_encaissement_filters(
+    query,
+    organisation: Optional[List[str]] = None,
+    date_fact_start: Optional[str] = None,
+    date_fact_end: Optional[str] = None,
+    taux_encaissement_min: Optional[float] = None,
+    taux_encaissement_max: Optional[float] = None,
+    search: Optional[str] = None
+):
+    """
+    Apply common filters to encaissement query
+    
+    Args:
+        query: SQLAlchemy query object
+        organisation: List of organization names to filter
+        date_fact_start: Start date as month string (YYYY-MM) or date string
+        date_fact_end: End date as month string (YYYY-MM) or date string
+        taux_encaissement_min: Minimum collection rate
+        taux_encaissement_max: Maximum collection rate
+        search: Search term for client, n_fact, or organisation
+    
+    Returns:
+        Filtered query
+    """
+    from datetime import datetime
+    
+    # Filter by organisation
+    if organisation:
+        query = query.filter(EncaissementARDot.organisation.in_(organisation))
+    
+    # Filter by date range (handle month strings like "2024-01")
+    if date_fact_start:
+        try:
+            # Try parsing as month string first (YYYY-MM)
+            if len(date_fact_start) == 7 and date_fact_start[4] == '-':
+                start_date = datetime.strptime(date_fact_start, "%Y-%m").date()
+            else:
+                # Try parsing as full date
+                start_date = datetime.strptime(date_fact_start, "%Y-%m-%d").date()
+            query = query.filter(EncaissementARDot.date_fact >= start_date)
+        except ValueError:
+            logger.warning(f"Invalid date_fact_start format: {date_fact_start}")
+    
+    if date_fact_end:
+        try:
+            # Try parsing as month string first (YYYY-MM)
+            if len(date_fact_end) == 7 and date_fact_end[4] == '-':
+                # For month strings, use last day of month
+                from calendar import monthrange
+                year, month = map(int, date_fact_end.split('-'))
+                last_day = monthrange(year, month)[1]
+                end_date = datetime(year, month, last_day).date()
+            else:
+                # Try parsing as full date
+                end_date = datetime.strptime(date_fact_end, "%Y-%m-%d").date()
+            query = query.filter(EncaissementARDot.date_fact <= end_date)
+        except ValueError:
+            logger.warning(f"Invalid date_fact_end format: {date_fact_end}")
+    
+    # Filter by taux_encaissement range
+    if taux_encaissement_min is not None:
+        query = query.filter(EncaissementARDot.taux_encaissement >= taux_encaissement_min)
+    if taux_encaissement_max is not None:
+        query = query.filter(EncaissementARDot.taux_encaissement <= taux_encaissement_max)
+    
+    # Search filter (client name, n_fact, or organisation)
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                EncaissementARDot.client.ilike(search_term),
+                EncaissementARDot.n_fact.cast(String).ilike(search_term),
+                EncaissementARDot.organisation.ilike(search_term)
+            )
+        )
+    
+    return query
 
 
 # ============================================================================
@@ -69,8 +152,10 @@ class EncaissementOverviewResponse(BaseModel):
     total_montant_ttc: float
     total_encaissement: float
     total_montant_restant: float
-    taux_encaissement_global: float
-    nombre_factures_total: int
+    taux_encaissement: float  # Frontend expects this field name
+    taux_encaissement_global: float  # Keep for backward compatibility
+    nombre_factures: int  # Frontend expects this field name
+    nombre_factures_total: int  # Keep for backward compatibility
     nombre_organisations: int
     by_organisation: Dict[str, float]
     by_month: Dict[str, float]
@@ -92,6 +177,15 @@ class EncaissementPivotResponse(BaseModel):
     summary: Dict[str, float]
 
 
+class EncaissementByRateResponse(BaseModel):
+    """Response schema for rate bucket aggregations"""
+    taux_range: str
+    range: str  # Alias for taux_range
+    count: int
+    total_montant_ttc: float
+    total_encaissement: float
+
+
 # ============================================================================
 # Overview Endpoint
 # ============================================================================
@@ -99,13 +193,27 @@ class EncaissementPivotResponse(BaseModel):
 @encaissement_analytics_router.get("/overview", response_model=EncaissementOverviewResponse)
 async def get_overview(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    organisation: Optional[List[str]] = Query(None),
+    date_fact_start: Optional[str] = Query(None, description="Start date as YYYY-MM or YYYY-MM-DD"),
+    date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
+    taux_encaissement_min: Optional[float] = Query(None),
+    taux_encaissement_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None)
 ):
     """
     Get overview analytics for encaissement data
 
     Returns key metrics including total amounts, collection rate, and distributions
     by organization and month.
+
+    Parameters:
+    - organisation: Optional list of organizations to filter
+    - date_fact_start: Optional start date (YYYY-MM or YYYY-MM-DD)
+    - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
+    - taux_encaissement_min: Optional minimum collection rate
+    - taux_encaissement_max: Optional maximum collection rate
+    - search: Optional search term for client, n_fact, or organisation
 
     Requires: can_view_analytics permission
     """
@@ -121,6 +229,17 @@ async def get_overview(
         )
         if accessible_dot_ids:
             query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+        
+        # Apply common filters
+        query = apply_encaissement_filters(
+            query,
+            organisation=organisation,
+            date_fact_start=date_fact_start,
+            date_fact_end=date_fact_end,
+            taux_encaissement_min=taux_encaissement_min,
+            taux_encaissement_max=taux_encaissement_max,
+            search=search
+        )
 
         # Get totals
         total_montant_ttc = query.with_entities(
@@ -144,21 +263,25 @@ async def get_overview(
             func.count(func.distinct(EncaissementARDot.organisation))
         ).scalar() or 0
 
-        # By organization
-        org_data = db.query(
+        # By organization - use the filtered query
+        org_data = query.with_entities(
             EncaissementARDot.organisation,
             func.sum(EncaissementARDot.montant_ttc).label('total')
-        ).filter(EncaissementARDot.organisation.isnot(None)).group_by(
+        ).filter(
+            EncaissementARDot.organisation.isnot(None)
+        ).group_by(
             EncaissementARDot.organisation
         ).order_by(func.sum(EncaissementARDot.montant_ttc).desc()).all()
 
         by_organisation = {row.organisation: float(row.total or 0) for row in org_data}
 
-        # By month
-        month_data = db.query(
+        # By month - use the filtered query
+        month_data = query.with_entities(
             EncaissementARDot.mois,
             func.sum(EncaissementARDot.montant_ttc).label('total')
-        ).filter(EncaissementARDot.mois.isnot(None)).group_by(
+        ).filter(
+            EncaissementARDot.mois.isnot(None)
+        ).group_by(
             EncaissementARDot.mois
         ).order_by(EncaissementARDot.mois).all()
 
@@ -170,8 +293,10 @@ async def get_overview(
             "total_montant_ttc": float(total_montant_ttc),
             "total_encaissement": float(total_encaissement),
             "total_montant_restant": float(total_montant_restant),
-            "taux_encaissement_global": float(taux_global),
-            "nombre_factures_total": nombre_factures,
+            "taux_encaissement": float(taux_global),  # Frontend expects taux_encaissement
+            "taux_encaissement_global": float(taux_global),  # Keep for backward compatibility
+            "nombre_factures": nombre_factures,  # Frontend expects nombre_factures
+            "nombre_factures_total": nombre_factures,  # Keep for backward compatibility
             "nombre_organisations": nombre_organisations,
             "by_organisation": by_organisation,
             "by_month": by_month
@@ -192,7 +317,13 @@ async def get_by_organisation(
     db: Session = Depends(get_db),
     sort_by: str = Query("montant_ttc", regex="^(organisation|factures|montant_ttc|encaissement|taux)$"),
     order: str = Query("desc", regex="^(asc|desc)$"),
-    limit: Optional[int] = Query(None, ge=1, le=100)
+    limit: Optional[int] = Query(None, ge=1, le=100),
+    organisation: Optional[List[str]] = Query(None),
+    date_fact_start: Optional[str] = Query(None, description="Start date as YYYY-MM or YYYY-MM-DD"),
+    date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
+    taux_encaissement_min: Optional[float] = Query(None),
+    taux_encaissement_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None)
 ):
     """
     Get encaissement data grouped by organization
@@ -203,6 +334,12 @@ async def get_by_organisation(
     - sort_by: Sort field (organisation, factures, montant_ttc, encaissement, taux)
     - order: Sort order (asc, desc)
     - limit: Maximum number of results
+    - organisation: Optional list of organizations to filter
+    - date_fact_start: Optional start date (YYYY-MM or YYYY-MM-DD)
+    - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
+    - taux_encaissement_min: Optional minimum collection rate
+    - taux_encaissement_max: Optional maximum collection rate
+    - search: Optional search term for client, n_fact, or organisation
 
     Requires: can_view_analytics permission
     """
@@ -214,8 +351,25 @@ async def get_by_organisation(
             db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
         )
 
-        # Build query with DOT filter
-        query = db.query(
+        # Build base query for filtering (before aggregation)
+        base_query = db.query(EncaissementARDot)
+        
+        if accessible_dot_ids:
+            base_query = base_query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+        
+        # Apply common filters
+        base_query = apply_encaissement_filters(
+            base_query,
+            organisation=organisation,
+            date_fact_start=date_fact_start,
+            date_fact_end=date_fact_end,
+            taux_encaissement_min=taux_encaissement_min,
+            taux_encaissement_max=taux_encaissement_max,
+            search=search
+        )
+
+        # Build aggregation query with filters applied
+        query = base_query.with_entities(
             EncaissementARDot.organisation,
             func.count(EncaissementARDot.id).label('nombre_factures'),
             func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
@@ -224,9 +378,6 @@ async def get_by_organisation(
         ).filter(
             EncaissementARDot.organisation.isnot(None)
         )
-
-        if accessible_dot_ids:
-            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
 
         results = query.group_by(
             EncaissementARDot.organisation
@@ -359,6 +510,199 @@ async def get_by_month(
 
 
 # ============================================================================
+# By Date Endpoint (Alias for by-month)
+# ============================================================================
+
+@encaissement_analytics_router.get("/by-date", response_model=List[EncaissementByMonthResponse])
+async def get_by_date(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisation: Optional[List[str]] = Query(None),
+    date_fact_start: Optional[str] = Query(None, description="Start date as YYYY-MM or YYYY-MM-DD"),
+    date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
+    taux_encaissement_min: Optional[float] = Query(None),
+    taux_encaissement_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None)
+):
+    """
+    Get encaissement data grouped by date (month)
+
+    Returns monthly aggregations of collection data with rates and outstanding amounts.
+
+    Parameters:
+    - organisation: Optional list of organizations to filter
+    - date_fact_start: Optional start date (YYYY-MM or YYYY-MM-DD)
+    - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
+    - taux_encaissement_min: Optional minimum collection rate
+    - taux_encaissement_max: Optional maximum collection rate
+    - search: Optional search term for client, n_fact, or organisation
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+        
+        # Apply common filters
+        query = apply_encaissement_filters(
+            query,
+            organisation=organisation,
+            date_fact_start=date_fact_start,
+            date_fact_end=date_fact_end,
+            taux_encaissement_min=taux_encaissement_min,
+            taux_encaissement_max=taux_encaissement_max,
+            search=search
+        )
+
+        # Group by month
+        results = query.with_entities(
+            EncaissementARDot.mois,
+            func.count(EncaissementARDot.id).label('nombre_factures'),
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement'),
+            func.avg(EncaissementARDot.taux_encaissement).label('taux_moyen')
+        ).filter(
+            EncaissementARDot.mois.isnot(None)
+        ).group_by(
+            EncaissementARDot.mois
+        ).order_by(
+            EncaissementARDot.mois
+        ).all()
+
+        # Build response
+        response = []
+        for row in results:
+            total_ttc = float(row.total_montant_ttc or 0)
+            total_encaissement = float(row.total_encaissement or 0)
+            remaining = total_ttc - total_encaissement
+
+            response.append(EncaissementByMonthResponse(
+                mois=row.mois or "Unknown",
+                nombre_factures=int(row.nombre_factures),
+                total_montant_ttc=total_ttc,
+                total_encaissement=total_encaissement,
+                taux_encaissement_moyen=float(row.taux_moyen or 0),
+                total_montant_restant=remaining
+            ))
+
+        logger.info(f"By date retrieved: {len(response)} months")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement by date: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by date: {str(e)}")
+
+
+# ============================================================================
+# By Encaisse Rate Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/by-encaisse-rate", response_model=List[EncaissementByRateResponse])
+async def get_by_encaisse_rate(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisation: Optional[List[str]] = Query(None),
+    date_fact_start: Optional[str] = Query(None, description="Start date as YYYY-MM or YYYY-MM-DD"),
+    date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
+    taux_encaissement_min: Optional[float] = Query(None),
+    taux_encaissement_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None)
+):
+    """
+    Get encaissement data grouped by collection rate buckets
+
+    Returns aggregations by collection rate ranges (0-25%, 25-50%, 50-75%, 75-100%, 100%+)
+
+    Parameters:
+    - organisation: Optional list of organizations to filter
+    - date_fact_start: Optional start date (YYYY-MM or YYYY-MM-DD)
+    - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
+    - taux_encaissement_min: Optional minimum collection rate
+    - taux_encaissement_max: Optional maximum collection rate
+    - search: Optional search term for client, n_fact, or organisation
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Apply common filters
+        query = apply_encaissement_filters(
+            query,
+            organisation=organisation,
+            date_fact_start=date_fact_start,
+            date_fact_end=date_fact_end,
+            taux_encaissement_min=taux_encaissement_min,
+            taux_encaissement_max=taux_encaissement_max,
+            search=search
+        )
+
+        # Get all records
+        records = query.all()
+
+        # Define rate buckets
+        buckets = {
+            "0-25%": {"min": 0, "max": 25, "count": 0, "montant_ttc": 0, "encaissement": 0},
+            "25-50%": {"min": 25, "max": 50, "count": 0, "montant_ttc": 0, "encaissement": 0},
+            "50-75%": {"min": 50, "max": 75, "count": 0, "montant_ttc": 0, "encaissement": 0},
+            "75-100%": {"min": 75, "max": 100, "count": 0, "montant_ttc": 0, "encaissement": 0},
+            "100%+": {"min": 100, "max": 999999, "count": 0, "montant_ttc": 0, "encaissement": 0},
+        }
+
+        # Categorize records into buckets
+        for record in records:
+            taux = record.taux_encaissement or 0
+            montant_ttc = record.montant_ttc or 0
+            encaissement = record.encaissement or 0
+
+            for bucket_name, bucket_data in buckets.items():
+                if bucket_data["min"] <= taux < bucket_data["max"]:
+                    bucket_data["count"] += 1
+                    bucket_data["montant_ttc"] += montant_ttc
+                    bucket_data["encaissement"] += encaissement
+                    break
+
+        # Build response
+        response = []
+        for bucket_name, bucket_data in buckets.items():
+            response.append(EncaissementByRateResponse(
+                taux_range=bucket_name,
+                range=bucket_name,
+                count=bucket_data["count"],
+                total_montant_ttc=float(bucket_data["montant_ttc"]),
+                total_encaissement=float(bucket_data["encaissement"])
+            ))
+
+        logger.info(f"By encaisse rate retrieved: {len(response)} rate buckets")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement by rate: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by rate: {str(e)}")
+
+
+# ============================================================================
 # Filters Endpoint
 # ============================================================================
 
@@ -435,6 +779,408 @@ async def get_filters(
     except Exception as e:
         logger.error(f"Error getting encaissement filters: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve filters: {str(e)}")
+
+
+# ============================================================================
+# Enhanced Analytics Endpoints for Visualizations
+# ============================================================================
+
+@encaissement_analytics_router.get("/monthly-chart-data")
+async def get_monthly_chart_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisations: Optional[str] = Query(None),
+    mois: Optional[str] = Query(None),
+    taux_min: Optional[float] = Query(None),
+    taux_max: Optional[float] = Query(None)
+):
+    """
+    Get monthly data for combined histogram (Encaissement & Montant TTC by month)
+
+    Returns monthly aggregations for visualization with both encaissement and montant_ttc
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Apply filters
+        if organisations:
+            org_list = [o.strip() for o in organisations.split(',') if o.strip()]
+            query = query.filter(EncaissementARDot.organisation.in_(org_list))
+
+        if mois:
+            mois_list = [m.strip() for m in mois.split(',') if m.strip()]
+            query = query.filter(EncaissementARDot.mois.in_(mois_list))
+
+        if taux_min is not None:
+            query = query.filter(EncaissementARDot.taux_encaissement >= taux_min)
+        if taux_max is not None:
+            query = query.filter(EncaissementARDot.taux_encaissement <= taux_max)
+
+        # Group by month
+        results = query.with_entities(
+            EncaissementARDot.mois,
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement')
+        ).filter(
+            EncaissementARDot.mois.isnot(None)
+        ).group_by(
+            EncaissementARDot.mois
+        ).order_by(
+            EncaissementARDot.mois
+        ).all()
+
+        data = []
+        for row in results:
+            data.append({
+                "month": row.mois,
+                "montant_ttc": float(row.total_montant_ttc or 0),
+                "encaissement": float(row.total_encaissement or 0)
+            })
+
+        return {"data": data}
+
+    except Exception as e:
+        logger.error(f"Error getting monthly chart data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get monthly chart data: {str(e)}")
+
+
+@encaissement_analytics_router.get("/monthly-pie-data")
+async def get_monthly_pie_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisations: Optional[str] = Query(None),
+    mois: Optional[str] = Query(None),
+    taux_min: Optional[float] = Query(None),
+    taux_max: Optional[float] = Query(None)
+):
+    """
+    Get encaissement by month for 3D pie chart
+
+    Returns monthly encaissement distribution for pie chart visualization
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Apply filters
+        if organisations:
+            org_list = [o.strip() for o in organisations.split(',') if o.strip()]
+            query = query.filter(EncaissementARDot.organisation.in_(org_list))
+
+        if mois:
+            mois_list = [m.strip() for m in mois.split(',') if m.strip()]
+            query = query.filter(EncaissementARDot.mois.in_(mois_list))
+
+        if taux_min is not None:
+            query = query.filter(EncaissementARDot.taux_encaissement >= taux_min)
+        if taux_max is not None:
+            query = query.filter(EncaissementARDot.taux_encaissement <= taux_max)
+
+        # Group by month
+        results = query.with_entities(
+            EncaissementARDot.mois,
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement')
+        ).filter(
+            EncaissementARDot.mois.isnot(None)
+        ).group_by(
+            EncaissementARDot.mois
+        ).order_by(
+            EncaissementARDot.mois
+        ).all()
+
+        data = []
+        for row in results:
+            data.append({
+                "name": row.mois,
+                "value": float(row.total_encaissement or 0)
+            })
+
+        return {"data": data}
+
+    except Exception as e:
+        logger.error(f"Error getting monthly pie data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get monthly pie data: {str(e)}")
+
+
+@encaissement_analytics_router.get("/dot-taux-data")
+async def get_dot_taux_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisations: Optional[str] = Query(None),
+    mois: Optional[str] = Query(None),
+    taux_min: Optional[float] = Query(None),
+    taux_max: Optional[float] = Query(None)
+):
+    """
+    Get DOT and Taux d'encaissement data for histogram
+
+    Returns collection rate by organization for bar chart visualization
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Apply filters
+        if organisations:
+            org_list = [o.strip() for o in organisations.split(',') if o.strip()]
+            query = query.filter(EncaissementARDot.organisation.in_(org_list))
+
+        if mois:
+            mois_list = [m.strip() for m in mois.split(',') if m.strip()]
+            query = query.filter(EncaissementARDot.mois.in_(mois_list))
+
+        if taux_min is not None:
+            query = query.filter(EncaissementARDot.taux_encaissement >= taux_min)
+        if taux_max is not None:
+            query = query.filter(EncaissementARDot.taux_encaissement <= taux_max)
+
+        # Group by organisation
+        results = query.with_entities(
+            EncaissementARDot.organisation,
+            func.sum(EncaissementARDot.montant_ttc).label('total_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement')
+        ).filter(
+            EncaissementARDot.organisation.isnot(None)
+        ).group_by(
+            EncaissementARDot.organisation
+        ).order_by(
+            func.sum(EncaissementARDot.montant_ttc).desc()
+        ).all()
+
+        data = []
+        for row in results:
+            total_ttc = float(row.total_ttc or 0)
+            total_enc = float(row.total_encaissement or 0)
+            taux = (total_enc / total_ttc * 100) if total_ttc > 0 else 0
+
+            data.append({
+                "organisation": row.organisation,
+                "taux_encaissement": round(taux, 2)
+            })
+
+        return {"data": data}
+
+    except Exception as e:
+        logger.error(f"Error getting DOT taux data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get DOT taux data: {str(e)}")
+
+
+# ============================================================================
+# Export Endpoint with French Formatting
+# ============================================================================
+
+@encaissement_analytics_router.get("/export")
+async def export_encaissement_data(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    # Support both parameter name formats for compatibility
+    organisation: Optional[List[str]] = Query(None, description="Filter by organisation(s)"),
+    organisations: Optional[str] = Query(None, description="Filter by organisations (comma-separated)"),
+    # Date filters - support multiple formats
+    date_fact_start: Optional[str] = Query(None, description="Start date (YYYY-MM or YYYY-MM-DD)"),
+    date_fact_end: Optional[str] = Query(None, description="End date (YYYY-MM or YYYY-MM-DD)"),
+    date_fact_from: Optional[date] = Query(None, description="Filter by date from (legacy)"),
+    date_fact_to: Optional[date] = Query(None, description="Filter by date to (legacy)"),
+    mois: Optional[str] = Query(None, description="Filter by month(s) (comma-separated YYYY-MM)"),
+    # Rate filters
+    taux_encaissement_min: Optional[float] = Query(None, description="Minimum collection rate"),
+    taux_encaissement_max: Optional[float] = Query(None, description="Maximum collection rate"),
+    taux_min: Optional[float] = Query(None, description="Minimum collection rate (legacy)"),
+    taux_max: Optional[float] = Query(None, description="Maximum collection rate (legacy)"),
+    # Search filter
+    search: Optional[str] = Query(None, description="Search in client, n_fact, or organisation"),
+    # Other filters
+    include_duplicates: bool = Query(True, description="Include duplicate records"),
+    include_anomalies: bool = Query(True, description="Include anomaly records"),
+    format: str = Query("xlsx", regex="^(xlsx|csv)$")
+):
+    """
+    Export encaissement data with proper French formatting
+    - Numeric values formatted with comma as decimal separator
+    - Thousand separators
+    - 2 decimal places
+    - Supports all filter parameters
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        import pandas as pd
+        from fastapi.responses import StreamingResponse
+        import io
+        from datetime import datetime
+
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Normalize organisation parameter (support both List and comma-separated string)
+        org_list = None
+        if organisation:
+            org_list = organisation
+        elif organisations:
+            org_list = [o.strip() for o in organisations.split(',') if o.strip()]
+        
+        # Normalize date parameters (prefer date_fact_start/end, fallback to date_fact_from/to)
+        start_date = date_fact_start
+        end_date = date_fact_end
+        if not start_date and date_fact_from:
+            start_date = date_fact_from.strftime("%Y-%m-%d")
+        if not end_date and date_fact_to:
+            end_date = date_fact_to.strftime("%Y-%m-%d")
+        
+        # Normalize taux parameters
+        taux_min_val = taux_encaissement_min if taux_encaissement_min is not None else taux_min
+        taux_max_val = taux_encaissement_max if taux_encaissement_max is not None else taux_max
+        
+        # Apply filters using helper function
+        query = apply_encaissement_filters(
+            query,
+            organisation=org_list,
+            date_fact_start=start_date,
+            date_fact_end=end_date,
+            taux_encaissement_min=taux_min_val,
+            taux_encaissement_max=taux_max_val,
+            search=search
+        )
+        
+        # Apply mois filter if provided (separate from date range)
+        if mois:
+            mois_list = [m.strip() for m in mois.split(',') if m.strip()]
+            query = query.filter(EncaissementARDot.mois.in_(mois_list))
+        
+        # Apply duplicate/anomaly filters
+        if not include_duplicates:
+            query = query.filter(EncaissementARDot.is_duplicate == False)
+        if not include_anomalies:
+            query = query.filter(EncaissementARDot.is_anomaly == False)
+
+        # Get records
+        records = query.all()
+
+        # Convert to DataFrame - include ALL columns from the model
+        data = []
+        for record in records:
+            data.append({
+                "ID": record.id,
+                "Organisation": record.organisation,
+                "Source": record.source,
+                "N° Facture": record.n_fact,
+                "Type Facture": record.typ_fact,
+                "Date Facture": record.date_fact.strftime("%d/%m/%Y") if record.date_fact else "",
+                "Mois": record.mois,
+                "Client": record.client,
+                "N° Client": record.n_client,
+                "Objet Facture": record.obj_fact,
+                "Période": record.periode,
+                "Référence": record.ref,
+                "Terminé": record.termine_flag,
+                "Créé Par": record.creer_par,
+                "Montant HT": float(record.montant_ht or 0),
+                "Montant Taxe": float(record.montant_taxe or 0),
+                "Montant TTC": float(record.montant_ttc or 0),
+                "Chiffre Aff Exe": float(record.chiffre_aff_exe or 0),
+                "Encaissement": float(record.encaissement or 0),
+                "N° Règlement": record.n_rglt,
+                "Date Règlement": record.date_rglt.strftime("%d/%m/%Y") if record.date_rglt else "",
+                "Facture Avoir/Annulation": record.facture_avoir_annulation,
+                "Taux Encaissement (%)": float(record.taux_encaissement or 0),
+                "Montant Restant": float(record.montant_restant or 0),
+                "Clé Composite": record.composite_key,
+                "Est Duplicata": "Oui" if record.is_duplicate else "Non",
+                "Est Anomalie": "Oui" if record.is_anomaly else "Non",
+                "Raison Anomalie": record.anomaly_reason,
+                "Date Création": record.created_at.strftime("%d/%m/%Y %H:%M:%S") if record.created_at else "",
+                "Date Modification": record.updated_at.strftime("%d/%m/%Y %H:%M:%S") if record.updated_at else "",
+            })
+
+        df = pd.DataFrame(data)
+
+        # Apply French number formatting
+        def format_french_number(x):
+            """Format number with French convention: comma for decimal, space for thousands"""
+            if pd.isna(x) or x == "":
+                return ""
+            try:
+                # Format with 2 decimals
+                formatted = f"{float(x):,.2f}"
+                # Replace . with , for decimal
+                formatted = formatted.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
+                return formatted
+            except:
+                return str(x)
+
+        # Format numeric columns (exclude ID as it's an integer)
+        numeric_cols = ["Montant HT", "Montant Taxe", "Montant TTC", "Chiffre Aff Exe",
+                       "Encaissement", "Taux Encaissement (%)", "Montant Restant"]
+
+        # Export based on format
+        if format == "xlsx":
+            # For Excel: Apply French number formatting
+            for col in numeric_cols:
+                if col in df.columns:
+                    df[col] = df[col].apply(format_french_number)
+            
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name="Encaissement AR DOT")
+            output.seek(0)
+
+            filename = f"encaissement_ar_dot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            return StreamingResponse(
+                output,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+        else:  # CSV
+            # For CSV: Keep raw numbers (Excel will interpret them correctly)
+            # Don't apply French formatting to CSV - use raw numeric values
+            output = io.StringIO()
+            df.to_csv(output, index=False, sep=";", encoding="utf-8-sig", decimal=",")
+            output.seek(0)
+
+            filename = f"encaissement_ar_dot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            return StreamingResponse(
+                iter([output.getvalue()]),
+                media_type="text/csv; charset=utf-8",
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Type": "text/csv; charset=utf-8"
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"Error exporting encaissement data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to export data: {str(e)}")
 
 
 # ============================================================================

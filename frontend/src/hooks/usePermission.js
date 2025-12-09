@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useAuth } from "../contexts/AuthContext";
 import { checkPermission } from "../services/api";
 
 // In-memory cache for permission checks
@@ -8,9 +9,17 @@ const pendingRequests = new Map();
 export function usePermission(codename) {
   const [hasPermission, setHasPermission] = useState(false);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
 
   useEffect(() => {
     let isMounted = true;
+
+    // Don't make request if user is not available
+    if (!user?.id) {
+      setLoading(false);
+      setHasPermission(false);
+      return;
+    }
 
     // Check cache first
     if (permissionCache.has(codename)) {
@@ -33,7 +42,7 @@ export function usePermission(codename) {
 
     // Make a new request
     setLoading(true);
-    const requestPromise = checkPermission(codename)
+    const requestPromise = checkPermission(codename, user.id)
       .then((res) => {
         const result = res.data.has_permission;
         // Cache the result
@@ -60,7 +69,7 @@ export function usePermission(codename) {
     return () => {
       isMounted = false;
     };
-  }, [codename]);
+  }, [codename, user?.id]);
 
   return { hasPermission, loading };
 }

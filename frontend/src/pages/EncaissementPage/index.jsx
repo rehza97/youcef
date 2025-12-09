@@ -9,6 +9,7 @@ import {
   getParkAnalyticsAvailableFilters,
   exportParkAnalyticsData,
   getParkAnalyticsPreviewData,
+  getParkAnalyticsColumnValues,
   startParkAnalyticsExport,
   downloadParkAnalyticsExport,
 } from "../../services/api";
@@ -52,6 +53,7 @@ import {
   Loader2,
   CheckCircle2,
   XCircle,
+  Search,
 } from "lucide-react";
 import {
   Dialog,
@@ -60,6 +62,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { handleApiError } from "../../lib/error-handler";
 
@@ -157,6 +166,152 @@ const EmptyState = ({ message = "Aucune donnée disponible" }) => (
   </div>
 );
 
+// Excel-style Filter Component
+const ExcelFilter = ({
+  column,
+  label,
+  values = [],
+  selected = [],
+  onFilterChange,
+  onFetchValues,
+  loading = false,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [tempSelected, setTempSelected] = useState(selected);
+
+  // Initialize tempSelected when dropdown opens
+  useEffect(() => {
+    if (open) {
+      setTempSelected(selected);
+      if (values.length === 0 && !loading) {
+        onFetchValues();
+      }
+    }
+  }, [open, selected, values.length, loading, onFetchValues]);
+
+  const filteredValues = values.filter((val) =>
+    val.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleToggle = (value) => {
+    setTempSelected((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (tempSelected.length === filteredValues.length) {
+      setTempSelected([]);
+    } else {
+      setTempSelected([...filteredValues]);
+    }
+  };
+
+  const handleApply = () => {
+    onFilterChange(tempSelected);
+    setOpen(false);
+    setSearchTerm("");
+  };
+
+  const handleClear = () => {
+    setTempSelected([]);
+    onFilterChange([]);
+    setOpen(false);
+    setSearchTerm("");
+  };
+
+  const hasFilter = selected.length > 0;
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          className={`flex items-center gap-1 px-1 py-0.5 rounded hover:bg-gray-100 ${
+            hasFilter ? "bg-blue-100 text-blue-700" : ""
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+        >
+          <Filter className="h-3 w-3" />
+          {hasFilter && (
+            <span className="text-xs font-semibold">{selected.length}</span>
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="w-64 max-h-96 overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Rechercher..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8 h-8 text-sm"
+            />
+          </div>
+        </div>
+        <div className="p-2 border-b flex items-center justify-between">
+          <button
+            onClick={handleSelectAll}
+            className="text-xs text-blue-600 hover:text-blue-800"
+          >
+            {tempSelected.length === filteredValues.length &&
+            filteredValues.length > 0
+              ? "Tout désélectionner"
+              : "Tout sélectionner"}
+          </button>
+          <span className="text-xs text-muted-foreground">
+            {tempSelected.length} sélectionné(s)
+          </span>
+        </div>
+        <div className="overflow-y-auto flex-1 max-h-64">
+          {loading ? (
+            <div className="p-4 text-center text-sm text-muted-foreground">
+              Chargement...
+            </div>
+          ) : filteredValues.length === 0 ? (
+            <div className="p-4 text-center text-sm text-muted-foreground">
+              Aucun résultat trouvé.
+            </div>
+          ) : (
+            filteredValues.map((value) => (
+              <DropdownMenuCheckboxItem
+                key={value}
+                checked={tempSelected.includes(value)}
+                onCheckedChange={() => handleToggle(value)}
+                className="text-sm"
+              >
+                {value}
+              </DropdownMenuCheckboxItem>
+            ))
+          )}
+        </div>
+        <DropdownMenuSeparator />
+        <div className="p-2 flex gap-2 justify-end border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleClear}
+            className="h-7 text-xs"
+          >
+            Effacer
+          </Button>
+          <Button size="sm" onClick={handleApply} className="h-7 text-xs">
+            OK
+          </Button>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
+
 const LoadingSpinner = () => (
   <div className="flex items-center justify-center h-64">
     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -209,6 +364,11 @@ const EncaissementPage = () => {
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPageSize, setPreviewPageSize] = useState(10);
+
+  // Column filters for Excel-like filtering
+  const [columnFilters, setColumnFilters] = useState({});
+  const [columnValues, setColumnValues] = useState({});
+  const [loadingColumnValues, setLoadingColumnValues] = useState({});
 
   const [filters, setFilters] = useState({
     dot_ids: [], // Changed to array for multi-select
@@ -314,6 +474,98 @@ const EncaissementPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, filters.date_from, filters.date_to]);
 
+  // Fetch column values for a specific column from backend
+  // Respects active filters so only relevant values are shown
+  const fetchColumnValues = useCallback(
+    async (columnKey) => {
+      if (columnValues[columnKey] || loadingColumnValues[columnKey]) return;
+
+      try {
+        setLoadingColumnValues((prev) => ({ ...prev, [columnKey]: true }));
+
+        // Build filter params from main filters and other column filters
+        // This ensures column values respect active filters
+        // Exclude the current column from filters to avoid circular filtering
+        const filterParams = {};
+
+        // Map to know which main filter key corresponds to which column
+        const columnToMainFilter = {
+          dot_name: "dot_ids",
+          actel_code: "actel_codes",
+          subscriber_status: "subscriber_statuses",
+          telecom_type: "telecom_types",
+          offer_name: "offer_names",
+          offer_type: "offer_types",
+          customer_l2_code: "customer_l2_codes",
+          customer_l3_code: "customer_l3_codes",
+        };
+
+        const columnToBackendParam = {
+          dot_name: "dot_ids",
+          actel_code: "actel_codes",
+          subscriber_status: "subscriber_statuses",
+          telecom_type: "telecom_types",
+          offer_name: "offer_names",
+          offer_type: "offer_types",
+          customer_l2_code: "customer_l2_codes",
+          customer_l3_code: "customer_l3_codes",
+        };
+
+        // Get the main filter key for the current column (to exclude it)
+        const currentColumnMainFilter = columnToMainFilter[columnKey];
+
+        // Add main filters (excluding the current column to avoid circular filtering)
+        Object.entries(filters).forEach(([key, value]) => {
+          // Skip if this is the main filter for the current column
+          if (key === currentColumnMainFilter) return;
+
+          if (Array.isArray(value) && value.length > 0) {
+            filterParams[key] = value.join(",");
+          } else if (typeof value === "string" && value.trim() !== "") {
+            filterParams[key] = value;
+          }
+        });
+
+        // Add other column filters (but exclude the current column to avoid circular filtering)
+        Object.entries(columnFilters).forEach(([colKey, values]) => {
+          // Skip the current column being fetched to avoid circular filtering
+          if (colKey === columnKey) return;
+
+          if (Array.isArray(values) && values.length > 0) {
+            const backendParam = columnToBackendParam[colKey];
+            if (backendParam) {
+              // Only add if not already set by main filters (main filters take precedence)
+              if (!filterParams[backendParam]) {
+                filterParams[backendParam] = values.join(",");
+              }
+            }
+          }
+        });
+
+        // Fetch values from backend with active filters
+        const response = await getParkAnalyticsColumnValues(
+          columnKey,
+          filterParams
+        );
+        const values = response.data?.values || [];
+
+        setColumnValues((prev) => ({
+          ...prev,
+          [columnKey]: values,
+        }));
+      } catch (err) {
+        console.error(`Error fetching values for column ${columnKey}:`, err);
+        handleApiError(err, {
+          showToast: false,
+          fallbackMessage: `Erreur lors du chargement des valeurs pour ${columnKey}`,
+        });
+      } finally {
+        setLoadingColumnValues((prev) => ({ ...prev, [columnKey]: false }));
+      }
+    },
+    [columnValues, loadingColumnValues, filters, columnFilters]
+  );
+
   // Fetch preview data
   const fetchPreviewData = useCallback(async () => {
     if (activeTab !== "preview") return;
@@ -331,6 +583,29 @@ const EncaissementPage = () => {
         }
       });
 
+      // Add column filters - map to backend parameter names where applicable
+      const columnToBackendParam = {
+        dot_name: "dot_ids", // Note: would need dot name to ID mapping
+        actel_code: "actel_codes",
+        subscriber_status: "subscriber_statuses",
+        telecom_type: "telecom_types",
+        offer_name: "offer_names",
+        offer_type: "offer_types",
+        customer_l2_code: "customer_l2_codes",
+        customer_l3_code: "customer_l3_codes",
+      };
+
+      Object.entries(columnFilters).forEach(([colKey, values]) => {
+        if (Array.isArray(values) && values.length > 0) {
+          const backendParam = columnToBackendParam[colKey];
+          if (backendParam) {
+            // Use backend filtering
+            filterParams[backendParam] = values.join(",");
+          }
+          // Other columns will be filtered client-side
+        }
+      });
+
       const offset = (previewPage - 1) * previewPageSize;
       const response = await getParkAnalyticsPreviewData(
         filterParams,
@@ -338,7 +613,30 @@ const EncaissementPage = () => {
         offset
       );
 
-      setPreviewData(response.data?.records || []);
+      let records = response.data?.records || [];
+
+      // Apply client-side filtering for columns not supported by backend
+      // Backend supports: dot_ids, actel_codes, subscriber_statuses, telecom_types,
+      // offer_names, offer_types, customer_l2_codes, customer_l3_codes
+      // Filter other columns client-side on current page
+      Object.entries(columnFilters).forEach(([colKey, values]) => {
+        if (values && values.length > 0) {
+          // Skip if already handled by backend
+          if (columnToBackendParam[colKey]) {
+            return;
+          }
+
+          // Apply client-side filtering
+          records = records.filter((record) => {
+            const recordValue = record[colKey];
+            if (recordValue === null || recordValue === undefined) return false;
+            const strValue = String(recordValue);
+            return values.includes(strValue);
+          });
+        }
+      });
+
+      setPreviewData(records);
       setPreviewTotal(response.data?.total_available || 0);
     } catch (err) {
       console.error("Error fetching preview data:", err);
@@ -350,14 +648,30 @@ const EncaissementPage = () => {
     } finally {
       setPreviewLoading(false);
     }
-  }, [activeTab, filters, previewPage, previewPageSize]);
+  }, [activeTab, filters, columnFilters, previewPage, previewPageSize]);
+
+  // Handle column filter change
+  const handleColumnFilterChange = (column, values) => {
+    setColumnFilters((prev) => ({
+      ...prev,
+      [column]: values.length > 0 ? values : undefined,
+    }));
+    setPreviewPage(1); // Reset to first page when filter changes
+  };
 
   // Fetch preview data when tab changes or filters/page changes
   useEffect(() => {
     if (activeTab === "preview") {
       fetchPreviewData();
     }
-  }, [activeTab, fetchPreviewData]);
+  }, [
+    activeTab,
+    filters,
+    columnFilters,
+    previewPage,
+    previewPageSize,
+    fetchPreviewData,
+  ]);
 
   const handleFilterChange = (key, value) => {
     setFilters((prev) => {
@@ -817,7 +1131,7 @@ const EncaissementPage = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {/* Primary Filters */}
+              {/* Primary Filters - Row 1 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label>DOT</Label>
@@ -983,7 +1297,7 @@ const EncaissementPage = () => {
                 </div>
               </div>
 
-              {/* Secondary Filters */}
+              {/* Secondary Filters - Row 2 */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label>Nom d'Offre</Label>
@@ -1106,10 +1420,7 @@ const EncaissementPage = () => {
                     }
                   />
                 </div>
-              </div>
 
-              {/* Search and Date Range */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <Label>Recherche Globale</Label>
                   <Input
@@ -1446,53 +1757,215 @@ const EncaissementPage = () => {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="sticky left-0 bg-background z-10">
-                            ID
-                          </TableHead>
-                          <TableHead>Date Extraction</TableHead>
-                          <TableHead>DOT</TableHead>
-                          <TableHead>Code Actel</TableHead>
-                          <TableHead>Code Client</TableHead>
-                          <TableHead>Numéro Service</TableHead>
-                          <TableHead>Service Relié</TableHead>
-                          <TableHead>Nom Client</TableHead>
-                          <TableHead>Username</TableHead>
-                          <TableHead>L1 Code</TableHead>
-                          <TableHead>L1 Description</TableHead>
-                          <TableHead>L2 Code</TableHead>
-                          <TableHead>L2 Description</TableHead>
-                          <TableHead>L3 Code</TableHead>
-                          <TableHead>L3 Description</TableHead>
-                          <TableHead>Type Télécom</TableHead>
-                          <TableHead>Type Offre</TableHead>
-                          <TableHead>Nom Offre</TableHead>
-                          <TableHead>Frais Location</TableHead>
-                          <TableHead>Statut Abonné</TableHead>
-                          <TableHead>Date Statut</TableHead>
-                          <TableHead>Date Création</TableHead>
-                          <TableHead>Date Activation</TableHead>
-                          <TableHead>Date Expiration</TableHead>
-                          <TableHead>CSR</TableHead>
-                          <TableHead>Département</TableHead>
-                          <TableHead>État</TableHead>
-                          <TableHead>Zone</TableHead>
-                          <TableHead>Ville</TableHead>
-                          <TableHead>Grille</TableHead>
-                          <TableHead>Rue</TableHead>
-                          <TableHead>Numéro Rue</TableHead>
-                          <TableHead>Bâtiment</TableHead>
-                          <TableHead>Unité</TableHead>
-                          <TableHead>Étage</TableHead>
-                          <TableHead>Numéro Maison</TableHead>
-                          <TableHead>Info Adresse</TableHead>
-                          <TableHead>Province</TableHead>
-                          <TableHead>District</TableHead>
-                          <TableHead>Code Postal</TableHead>
-                          <TableHead>ICCID</TableHead>
-                          <TableHead>IMSI</TableHead>
-                          <TableHead>Contact</TableHead>
-                          <TableHead>Créé le</TableHead>
-                          <TableHead>Modifié le</TableHead>
+                          {[
+                            { key: "id", label: "ID", filterable: false },
+                            {
+                              key: "extraction_date",
+                              label: "Date Extraction",
+                              filterable: true,
+                            },
+                            { key: "dot_name", label: "DOT", filterable: true },
+                            {
+                              key: "actel_code",
+                              label: "Code Actel",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_code",
+                              label: "Code Client",
+                              filterable: true,
+                            },
+                            {
+                              key: "service_number",
+                              label: "Numéro Service",
+                              filterable: true,
+                            },
+                            {
+                              key: "related_service_number",
+                              label: "Service Relié",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_full_name",
+                              label: "Nom Client",
+                              filterable: true,
+                            },
+                            {
+                              key: "username",
+                              label: "Username",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_l1_code",
+                              label: "L1 Code",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_l1_description",
+                              label: "L1 Description",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_l2_code",
+                              label: "L2 Code",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_l2_description",
+                              label: "L2 Description",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_l3_code",
+                              label: "L3 Code",
+                              filterable: true,
+                            },
+                            {
+                              key: "customer_l3_description",
+                              label: "L3 Description",
+                              filterable: true,
+                            },
+                            {
+                              key: "telecom_type",
+                              label: "Type Télécom",
+                              filterable: true,
+                            },
+                            {
+                              key: "offer_type",
+                              label: "Type Offre",
+                              filterable: true,
+                            },
+                            {
+                              key: "offer_name",
+                              label: "Nom Offre",
+                              filterable: true,
+                            },
+                            {
+                              key: "rental_fees",
+                              label: "Frais Location",
+                              filterable: true,
+                            },
+                            {
+                              key: "subscriber_status",
+                              label: "Statut Abonné",
+                              filterable: true,
+                            },
+                            {
+                              key: "status_date",
+                              label: "Date Statut",
+                              filterable: false,
+                            },
+                            {
+                              key: "creation_date",
+                              label: "Date Création",
+                              filterable: false,
+                            },
+                            {
+                              key: "active_date",
+                              label: "Date Activation",
+                              filterable: false,
+                            },
+                            {
+                              key: "expiry_date",
+                              label: "Date Expiration",
+                              filterable: false,
+                            },
+                            { key: "csr_name", label: "CSR", filterable: true },
+                            {
+                              key: "department_name",
+                              label: "Département",
+                              filterable: true,
+                            },
+                            { key: "state", label: "État", filterable: true },
+                            { key: "area", label: "Zone", filterable: true },
+                            { key: "town", label: "Ville", filterable: true },
+                            { key: "grid", label: "Grille", filterable: true },
+                            { key: "street", label: "Rue", filterable: true },
+                            {
+                              key: "street_number",
+                              label: "Numéro Rue",
+                              filterable: true,
+                            },
+                            {
+                              key: "building_no",
+                              label: "Bâtiment",
+                              filterable: true,
+                            },
+                            { key: "unit", label: "Unité", filterable: true },
+                            { key: "floor", label: "Étage", filterable: true },
+                            {
+                              key: "house_no",
+                              label: "Numéro Maison",
+                              filterable: true,
+                            },
+                            {
+                              key: "additional_address_info",
+                              label: "Info Adresse",
+                              filterable: true,
+                            },
+                            {
+                              key: "province",
+                              label: "Province",
+                              filterable: true,
+                            },
+                            {
+                              key: "district",
+                              label: "District",
+                              filterable: true,
+                            },
+                            {
+                              key: "postal_code",
+                              label: "Code Postal",
+                              filterable: true,
+                            },
+                            { key: "iccid", label: "ICCID", filterable: true },
+                            { key: "imsi", label: "IMSI", filterable: true },
+                            {
+                              key: "contact_number",
+                              label: "Contact",
+                              filterable: true,
+                            },
+                            {
+                              key: "created_at",
+                              label: "Créé le",
+                              filterable: false,
+                            },
+                            {
+                              key: "updated_at",
+                              label: "Modifié le",
+                              filterable: false,
+                            },
+                          ].map((col) => (
+                            <TableHead
+                              key={col.key}
+                              className={
+                                col.key === "id"
+                                  ? "sticky left-0 bg-background z-10"
+                                  : ""
+                              }
+                            >
+                              <div className="flex items-center justify-between gap-1 min-w-[120px]">
+                                <span className="text-xs font-medium flex-1 truncate">
+                                  {col.label}
+                                </span>
+                                {col.filterable && (
+                                  <ExcelFilter
+                                    column={col.key}
+                                    label={col.label}
+                                    values={columnValues[col.key] || []}
+                                    selected={columnFilters[col.key] || []}
+                                    onFilterChange={(values) =>
+                                      handleColumnFilterChange(col.key, values)
+                                    }
+                                    onFetchValues={() =>
+                                      fetchColumnValues(col.key)
+                                    }
+                                    loading={loadingColumnValues[col.key]}
+                                  />
+                                )}
+                              </div>
+                            </TableHead>
+                          ))}
                         </TableRow>
                       </TableHeader>
                       <TableBody>

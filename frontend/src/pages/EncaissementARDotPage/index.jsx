@@ -1,48 +1,47 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelect } from "@/components/ui/multi-select";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import {
   BarChart,
   Bar,
-  PieChart,
-  Pie,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Legend,
-  Cell,
   ResponsiveContainer,
+  ComposedChart,
+  Line,
+  LineChart,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import {
   Download,
   RefreshCw,
-  AlertTriangle,
-  TrendingUp,
-  DollarSign,
-  Percent,
+  Filter,
+  X,
+  BarChart3,
+  Building,
   FileText,
+  AlertCircle,
+  Calendar,
+  Percent,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
-  getEncaissementDashboardOverview,
-  getEncaissementMonthlyAggregates,
-  getEncaissementMonthlyDistribution,
-  getEncaissementDotAggregates,
-  getEncaissementAnomalyStatistics,
-  getEncaissementAvailableMonths,
-  getEncaissementAvailableOrganisations,
-  exportEncaissementRecords,
+  getEncaissementOverview,
+  getEncaissementByOrganisation,
+  getEncaissementByDate,
+  getEncaissementByEncaisseRate,
+  getEncaissementFilters,
   getEncaissementRecords,
+  exportEncaissementRecords,
 } from "../../services/api";
 import {
   Table,
@@ -52,75 +51,105 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
-// Number formatter for French locale
-const numberFr = new Intl.NumberFormat("fr-FR", {
-  maximumFractionDigits: 2,
-  minimumFractionDigits: 2,
-});
+// Formatage français avec séparateur de milliers et 2 décimales
+const formatNumber = (value) => {
+  if (value === null || value === undefined || isNaN(value)) return "0,00";
+  return new Intl.NumberFormat("fr-FR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value);
+};
 
 const formatCurrency = (value) => {
-  return `${numberFr.format(value || 0)} DZD`;
+  return `${formatNumber(value)} DZD`;
 };
 
 const formatPercent = (value) => {
-  return `${numberFr.format(value || 0)} %`;
+  if (value === null || value === undefined || isNaN(value)) return "0,00%";
+  return `${formatNumber(value)}%`;
 };
 
-// Color palette for charts
-const COLORS = [
-  "#0088FE",
-  "#00C49F",
-  "#FFBB28",
-  "#FF8042",
-  "#8884d8",
-  "#82ca9d",
-  "#ffc658",
-  "#ff7c7c",
-  "#8dd1e1",
-  "#d084d0",
-];
+// Couleurs matching les images
+const COLORS = {
+  primary: "#4A90E2", // Bleu
+  secondary: "#E2734A", // Orange
+  success: "#5CB85C", // Vert
+  danger: "#D9534F", // Rouge
+};
 
-/**
- * Overview KPI Card Component
- */
-const OverviewCard = ({
-  title,
-  value,
-  subtitle,
-  icon: Icon,
-  color = "blue",
-}) => (
-  <Card className="hover:shadow-lg transition-shadow">
-    <CardHeader className="flex flex-row items-center justify-between pb-2">
-      <CardTitle className="text-sm font-medium text-muted-foreground">
-        {title}
-      </CardTitle>
-      {Icon && <Icon className={`h-5 w-5 text-${color}-600`} />}
-    </CardHeader>
-    <CardContent>
-      <div className={`text-2xl font-bold text-${color}-700`}>{value}</div>
-      {subtitle && (
-        <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
-      )}
-    </CardContent>
-  </Card>
+// Sub-components
+const EmptyState = ({ message = "Aucune donnée disponible" }) => (
+  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+    <AlertCircle className="h-12 w-12 mb-4" />
+    <p>{message}</p>
+  </div>
+);
+
+const LoadingSpinner = () => (
+  <div className="flex items-center justify-center h-64">
+    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+  </div>
 );
 
 /**
- * Main Encaissement AR DOT Dashboard Page
- * Displays 4 visualizations as specified:
- * 1. OVERVIEW - KPI cards (Montant TTC, Encaissement, Taux)
- * 2. Combined Bar Chart - Montant TTC & Encaissement by month
- * 3. 3D Pie Chart - Encaissement by month
- * 4. Bar Chart - DOT and Taux d'encaissement
+ * Custom Tooltip pour les graphiques
+ */
+const CustomTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
+        <p className="font-bold text-gray-900 mb-2">{label}</p>
+        {payload.map((entry, index) => (
+          <p
+            key={index}
+            style={{ color: entry.color }}
+            className="text-sm font-semibold"
+          >
+            {entry.name}: {entry.name.includes("Taux") ? formatPercent(entry.value) : formatCurrency(entry.value)}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+/**
+ * Main Encaissement AR DOT Page Component
  */
 const EncaissementARDotPage = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
+  const [showFilters, setShowFilters] = useState(false);
 
-  // Overview statistics
+  // Filter state
+  const [filters, setFilters] = useState({
+    organisation: [], // DOT names (multi-select)
+    date_fact_start: "", // Date Fact start (month)
+    date_fact_end: "", // Date Fact end (month)
+    taux_encaissement_min: "", // Taux encaissement minimum
+    taux_encaissement_max: "", // Taux encaissement maximum
+    search: "", // Global search
+  });
+
+  // Available filter options
+  const [filterOptions, setFilterOptions] = useState({
+    organisations: [],
+    months: [],
+    taux_ranges: [],
+  });
+
+  // Data state
   const [overview, setOverview] = useState({
     total_montant_ttc: 0,
     total_encaissement: 0,
@@ -128,34 +157,11 @@ const EncaissementARDotPage = () => {
     taux_encaissement: 0,
     nombre_factures: 0,
   });
-
-  // Monthly aggregates for combined bar chart
-  const [monthlyAggregates, setMonthlyAggregates] = useState([]);
-
-  // Monthly distribution for pie chart
-  const [monthlyDistribution, setMonthlyDistribution] = useState([]);
-
-  // DOT aggregates for DOT bar chart
-  const [dotAggregates, setDotAggregates] = useState([]);
-
-  // Anomaly statistics
-  const [anomalyStats, setAnomalyStats] = useState({
-    total_anomalies: 0,
-    by_type: {},
-  });
-
-  // Filters
-  const [filters, setFilters] = useState({
-    year: new Date().getFullYear(),
-    organisations: [],
-  });
-
-  // Available metadata
-  const [availableMonths, setAvailableMonths] = useState([]);
-  const [availableOrganisations, setAvailableOrganisations] = useState([]);
+  const [byOrganisation, setByOrganisation] = useState([]);
+  const [byDateFact, setByDateFact] = useState([]);
+  const [byTauxEncaissement, setByTauxEncaissement] = useState([]);
 
   // Preview data state
-  const [activeTab, setActiveTab] = useState("overview");
   const [previewData, setPreviewData] = useState([]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewTotal, setPreviewTotal] = useState(0);
@@ -163,7 +169,7 @@ const EncaissementARDotPage = () => {
   const [previewPageSize, setPreviewPageSize] = useState(10);
 
   /**
-   * Fetch all dashboard data
+   * Fetch data
    */
   const fetchData = async (showRefreshing = false) => {
     if (showRefreshing) {
@@ -173,50 +179,239 @@ const EncaissementARDotPage = () => {
     }
 
     try {
-      // Fetch all data in parallel using centralized API methods
-      const [
-        overviewRes,
-        monthlyAggregatesRes,
-        monthlyDistributionRes,
-        dotAggregatesRes,
-        anomalyStatsRes,
-        availableMonthsRes,
-        availableOrgsRes,
-      ] = await Promise.all([
-        getEncaissementDashboardOverview(),
-        getEncaissementMonthlyAggregates(filters.year),
-        getEncaissementMonthlyDistribution(filters.year),
-        getEncaissementDotAggregates(),
-        getEncaissementAnomalyStatistics(),
-        getEncaissementAvailableMonths(),
-        getEncaissementAvailableOrganisations(),
+      // Build filter params for API calls
+      const filterParams = {
+        organisation:
+          filters.organisation.length > 0 ? filters.organisation : undefined,
+        date_fact_start: filters.date_fact_start || undefined,
+        date_fact_end: filters.date_fact_end || undefined,
+        taux_encaissement_min: filters.taux_encaissement_min || undefined,
+        taux_encaissement_max: filters.taux_encaissement_max || undefined,
+        search: filters.search || undefined,
+      };
+
+      // Remove undefined values
+      Object.keys(filterParams).forEach(
+        (key) => filterParams[key] === undefined && delete filterParams[key]
+      );
+
+      // Load all data simultaneously
+      const [ovRes, orgRes, dateRes, tauxRes] = await Promise.all([
+        getEncaissementOverview(filterParams),
+        getEncaissementByOrganisation(filterParams),
+        getEncaissementByDate(filterParams),
+        getEncaissementByEncaisseRate(filterParams),
       ]);
 
-      // Update state with response data
-      setOverview(overviewRes.data);
-      setMonthlyAggregates(monthlyAggregatesRes.data);
-      setMonthlyDistribution(monthlyDistributionRes.data);
-      setDotAggregates(dotAggregatesRes.data);
-      setAnomalyStats(anomalyStatsRes.data);
-      setAvailableMonths(availableMonthsRes.data);
-      setAvailableOrganisations(availableOrgsRes.data);
+      setOverview(ovRes.data || {});
+      setByOrganisation(orgRes.data || []);
+      setByDateFact(dateRes.data || []);
+      setByTauxEncaissement(tauxRes.data || []);
+
+      if (showRefreshing) {
+        toast.success("Données actualisées");
+      }
     } catch (error) {
-      console.error("Error fetching dashboard data:", error);
+      console.error("Error fetching data:", error);
+      toast.error("Erreur lors du chargement des données");
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
+  /**
+   * Fetch filters
+   */
+  const fetchFilters = async () => {
+    try {
+      const res = await getEncaissementFilters();
+
+      setFilterOptions({
+        organisations: res.data.organisations || [],
+        months: res.data.months || [],
+        taux_ranges: res.data.taux_ranges || [
+          { label: "0-25%", min: 0, max: 25 },
+          { label: "25-50%", min: 25, max: 50 },
+          { label: "50-75%", min: 50, max: 75 },
+          { label: "75-100%", min: 75, max: 100 },
+          { label: "100%+", min: 100, max: 999999 },
+        ],
+      });
+    } catch (error) {
+      console.error("Error fetching filters:", error);
+    }
+  };
+
   useEffect(() => {
+    fetchFilters();
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
-   * Fetch preview data
+   * CHART 1: Montant TTC & Encaissement par Organisation
    */
-  const fetchPreviewData = async () => {
+  const organisationChartData = useMemo(() => {
+    return byOrganisation
+      .map((item) => ({
+        organisation: item.organisation || "Inconnu",
+        "Montant TTC": item.total_montant_ttc || 0,
+        Encaissement: item.total_encaissement || 0,
+        "Taux (%)": item.taux_encaissement_moyen || 0,
+      }))
+      .sort((a, b) => b["Taux (%)"] - a["Taux (%)"])
+      .slice(0, 30);
+  }, [byOrganisation]);
+
+  /**
+   * CHART 2: Encaissement par Date Fact (Mois)
+   */
+  const dateFactChartData = useMemo(() => {
+    return byDateFact
+      .map((item) => ({
+        mois: item.mois || item.date_fact || "Inconnu",
+        "Montant TTC": item.total_montant_ttc || 0,
+        Encaissement: item.total_encaissement || 0,
+        "Taux (%)": item.taux_encaissement_moyen || 0,
+      }))
+      .sort((a, b) => a.mois.localeCompare(b.mois));
+  }, [byDateFact]);
+
+  /**
+   * CHART 3: DOT et Taux d'encaissement
+   */
+  const tauxEncaissementChartData = useMemo(() => {
+    return byTauxEncaissement
+      .map((item) => ({
+        range: item.taux_range || item.range || "Inconnu",
+        count: item.count || 0,
+        "Montant TTC": item.total_montant_ttc || 0,
+        Encaissement: item.total_encaissement || 0,
+      }))
+      .sort((a, b) => {
+        // Sort by taux range (0-25%, 25-50%, etc.)
+        const aMin = parseInt(a.range.split("-")[0] || "0");
+        const bMin = parseInt(b.range.split("-")[0] || "0");
+        return aMin - bMin;
+      });
+  }, [byTauxEncaissement]);
+
+  /**
+   * CHART 4: Pie Chart - Encaissement par Mois (3D style)
+   */
+  const pieChartData = useMemo(() => {
+    const total = byDateFact.reduce((sum, item) => sum + (item.total_encaissement || 0), 0);
+
+    return byDateFact
+      .map((item) => {
+        const value = item.total_encaissement || 0;
+        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+        return {
+          name: item.mois || item.date_fact || "Inconnu",
+          value: value,
+          percentage: parseFloat(percentage),
+        };
+      })
+      .filter(item => item.value > 0) // Only show months with encaissement
+      .sort((a, b) => b.value - a.value); // Sort by value descending
+  }, [byDateFact]);
+
+  // Extended color palette for pie chart
+  const PIE_COLORS = [
+    "#4A90E2", // Blue
+    "#E2734A", // Orange
+    "#5CB85C", // Green
+    "#D9534F", // Red
+    "#9B59B6", // Purple
+    "#F39C12", // Yellow
+    "#1ABC9C", // Turquoise
+    "#E74C3C", // Crimson
+    "#3498DB", // Light Blue
+    "#2ECC71", // Emerald
+    "#E67E22", // Carrot
+    "#95A5A6", // Gray
+  ];
+
+  /**
+   * Export handler
+   */
+  const handleExport = async (format = "xlsx") => {
+    try {
+      setExporting(true);
+
+      const exportParams = { ...filters, format };
+
+      // Keep organisation as array if it's an array (backend can handle it)
+      // Remove empty arrays
+      if (
+        Array.isArray(exportParams.organisation) &&
+        exportParams.organisation.length === 0
+      ) {
+        delete exportParams.organisation;
+      }
+
+      // Remove empty strings and undefined values
+      Object.keys(exportParams).forEach((key) => {
+        if (
+          exportParams[key] === undefined ||
+          exportParams[key] === "" ||
+          exportParams[key] === null
+        ) {
+          delete exportParams[key];
+        }
+      });
+
+      console.log(
+        "🚀 Starting encaissement export with filters:",
+        exportParams
+      );
+
+      const response = await exportEncaissementRecords(exportParams);
+      const mimeType =
+        format === "xlsx"
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "text/csv";
+      const blob = new Blob([response.data], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `encaissement_export_${
+        new Date().toISOString().split("T")[0]
+      }.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success("Export réussi");
+    } catch (err) {
+      console.error("❌ Export failed:", err);
+      toast.error("Erreur lors de l'export");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const applyFilters = () => {
+    fetchData();
+    toast.success("Filtres appliqués");
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      organisation: [],
+      date_fact_start: "",
+      date_fact_end: "",
+      taux_encaissement_min: "",
+      taux_encaissement_max: "",
+      search: "",
+    });
+    toast.success("Filtres réinitialisés");
+  };
+
+  // Fetch preview data
+  const fetchPreviewData = useCallback(async () => {
     if (activeTab !== "preview") return;
 
     try {
@@ -228,172 +423,64 @@ const EncaissementARDotPage = () => {
       };
 
       // Add filters if needed
-      if (filters.year) {
-        // Filter by year if needed
-      }
-      if (filters.organisations && filters.organisations.length > 0) {
-        params.organisation = filters.organisations.join(",");
+      if (filters.organisation && filters.organisation.length > 0) {
+        params.organisation = filters.organisation.join(",");
       }
 
       const response = await getEncaissementRecords(params);
 
       setPreviewData(response.data?.items || []);
       setPreviewTotal(response.data?.total || 0);
-    } catch (error) {
-      console.error("Error fetching preview data:", error);
+    } catch (err) {
+      console.error("Error fetching preview data:", err);
+      toast.error("Erreur lors du chargement des données de prévisualisation");
     } finally {
       setPreviewLoading(false);
     }
-  };
+  }, [activeTab, previewPage, previewPageSize, filters]);
 
   // Fetch preview data when tab changes or filters/page changes
   useEffect(() => {
     if (activeTab === "preview") {
       fetchPreviewData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, previewPage, previewPageSize, filters]);
+  }, [activeTab, previewPage, previewPageSize, filters, fetchPreviewData]);
 
-  /**
-   * Format monthly data for combined bar chart
-   */
-  const monthlyChartData = useMemo(() => {
-    return monthlyAggregates.map((item) => ({
-      mois: new Date(item.mois + "-01").toLocaleString("fr-FR", {
-        month: "short",
-        year: "2-digit",
-      }),
-      "Montant TTC": item.total_montant_ttc,
-      Encaissement: item.total_encaissement,
-      "Montant Restant": item.total_montant_restant,
-    }));
-  }, [monthlyAggregates]);
-
-  /**
-   * Format monthly distribution for pie chart
-   */
-  const pieChartData = useMemo(() => {
-    return monthlyDistribution.map((item, index) => ({
-      name: new Date(item.mois + "-01").toLocaleString("fr-FR", {
-        month: "long",
-        year: "numeric",
-      }),
-      value: item.total_encaissement,
-      percentage: item.percentage,
-      fill: COLORS[index % COLORS.length],
-    }));
-  }, [monthlyDistribution]);
-
-  /**
-   * Format DOT data for bar chart
-   */
-  const dotChartData = useMemo(() => {
-    return dotAggregates.map((item) => ({
-      organisation: item.organisation,
-      taux: item.taux_encaissement,
-      montant_ttc: item.total_montant_ttc,
-      encaissement: item.total_encaissement,
-    }));
-  }, [dotAggregates]);
-
-  /**
-   * Export data to CSV or Excel
-   */
-  const exportData = async (format = "csv") => {
-    try {
-      const exportParams = {
-        format: format,
-        year: filters.year,
-      };
-      // Add organisations filter if selected
-      if (filters.organisations && filters.organisations.length > 0) {
-        exportParams.organisations = filters.organisations.join(",");
-      }
-
-      const response = await exportEncaissementRecords(exportParams);
-      const mimeType =
-        format === "xlsx"
-          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : "text/csv";
-      const blob = new Blob([response.data], { type: mimeType });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `encaissement_ar_dot_export_${filters.year}_${new Date()
-        .toISOString()
-        .slice(0, 10)}.${format === "xlsx" ? "xlsx" : "csv"}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error("Error exporting data:", error);
-    }
-  };
-
-  /**
-   * Custom tooltip for pie chart
-   */
-  const renderPieTooltip = ({ active, payload }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-3 border border-gray-200 rounded shadow-lg">
-          <p className="font-semibold">{payload[0].name}</p>
-          <p className="text-sm text-blue-600">
-            Encaissement: {formatCurrency(payload[0].value)}
-          </p>
-          <p className="text-sm text-gray-600">
-            {formatPercent(payload[0].payload.percentage)}
-          </p>
-        </div>
-      );
-    }
-    return null;
-  };
-
-  /**
-   * Custom tooltip for bar charts
-   */
-  const renderBarTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white p-3 border border-gray-200 rounded shadow-lg">
-          <p className="font-semibold mb-2">{label}</p>
-          {payload.map((entry, index) => (
-            <p key={index} className="text-sm" style={{ color: entry.color }}>
-              {entry.name}: {formatCurrency(entry.value)}
-            </p>
-          ))}
-        </div>
-      );
-    }
-    return null;
+  const getActiveFilterCount = () => {
+    return Object.values(filters).filter((v) => {
+      if (Array.isArray(v)) return v.length > 0;
+      return v && typeof v === "string" && v.trim() !== "";
+    }).length;
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <RefreshCw className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-lg text-gray-600">Chargement des données...</p>
-        </div>
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
+  const activeFilterCount = getActiveFilterCount();
+
   return (
-    <div className="space-y-6 p-6 bg-gray-50 min-h-screen">
+    <div className="space-y-6 p-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">
-            Encaissement AR DOT
-          </h1>
-          <p className="text-sm text-gray-600 mt-1">
-            Tableau de bord - Factures AR et Encaissements par période
-          </p>
-        </div>
-        <div className="flex gap-2">
+        <h1 className="text-3xl font-bold">Encaissement AR DOT</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setShowFilters((s) => !s)}
+            className="relative"
+          >
+            <Filter className="h-4 w-4 mr-2" />
+            Filtres
+            {activeFilterCount > 0 && (
+              <Badge
+                variant="destructive"
+                className="ml-2 h-5 w-5 p-0 flex items-center justify-center"
+              >
+                {activeFilterCount}
+              </Badge>
+            )}
+          </Button>
           <Button
             variant="outline"
             onClick={() => fetchData(true)}
@@ -405,15 +492,17 @@ const EncaissementARDotPage = () => {
             Actualiser
           </Button>
           <Button
-            onClick={() => exportData("csv")}
-            className="bg-green-600 hover:bg-green-700 text-white"
+            onClick={() => handleExport("csv")}
+            disabled={exporting}
+            className="bg-green-600 hover:bg-green-700"
           >
             <Download className="h-4 w-4 mr-2" />
             CSV
           </Button>
           <Button
-            onClick={() => exportData("xlsx")}
-            className="bg-blue-600 hover:bg-blue-700 text-white"
+            onClick={() => handleExport("xlsx")}
+            disabled={exporting}
+            className="bg-blue-600 hover:bg-blue-700"
           >
             <Download className="h-4 w-4 mr-2" />
             Excel
@@ -421,244 +510,538 @@ const EncaissementARDotPage = () => {
         </div>
       </div>
 
-      {/* Filters */}
-      <Card>
+      {/* Hero Card - Total Encaissement */}
+      <Card className="bg-gradient-to-r from-blue-500 to-blue-600 text-white">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
-            <div>
-              <Label>Année</Label>
-              <Select
-                value={filters.year.toString()}
-                onValueChange={(value) =>
-                  setFilters((f) => ({ ...f, year: parseInt(value) }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="2024">2024</SelectItem>
-                  <SelectItem value="2025">2025</SelectItem>
-                  <SelectItem value="2026">2026</SelectItem>
-                </SelectContent>
-              </Select>
+          <div className="text-center">
+            <div className="text-6xl font-bold mb-2">
+              {formatCurrency(overview.total_encaissement || 0)}
             </div>
-            <div className="sm:col-span-3">
-              <Label>Organisation (DOT)</Label>
-              <MultiSelect
-                options={
-                  availableOrganisations.map((org) => ({
-                    label: org,
-                    value: org,
-                  })) || []
-                }
-                selected={filters.organisations}
-                onChange={(values) =>
-                  setFilters((f) => ({ ...f, organisations: values }))
-                }
-                placeholder="Toutes les organisations"
-              />
-            </div>
-            <div className="flex items-end">
-              <Button onClick={() => fetchData()} className="w-full sm:w-auto">
-                Appliquer les filtres
-              </Button>
+            <div className="text-xl font-medium opacity-90">
+              Encaissement Total
             </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* Secondary Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Montant TTC
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatCurrency(overview.total_montant_ttc || 0)}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Encaissement
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatCurrency(overview.total_encaissement || 0)}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Taux d'encaissement
+              </div>
+              <div className="text-3xl font-bold text-gray-900">
+                {formatPercent(overview.taux_encaissement || 0)}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Enhanced Filters */}
+      {showFilters && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>Filtres Avancés</CardTitle>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={resetFilters}>
+                  <X className="h-4 w-4 mr-2" />
+                  Réinitialiser
+                </Button>
+                <Button size="sm" onClick={applyFilters}>
+                  Appliquer
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {/* Primary Filters */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <Label>DOT (Organisation)</Label>
+                  <MultiSelect
+                    options={filterOptions.organisations.map((name) => ({
+                      label: name,
+                      value: name,
+                    }))}
+                    selected={filters.organisation}
+                    onChange={(values) =>
+                      setFilters((f) => ({ ...f, organisation: values }))
+                    }
+                    placeholder="Tous les DOTs"
+                  />
+                </div>
+
+                <div>
+                  <Label>Mois (Date Fact) - Début</Label>
+                  <Input
+                    type="month"
+                    value={filters.date_fact_start}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        date_fact_start: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <Label>Mois (Date Fact) - Fin</Label>
+                  <Input
+                    type="month"
+                    value={filters.date_fact_end}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        date_fact_end: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <Label>Taux d'encaissement (%)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      type="number"
+                      placeholder="Min"
+                      value={filters.taux_encaissement_min}
+                      onChange={(e) =>
+                        setFilters((f) => ({
+                          ...f,
+                          taux_encaissement_min: e.target.value,
+                        }))
+                      }
+                    />
+                    <Input
+                      type="number"
+                      placeholder="Max"
+                      value={filters.taux_encaissement_max}
+                      onChange={(e) =>
+                        setFilters((f) => ({
+                          ...f,
+                          taux_encaissement_max: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Search */}
+              <div>
+                <Label>Recherche Globale</Label>
+                <Input
+                  placeholder="Recherche dans tous les champs..."
+                  value={filters.search}
+                  onChange={(e) =>
+                    setFilters((f) => ({ ...f, search: e.target.value }))
+                  }
+                />
+              </div>
+
+              {/* Active Filters Summary */}
+              {activeFilterCount > 0 && (
+                <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <h4 className="font-medium text-sm">
+                      Filtres actifs ({activeFilterCount})
+                    </h4>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(filters).map(([key, value]) => {
+                      const isActive = Array.isArray(value)
+                        ? value.length > 0
+                        : value && value.trim() !== "";
+
+                      if (isActive) {
+                        const labels = {
+                          organisation: "DOT",
+                          date_fact_start: "Date Fact Début",
+                          date_fact_end: "Date Fact Fin",
+                          taux_encaissement_min: "Taux Min",
+                          taux_encaissement_max: "Taux Max",
+                          search: "Recherche",
+                        };
+
+                        const displayValue = Array.isArray(value)
+                          ? `${value.length} sélectionné(s)`
+                          : value;
+
+                        return (
+                          <Badge
+                            key={key}
+                            variant="secondary"
+                            className="text-xs"
+                          >
+                            {labels[key]}: {displayValue}
+                            <X
+                              className="h-3 w-3 ml-1 cursor-pointer"
+                              onClick={() =>
+                                setFilters((f) => ({
+                                  ...f,
+                                  [key]: Array.isArray(value) ? [] : "",
+                                }))
+                              }
+                            />
+                          </Badge>
+                        );
+                      }
+                      return null;
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>
-          <TabsTrigger value="preview">Aperçu des données</TabsTrigger>
-        </TabsList>
+      <div className="flex flex-wrap gap-2 border-b pb-2">
+        {[
+          { id: "overview", label: "OVERVIEW", icon: BarChart3 },
+          { id: "organisation", label: "BY Organisation", icon: Building },
+          { id: "date-fact", label: "BY Date Fact", icon: Calendar },
+          {
+            id: "taux-encaissement",
+            label: "BY Taux d'encaissement",
+            icon: Percent,
+          },
+          { id: "preview", label: "PREVIEW DATA", icon: FileText },
+        ].map((tab) => (
+          <Button
+            key={tab.id}
+            variant={activeTab === tab.id ? "default" : "ghost"}
+            onClick={() => setActiveTab(tab.id)}
+            className="flex items-center gap-2"
+            size="sm"
+          >
+            <tab.icon className="h-4 w-4" />
+            {tab.label}
+          </Button>
+        ))}
+      </div>
 
-        <TabsContent value="overview" className="space-y-6">
-          {/* VISUALIZATION 1: OVERVIEW - KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <OverviewCard
-              title="Montant TTC Total"
-              value={formatCurrency(overview.total_montant_ttc)}
-              subtitle={`${overview.nombre_factures} factures`}
-              icon={DollarSign}
-              color="blue"
-            />
-            <OverviewCard
-              title="Encaissement Total"
-              value={formatCurrency(overview.total_encaissement)}
-              subtitle="Montant encaissé"
-              icon={TrendingUp}
-              color="green"
-            />
-            <OverviewCard
-              title="Taux d'Encaissement"
-              value={formatPercent(overview.taux_encaissement)}
-              subtitle={`${formatPercent(
-                (overview.taux_encaissement / 100) * 100
-              )} du montant TTC`}
-              icon={Percent}
-              color="purple"
-            />
-            <OverviewCard
-              title="Montant Restant"
-              value={formatCurrency(overview.total_montant_restant)}
-              subtitle={`${anomalyStats.total_anomalies} anomalies`}
-              icon={AlertTriangle}
-              color="orange"
-            />
-          </div>
-
-          {/* VISUALIZATION 2: Combined Bar Chart - Montant TTC & Encaissement by Month */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Montant TTC et Encaissement par Mois</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Comparaison mensuelle des montants facturés et encaissés
-              </p>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={monthlyChartData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="mois" />
-                  <YAxis />
-                  <Tooltip content={renderBarTooltip} />
-                  <Legend />
-                  <Bar dataKey="Montant TTC" fill="#0088FE" />
-                  <Bar dataKey="Encaissement" fill="#00C49F" />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-
-          {/* VISUALIZATION 3: 3D Pie Chart - Encaissement by Month */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Tab Content */}
+      <div className="space-y-6">
+        {activeTab === "overview" && (
+          <>
             <Card>
               <CardHeader>
-                <CardTitle>Distribution Mensuelle des Encaissements</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Répartition des encaissements par mois (%)
-                </p>
+                <CardTitle>Histogramme combiné (Encaissement et Montant TTC par mois de Date Fact)</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={400}>
-                  <PieChart>
-                    <Pie
-                      data={pieChartData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={(entry) =>
-                        `${
-                          entry.name.split(" ")[0]
-                        }: ${entry.percentage.toFixed(1)}%`
-                      }
-                      outerRadius={120}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {pieChartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip content={renderPieTooltip} />
-                  </PieChart>
-                </ResponsiveContainer>
+                {dateFactChartData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={450}>
+                    <LineChart data={dateFactChartData} margin={{ bottom: 20, top: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                      <XAxis
+                        dataKey="mois"
+                        angle={0}
+                        textAnchor="middle"
+                        style={{ fontSize: "12px" }}
+                      />
+                      <YAxis
+                        tickFormatter={(value) =>
+                          new Intl.NumberFormat("fr-FR", {
+                            notation: "compact",
+                          }).format(value)
+                        }
+                        style={{ fontSize: "12px" }}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend
+                        wrapperStyle={{ fontSize: "14px", paddingTop: "20px" }}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Montant TTC"
+                        stroke={COLORS.primary}
+                        strokeWidth={3}
+                        dot={{ r: 5, fill: COLORS.primary }}
+                        activeDot={{ r: 7 }}
+                        name="Somme de Montant TTC"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="Encaissement"
+                        stroke={COLORS.secondary}
+                        strokeWidth={3}
+                        dot={{ r: 5, fill: COLORS.secondary }}
+                        activeDot={{ r: 7 }}
+                        name="Somme de Encaissement"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyState message="Aucune donnée disponible" />
+                )}
               </CardContent>
             </Card>
 
-            {/* VISUALIZATION 4: Bar Chart - DOT and Taux d'Encaissement */}
+            {/* Pie Chart - Secteur 3D (encaissement / mois) */}
             <Card>
               <CardHeader>
-                <CardTitle>Taux d'Encaissement par DOT</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Performance d'encaissement par organisation
-                </p>
+                <CardTitle>Secteur 3D (Encaissement / Mois)</CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={400}>
-                  <BarChart data={dotChartData} layout="horizontal">
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis type="number" unit="%" />
-                    <YAxis dataKey="organisation" type="category" width={100} />
-                    <Tooltip
-                      content={({ active, payload }) => {
-                        if (active && payload && payload.length) {
-                          return (
-                            <div className="bg-white p-3 border border-gray-200 rounded shadow-lg">
-                              <p className="font-semibold mb-2">
-                                {payload[0].payload.organisation}
-                              </p>
-                              <p className="text-sm text-blue-600">
-                                Taux: {formatPercent(payload[0].value)}
-                              </p>
-                              <p className="text-sm text-gray-600">
-                                Montant TTC:{" "}
-                                {formatCurrency(payload[0].payload.montant_ttc)}
-                              </p>
-                              <p className="text-sm text-green-600">
-                                Encaissement:{" "}
-                                {formatCurrency(
-                                  payload[0].payload.encaissement
-                                )}
-                              </p>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
+                {pieChartData.length > 0 ? (
+                  <div className="flex flex-col items-center">
+                    <ResponsiveContainer width="100%" height={500}>
+                      <PieChart>
+                        <Pie
+                          data={pieChartData}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percentage }) => `${name}: ${percentage}%`}
+                          outerRadius={180}
+                          fill="#8884d8"
+                          dataKey="value"
+                        >
+                          {pieChartData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          formatter={(value, name, props) => [
+                            `${formatCurrency(value)} (${props.payload.percentage}%)`,
+                            "Encaissement",
+                          ]}
+                        />
+                        <Legend
+                          wrapperStyle={{ fontSize: "14px", paddingTop: "20px" }}
+                          formatter={(value, entry) => `${entry.payload.name} (${entry.payload.percentage}%)`}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <EmptyState message="Aucune donnée disponible pour le graphique en secteurs" />
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
+
+        {activeTab === "organisation" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Encaissement par Organisation (Relation 1: DOT et Taux d'encaissement)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {organisationChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={700}>
+                  <ComposedChart
+                    data={organisationChartData}
+                    layout="vertical"
+                    margin={{ left: 120, right: 60 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      type="number"
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
                     />
-                    <Legend />
+                    <YAxis
+                      dataKey="organisation"
+                      type="category"
+                      width={110}
+                      tick={{ fontSize: 11 }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
                     <Bar
-                      dataKey="taux"
-                      fill="#8884d8"
-                      name="Taux d'Encaissement (%)"
+                      dataKey="Montant TTC"
+                      fill={COLORS.primary}
+                      radius={[0, 4, 4, 0]}
+                    />
+                    <Bar
+                      dataKey="Encaissement"
+                      fill={COLORS.success}
+                      radius={[0, 4, 4, 0]}
+                    />
+                    <Line
+                      dataKey="Taux (%)"
+                      stroke={COLORS.secondary}
+                      strokeWidth={3}
+                      dot={{ r: 4 }}
+                      yAxisId="right"
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tickFormatter={(value) => `${value}%`}
+                      style={{ fontSize: "12px" }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Organisation disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "date-fact" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Encaissement par Date Fact (Relation 2: Mois et Taux d'encaissement)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {dateFactChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={450}>
+                  <ComposedChart data={dateFactChartData} margin={{ bottom: 20, right: 60 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="mois"
+                      angle={0}
+                      textAnchor="middle"
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tickFormatter={(value) => `${value}%`}
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="Montant TTC"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                      yAxisId="left"
+                    />
+                    <Bar
+                      dataKey="Encaissement"
+                      fill={COLORS.success}
+                      radius={[4, 4, 0, 0]}
+                      yAxisId="left"
+                    />
+                    <Line
+                      dataKey="Taux (%)"
+                      stroke={COLORS.secondary}
+                      strokeWidth={3}
+                      dot={{ r: 4 }}
+                      yAxisId="right"
+                      type="monotone"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Date Fact disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "taux-encaissement" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Distribution par Taux d'encaissement</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {tauxEncaissementChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={450}>
+                  <BarChart
+                    data={tauxEncaissementChartData}
+                    margin={{ bottom: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="range"
+                      angle={0}
+                      textAnchor="middle"
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="Montant TTC"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="Encaissement"
+                      fill={COLORS.success}
+                      radius={[4, 4, 0, 0]}
                     />
                   </BarChart>
                 </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
+              ) : (
+                <EmptyState message="Aucune donnée Taux disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
 
-          {/* Anomalies Summary */}
-          {anomalyStats.total_anomalies > 0 && (
-            <Card className="border-orange-200 bg-orange-50">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-orange-700">
-                  <AlertTriangle className="h-5 w-5" />
-                  Anomalies Détectées
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm mb-3">
-                  {anomalyStats.total_anomalies} anomalies ont été détectées
-                  dans les données
-                </p>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {Object.entries(anomalyStats.by_type).map(([type, count]) => (
-                    <div
-                      key={type}
-                      className="bg-white p-3 rounded border border-orange-200"
-                    >
-                      <p className="text-xs text-gray-600">{type}</p>
-                      <p className="text-lg font-bold text-orange-600">
-                        {count}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </TabsContent>
-
-        <TabsContent value="preview" className="space-y-6">
+        {activeTab === "preview" && (
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle>Aperçu des Données</CardTitle>
+                <CardTitle>Preview Data</CardTitle>
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
                     <Label htmlFor="page-size" className="text-sm">
@@ -679,12 +1062,11 @@ const EncaissementARDotPage = () => {
                         <SelectItem value="15">15</SelectItem>
                         <SelectItem value="20">20</SelectItem>
                         <SelectItem value="50">50</SelectItem>
-                        <SelectItem value="100">100</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    {numberFr.format(previewTotal)} enregistrement(s) total
+                    {formatNumber(previewTotal)} enregistrement(s) total
                   </div>
                 </div>
               </div>
@@ -692,14 +1074,10 @@ const EncaissementARDotPage = () => {
             <CardContent>
               {previewLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <RefreshCw className="h-8 w-8 animate-spin text-blue-600 mr-2" />
                   <div className="text-muted-foreground">Chargement...</div>
                 </div>
               ) : previewData.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                  <FileText className="h-12 w-12 mb-4" />
-                  <p>Aucune donnée disponible</p>
-                </div>
+                <EmptyState message="Aucune donnée disponible" />
               ) : (
                 <>
                   <div className="rounded-md border overflow-x-auto">
@@ -719,24 +1097,10 @@ const EncaissementARDotPage = () => {
                           <TableHead>Montant HT</TableHead>
                           <TableHead>Montant Taxe</TableHead>
                           <TableHead>Montant TTC</TableHead>
-                          <TableHead>Chiffre Aff Exe</TableHead>
                           <TableHead>Encaissement</TableHead>
-                          <TableHead>N Rglt</TableHead>
-                          <TableHead>Date Rglt</TableHead>
                           <TableHead>Taux Encaissement</TableHead>
                           <TableHead>Montant Restant</TableHead>
-                          <TableHead>Facture Avoir/Annulation</TableHead>
-                          <TableHead>Obj Fact</TableHead>
-                          <TableHead>Période</TableHead>
-                          <TableHead>Ref</TableHead>
-                          <TableHead>Terminé Flag</TableHead>
-                          <TableHead>Créé Par</TableHead>
-                          <TableHead>Mois</TableHead>
-                          <TableHead>Dupliqué</TableHead>
-                          <TableHead>Anomalie</TableHead>
-                          <TableHead>Raison Anomalie</TableHead>
                           <TableHead>Créé le</TableHead>
-                          <TableHead>Modifié le</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -779,24 +1143,9 @@ const EncaissementARDotPage = () => {
                                 ? formatCurrency(record.montant_ttc)
                                 : "-"}
                             </TableCell>
-                            <TableCell className="text-right">
-                              {record.chiffre_aff_exe
-                                ? formatCurrency(record.chiffre_aff_exe)
-                                : "-"}
-                            </TableCell>
                             <TableCell className="text-right font-semibold text-green-600">
                               {record.encaissement
                                 ? formatCurrency(record.encaissement)
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {record.n_rglt || "-"}
-                            </TableCell>
-                            <TableCell className="text-xs">
-                              {record.date_rglt
-                                ? new Date(record.date_rglt).toLocaleDateString(
-                                    "fr-FR"
-                                  )
                                 : "-"}
                             </TableCell>
                             <TableCell className="text-right">
@@ -810,48 +1159,9 @@ const EncaissementARDotPage = () => {
                                 ? formatCurrency(record.montant_restant)
                                 : "-"}
                             </TableCell>
-                            <TableCell className="max-w-[200px] truncate">
-                              {record.facture_avoir_annulation || "-"}
-                            </TableCell>
-                            <TableCell className="max-w-[200px] truncate">
-                              {record.obj_fact || "-"}
-                            </TableCell>
-                            <TableCell>{record.periode || "-"}</TableCell>
-                            <TableCell>{record.ref || "-"}</TableCell>
-                            <TableCell>{record.termine_flag || "-"}</TableCell>
-                            <TableCell>{record.creer_par || "-"}</TableCell>
-                            <TableCell>{record.mois || "-"}</TableCell>
-                            <TableCell>
-                              {record.is_duplicate ? (
-                                <span className="text-orange-600 font-semibold">
-                                  Oui
-                                </span>
-                              ) : (
-                                "Non"
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {record.is_anomaly ? (
-                                <span className="text-red-600 font-semibold">
-                                  Oui
-                                </span>
-                              ) : (
-                                "Non"
-                              )}
-                            </TableCell>
-                            <TableCell className="max-w-[200px] truncate text-xs">
-                              {record.anomaly_reason || "-"}
-                            </TableCell>
                             <TableCell className="text-xs">
                               {record.created_at
                                 ? new Date(record.created_at).toLocaleString(
-                                    "fr-FR"
-                                  )
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="text-xs">
-                              {record.updated_at
-                                ? new Date(record.updated_at).toLocaleString(
                                     "fr-FR"
                                   )
                                 : "-"}
@@ -866,17 +1176,17 @@ const EncaissementARDotPage = () => {
                     <div className="text-sm text-muted-foreground">
                       Page {previewPage} sur{" "}
                       {Math.ceil(previewTotal / previewPageSize) || 1} (
-                      {numberFr.format(
+                      {formatNumber(
                         Math.min(
                           (previewPage - 1) * previewPageSize + 1,
                           previewTotal
                         )
                       )}{" "}
                       -{" "}
-                      {numberFr.format(
+                      {formatNumber(
                         Math.min(previewPage * previewPageSize, previewTotal)
                       )}{" "}
-                      sur {numberFr.format(previewTotal)})
+                      sur {formatNumber(previewTotal)})
                     </div>
                     <div className="flex gap-2">
                       <Button
@@ -938,8 +1248,8 @@ const EncaissementARDotPage = () => {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
     </div>
   );
 };

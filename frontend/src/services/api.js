@@ -2,13 +2,17 @@ import axios from "axios";
 import { debug } from "../lib/debug.js";
 
 // Use environment variable with fallback
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
-const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || API_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://');
-const IS_DEV = import.meta.env.VITE_ENV === 'development' || import.meta.env.DEV;
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8001";
+const WS_BASE_URL =
+  import.meta.env.VITE_WS_BASE_URL ||
+  API_BASE_URL.replace("http://", "ws://").replace("https://", "wss://");
+const IS_DEV =
+  import.meta.env.VITE_ENV === "development" || import.meta.env.DEV;
 
 // Debug logging utility
 const debugLog = (...args) => {
-  if (IS_DEV && import.meta.env.VITE_ENABLE_DEBUG !== 'false') {
+  if (IS_DEV && import.meta.env.VITE_ENABLE_DEBUG !== "false") {
     console.log(...args);
   }
 };
@@ -40,7 +44,31 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => {
-    debug.apiResponse(response.status, response.config.url, response.data);
+    // Don't log binary blob data (Excel, CSV, images, etc.)
+    const isBlob =
+      response.data instanceof Blob ||
+      (typeof response.data === "object" &&
+        response.data !== null &&
+        response.data.constructor &&
+        response.data.constructor.name === "Blob");
+    const responseType = response.config.responseType;
+    const contentType = response.headers["content-type"] || "";
+    const isBinary =
+      isBlob ||
+      responseType === "blob" ||
+      contentType.includes("application/vnd.openxmlformats") ||
+      contentType.includes("application/vnd.ms-excel") ||
+      contentType.includes("application/octet-stream");
+
+    if (isBinary) {
+      debug.apiResponse(
+        response.status,
+        response.config.url,
+        `[Binary data: ${contentType || "blob"}]`
+      );
+    } else {
+      debug.apiResponse(response.status, response.config.url, response.data);
+    }
     return response;
   },
   (error) => {
@@ -271,11 +299,14 @@ export const checkRole = (roleName, userId) => {
 export const checkPermission = (codename, userId) => {
   if (!codename)
     return Promise.reject(new Error("Permission codename is required"));
-  return api.get(
-    `/api/users/check-permission/${encodeURIComponent(
-      codename
-    )}?user_id=${userId}`
-  );
+  // Only include user_id if provided (backend uses JWT token, so this is optional)
+  const url =
+    userId != null
+      ? `/api/users/check-permission/${encodeURIComponent(
+          codename
+        )}?user_id=${userId}`
+      : `/api/users/check-permission/${encodeURIComponent(codename)}`;
+  return api.get(url);
 };
 
 export const updateRolePermissions = (roleId, permissionIds) => {
@@ -484,7 +515,9 @@ export const removeReaction = (messageId, reactionId) => {
   if (!messageId || !reactionId) {
     return Promise.reject(new Error("Message ID and reaction ID are required"));
   }
-  return api.delete(`/api/messages/messages/${messageId}/reactions/${reactionId}`);
+  return api.delete(
+    `/api/messages/messages/${messageId}/reactions/${reactionId}`
+  );
 };
 
 // Download file from message
@@ -696,12 +729,18 @@ export const cancelProcessing = (fileId) => {
 
 export const getFileStats = () => api.get("/api/files/stats/summary");
 
-export const getAvailableFileTypes = () => api.get("/api/files/types/available");
+export const getAvailableFileTypes = () =>
+  api.get("/api/files/types/available");
 
 export const updateFileClassification = (fileId, manualKpiType) => {
   if (!fileId) return Promise.reject(new Error("File ID is required"));
-  if (!manualKpiType) return Promise.reject(new Error("Manual KPI type is required"));
-  return api.patch(`/api/files/${fileId}/classification?manual_kpi_type=${encodeURIComponent(manualKpiType)}`);
+  if (!manualKpiType)
+    return Promise.reject(new Error("Manual KPI type is required"));
+  return api.patch(
+    `/api/files/${fileId}/classification?manual_kpi_type=${encodeURIComponent(
+      manualKpiType
+    )}`
+  );
 };
 
 // Admin endpoints
@@ -723,7 +762,9 @@ export const getBroadcastAnalytics = (params = {}) => {
   const queryParams = new URLSearchParams();
   if (params.start_date) queryParams.append("start_date", params.start_date);
   if (params.end_date) queryParams.append("end_date", params.end_date);
-  return api.get(`/api/admin/broadcast/analytics/summary?${queryParams.toString()}`);
+  return api.get(
+    `/api/admin/broadcast/analytics/summary?${queryParams.toString()}`
+  );
 };
 
 // Broadcast Files API methods (NEW)
@@ -782,7 +823,8 @@ export const getAllAdminFiles = (params = {}) => {
   const queryParams = new URLSearchParams();
   if (params.skip) queryParams.append("skip", params.skip);
   if (params.limit) queryParams.append("limit", params.limit);
-  if (params.security_level) queryParams.append("security_level", params.security_level);
+  if (params.security_level)
+    queryParams.append("security_level", params.security_level);
   return api.get(`/api/secure-files/admin/all-files?${queryParams.toString()}`);
 };
 
@@ -818,13 +860,136 @@ export const uploadEncaissementData = (file) => {
   });
 };
 
-export const getEncaissementOverview = () =>
-  api.get("/api/encaissement/overview");
-export const getEncaissementByOrganisation = () =>
-  api.get("/api/encaissement/by-organisation");
-export const getEncaissementByDate = () => api.get("/api/encaissement/by-date");
-export const getEncaissementByEncaisseRate = () =>
-  api.get("/api/encaissement/by-encaisse-rate");
+export const getEncaissementOverview = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/overview${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getEncaissementByOrganisation = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  if (filters.sort_by) params.append("sort_by", filters.sort_by);
+  if (filters.order) params.append("order", filters.order);
+  if (filters.limit) params.append("limit", filters.limit);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/by-organisation${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getEncaissementByDate = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/by-date${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getEncaissementByEncaisseRate = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/by-encaisse-rate${queryString ? `?${queryString}` : ""}`
+  );
+};
 
 export const getEncaissementChartData = (chartType) => {
   if (!chartType) return Promise.reject(new Error("Chart type is required"));
@@ -917,7 +1082,11 @@ export const getParkAnalyticsByDOT = (filters = {}) => {
 export const getParkAnalyticsAvailableFilters = () =>
   api.get("/api/park-analytics/filters");
 
-export const getParkAnalyticsPreviewData = (filters = {}, limit = 10, offset = 0) => {
+export const getParkAnalyticsPreviewData = (
+  filters = {},
+  limit = 10,
+  offset = 0
+) => {
   const params = new URLSearchParams({
     limit: limit.toString(),
     offset: offset.toString(),
@@ -926,7 +1095,28 @@ export const getParkAnalyticsPreviewData = (filters = {}, limit = 10, offset = 0
   return api.get(`/api/park-analytics/preview-data?${params.toString()}`);
 };
 
-export const exportParkAnalyticsData = (filters = {}, exportType = "normal", onDownloadProgress = null) => {
+export const getParkAnalyticsColumnValues = (column, filters = {}) => {
+  const params = new URLSearchParams({ column });
+  // Add filter parameters if provided
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      if (Array.isArray(value) && value.length > 0) {
+        params.append(key, value.join(","));
+      } else if (typeof value === "string" && value.trim() !== "") {
+        params.append(key, value);
+      }
+    }
+  });
+  return api.get(
+    `/api/park-analytics/preview-data/column-values?${params.toString()}`
+  );
+};
+
+export const exportParkAnalyticsData = (
+  filters = {},
+  exportType = "normal",
+  onDownloadProgress = null
+) => {
   // Extract format from filters if present, otherwise default to csv
   const format = filters.format || "csv";
   const { format: _, ...filterParams } = filters;
@@ -938,7 +1128,7 @@ export const exportParkAnalyticsData = (filters = {}, exportType = "normal", onD
   });
 
   const config = {
-    responseType: 'blob', // Important: tell axios we're expecting a blob
+    responseType: "blob", // Important: tell axios we're expecting a blob
   };
 
   if (onDownloadProgress) {
@@ -949,7 +1139,10 @@ export const exportParkAnalyticsData = (filters = {}, exportType = "normal", onD
 };
 
 // Start async export with progress tracking
-export const startParkAnalyticsExport = (filters = {}, exportType = "normal") => {
+export const startParkAnalyticsExport = (
+  filters = {},
+  exportType = "normal"
+) => {
   const format = filters.format || "csv";
   const { format: _, ...filterParams } = filters;
 
@@ -970,18 +1163,21 @@ export const getParkAnalyticsExportStatus = (taskId) => {
 // Download completed export file
 export const downloadParkAnalyticsExport = (taskId) => {
   return api.get(`/api/park-analytics/export-download/${taskId}`, {
-    responseType: 'blob',
+    responseType: "blob",
   });
 };
 
 // Revenue Analytics API methods
 export const getRevenueOverview = (params = {}) => {
-  console.log("🔍 [FRONTEND API] getRevenueOverview called with params:", params);
+  console.log(
+    "🔍 [FRONTEND API] getRevenueOverview called with params:",
+    params
+  );
   console.log("🔍 [FRONTEND API] cpt_comptable in params:", {
     value: params.cpt_comptable,
     type: typeof params.cpt_comptable,
     isArray: Array.isArray(params.cpt_comptable),
-    length: params.cpt_comptable?.length
+    length: params.cpt_comptable?.length,
   });
   const query = new URLSearchParams();
   if (params.org_name) {
@@ -997,7 +1193,10 @@ export const getRevenueOverview = (params = {}) => {
     ).forEach((v) => query.append("typ_fact", v));
   }
   if (params.cpt_comptable) {
-    console.log("🔍 [FRONTEND API] Adding cpt_comptable to query:", params.cpt_comptable);
+    console.log(
+      "🔍 [FRONTEND API] Adding cpt_comptable to query:",
+      params.cpt_comptable
+    );
     (Array.isArray(params.cpt_comptable)
       ? params.cpt_comptable
       : [params.cpt_comptable]
@@ -1032,10 +1231,13 @@ export const listRevenueJournals = (params = {}) => {
   if (params.cpt_comptable) query.append("cpt_comptable", params.cpt_comptable);
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
-  if (params.start_date_fact) query.append("start_date_fact", params.start_date_fact);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
   if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
-  if (params.taux_ca_min !== undefined) query.append("taux_ca_min", params.taux_ca_min);
-  if (params.taux_ca_max !== undefined) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.taux_ca_min !== undefined)
+    query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max !== undefined)
+    query.append("taux_ca_max", params.taux_ca_max);
   if (params.search) query.append("search", params.search);
   return api.get(`/api/revenue/list?${query.toString()}`);
 };
@@ -1194,8 +1396,8 @@ export const getRevenueFilters = async () => {
           { label: "50-75%", min: 50, max: 75 },
           { label: "75-100%", min: 75, max: 100 },
           { label: "100%+", min: 100, max: 999999 },
-        ]
-      }
+        ],
+      },
     };
   }
 };
@@ -1225,7 +1427,7 @@ export const startRevenueExport = (filters = {}, exportType = "both") => {
   const params = new URLSearchParams();
   params.append("format", format);
   params.append("export_type", exportType);
-  
+
   // Only add filter params that have values
   Object.keys(filterParams).forEach((key) => {
     const value = filterParams[key];
@@ -1234,7 +1436,10 @@ export const startRevenueExport = (filters = {}, exportType = "both") => {
     }
   });
 
-  console.log("🔍 [FRONTEND API] startRevenueExport - params:", params.toString());
+  console.log(
+    "🔍 [FRONTEND API] startRevenueExport - params:",
+    params.toString()
+  );
   return api.post(`/api/revenue/export-async?${params.toString()}`);
 };
 
@@ -1246,7 +1451,7 @@ export const getRevenueExportStatus = (taskId) => {
 // Download completed revenue export file
 export const downloadRevenueExport = (taskId) => {
   return api.get(`/api/revenue/export-download/${taskId}`, {
-    responseType: 'blob',
+    responseType: "blob",
   });
 };
 
@@ -1255,59 +1460,88 @@ export const getRevenuePreviewData = (filters = {}, limit = 10, offset = 0) => {
     limit: limit.toString(),
     offset: offset.toString(),
   });
-  
+
   // Add all column filters - support ALL columns
   const allColumns = [
-    "id", "file_upload_id", "dot_id", "org_name", "origine", "n_fact", "typ_fact",
-    "n_client", "client", "delai_paie", "devise", "cpt_comptable", 
-    "periode_de_facturation", "creer_par", "uom", "tax", "n_ligne", "memo_line_id",
-    "reference", "account_description_id", "revenue_objective_id"
+    "id",
+    "file_upload_id",
+    "dot_id",
+    "org_name",
+    "origine",
+    "n_fact",
+    "typ_fact",
+    "n_client",
+    "client",
+    "delai_paie",
+    "devise",
+    "cpt_comptable",
+    "periode_de_facturation",
+    "creer_par",
+    "uom",
+    "tax",
+    "n_ligne",
+    "memo_line_id",
+    "reference",
+    "account_description_id",
+    "revenue_objective_id",
   ];
-  
+
   allColumns.forEach((col) => {
     if (filters[col]) {
-      (Array.isArray(filters[col])
-        ? filters[col]
-        : [filters[col]]
-      ).forEach((v) => params.append(col, v));
+      (Array.isArray(filters[col]) ? filters[col] : [filters[col]]).forEach(
+        (v) => params.append(col, v)
+      );
     }
   });
-  
+
   // Date filters
   if (filters.start_date) params.append("start_date", filters.start_date);
   if (filters.end_date) params.append("end_date", filters.end_date);
-  if (filters.start_date_fact) params.append("start_date_fact", filters.start_date_fact);
-  if (filters.end_date_fact) params.append("end_date_fact", filters.end_date_fact);
-  
+  if (filters.start_date_fact)
+    params.append("start_date_fact", filters.start_date_fact);
+  if (filters.end_date_fact)
+    params.append("end_date_fact", filters.end_date_fact);
+
   // Numeric range filters
   if (filters.taux_ca_min) params.append("taux_ca_min", filters.taux_ca_min);
   if (filters.taux_ca_max) params.append("taux_ca_max", filters.taux_ca_max);
-  if (filters.chiffre_aff_exe_dzd_min) params.append("chiffre_aff_exe_dzd_min", filters.chiffre_aff_exe_dzd_min);
-  if (filters.chiffre_aff_exe_dzd_max) params.append("chiffre_aff_exe_dzd_max", filters.chiffre_aff_exe_dzd_max);
-  
+  if (filters.chiffre_aff_exe_dzd_min)
+    params.append("chiffre_aff_exe_dzd_min", filters.chiffre_aff_exe_dzd_min);
+  if (filters.chiffre_aff_exe_dzd_max)
+    params.append("chiffre_aff_exe_dzd_max", filters.chiffre_aff_exe_dzd_max);
+
   // Boolean filters - convert to string
   if (filters.termine_flag !== undefined) {
-    const boolVal = Array.isArray(filters.termine_flag) ? filters.termine_flag : [filters.termine_flag];
+    const boolVal = Array.isArray(filters.termine_flag)
+      ? filters.termine_flag
+      : [filters.termine_flag];
     boolVal.forEach((v) => {
-      if (v === "Oui" || v === true || v === "true") params.append("termine_flag", "true");
-      else if (v === "Non" || v === false || v === "false") params.append("termine_flag", "false");
+      if (v === "Oui" || v === true || v === "true")
+        params.append("termine_flag", "true");
+      else if (v === "Non" || v === false || v === "false")
+        params.append("termine_flag", "false");
     });
   }
   if (filters.is_anomaly !== undefined) {
-    const boolVal = Array.isArray(filters.is_anomaly) ? filters.is_anomaly : [filters.is_anomaly];
+    const boolVal = Array.isArray(filters.is_anomaly)
+      ? filters.is_anomaly
+      : [filters.is_anomaly];
     boolVal.forEach((v) => {
-      if (v === "Oui" || v === true || v === "true") params.append("is_anomaly", "true");
-      else if (v === "Non" || v === false || v === "false") params.append("is_anomaly", "false");
+      if (v === "Oui" || v === true || v === "true")
+        params.append("is_anomaly", "true");
+      else if (v === "Non" || v === false || v === "false")
+        params.append("is_anomaly", "false");
     });
   }
-  
+
   // Search
   if (filters.search) params.append("search", filters.search);
-  
+
   // Ordering
   if (filters.order_by) params.append("order_by", filters.order_by);
-  if (filters.order_direction) params.append("order_direction", filters.order_direction);
-  
+  if (filters.order_direction)
+    params.append("order_direction", filters.order_direction);
+
   return api.get(`/api/revenue/preview-data?${params.toString()}`);
 };
 
@@ -1315,26 +1549,36 @@ export const getRevenueColumnValues = (column) => {
   return api.get(`/api/revenue/preview-data/column-values?column=${column}`);
 };
 
-export const getRevenueObjectivesPreview = (filters = {}, limit = 10, offset = 0) => {
+export const getRevenueObjectivesPreview = (
+  filters = {},
+  limit = 10,
+  offset = 0
+) => {
   const params = new URLSearchParams({
     limit: limit.toString(),
     offset: offset.toString(),
   });
-  
+
   if (filters.dot_name) params.append("dot_name", filters.dot_name);
-  
+
   return api.get(`/api/revenue/preview-objectives?${params.toString()}`);
 };
 
-export const getAccountDescriptionsPreview = (filters = {}, limit = 10, offset = 0) => {
+export const getAccountDescriptionsPreview = (
+  filters = {},
+  limit = 10,
+  offset = 0
+) => {
   const params = new URLSearchParams({
     limit: limit.toString(),
     offset: offset.toString(),
   });
-  
+
   if (filters.search) params.append("search", filters.search);
-  
-  return api.get(`/api/revenue/preview-account-descriptions?${params.toString()}`);
+
+  return api.get(
+    `/api/revenue/preview-account-descriptions?${params.toString()}`
+  );
 };
 
 // ETL Processing API methods
@@ -1436,8 +1680,9 @@ export const getParkDataStats = () => {
 export const getRevenueObjectives = (params = {}) => {
   const queryParams = new URLSearchParams();
   if (params.dot_name) queryParams.append("dot_name", params.dot_name);
-  if (params.file_upload_id) queryParams.append("file_upload_id", params.file_upload_id);
-  
+  if (params.file_upload_id)
+    queryParams.append("file_upload_id", params.file_upload_id);
+
   const queryString = queryParams.toString();
   return api.get(
     `/api/revenue/objectives${queryString ? `?${queryString}` : ""}`
@@ -1451,10 +1696,12 @@ export const getRevenueObjective = (objectiveId) => {
 // Account Descriptions API methods
 export const getAccountDescriptions = (params = {}) => {
   const queryParams = new URLSearchParams();
-  if (params.cpt_comptable) queryParams.append("cpt_comptable", params.cpt_comptable);
-  if (params.file_upload_id) queryParams.append("file_upload_id", params.file_upload_id);
+  if (params.cpt_comptable)
+    queryParams.append("cpt_comptable", params.cpt_comptable);
+  if (params.file_upload_id)
+    queryParams.append("file_upload_id", params.file_upload_id);
   if (params.type_cpte) queryParams.append("type_cpte", params.type_cpte);
-  
+
   const queryString = queryParams.toString();
   return api.get(
     `/api/revenue/account-descriptions${queryString ? `?${queryString}` : ""}`
@@ -1469,18 +1716,18 @@ export const getAccountDescription = (accountId) => {
 export const getRevenueJournals = (params = {}) => {
   const queryParams = new URLSearchParams();
   if (params.org_name) queryParams.append("org_name", params.org_name);
-  if (params.file_upload_id) queryParams.append("file_upload_id", params.file_upload_id);
+  if (params.file_upload_id)
+    queryParams.append("file_upload_id", params.file_upload_id);
   if (params.n_fact) queryParams.append("n_fact", params.n_fact);
-  if (params.cpt_comptable) queryParams.append("cpt_comptable", params.cpt_comptable);
+  if (params.cpt_comptable)
+    queryParams.append("cpt_comptable", params.cpt_comptable);
   if (params.start_date) queryParams.append("start_date", params.start_date);
   if (params.end_date) queryParams.append("end_date", params.end_date);
   if (params.page) queryParams.append("page", params.page);
   if (params.page_size) queryParams.append("page_size", params.page_size);
-  
+
   const queryString = queryParams.toString();
-  return api.get(
-    `/api/revenue/journal${queryString ? `?${queryString}` : ""}`
-  );
+  return api.get(`/api/revenue/journal${queryString ? `?${queryString}` : ""}`);
 };
 
 export const getRevenueJournal = (journalId) => {
@@ -1499,11 +1746,15 @@ export const getEncaissementRecords = (params = {}) => {
   if (params.mois) query.append("mois", params.mois);
   if (params.n_fact) query.append("n_fact", params.n_fact);
   if (params.typ_fact) query.append("typ_fact", params.typ_fact);
-  if (params.date_fact_from) query.append("date_fact_from", params.date_fact_from);
+  if (params.date_fact_from)
+    query.append("date_fact_from", params.date_fact_from);
   if (params.date_fact_to) query.append("date_fact_to", params.date_fact_to);
-  if (params.is_duplicate !== undefined) query.append("is_duplicate", params.is_duplicate);
-  if (params.is_anomaly !== undefined) query.append("is_anomaly", params.is_anomaly);
-  if (params.file_upload_id) query.append("file_upload_id", params.file_upload_id);
+  if (params.is_duplicate !== undefined)
+    query.append("is_duplicate", params.is_duplicate);
+  if (params.is_anomaly !== undefined)
+    query.append("is_anomaly", params.is_anomaly);
+  if (params.file_upload_id)
+    query.append("file_upload_id", params.file_upload_id);
   if (params.sort_by) query.append("sort_by", params.sort_by);
   if (params.sort_order) query.append("sort_order", params.sort_order);
   return api.get(`/api/encaissement/records?${query.toString()}`);
@@ -1518,12 +1769,12 @@ export const getEncaissementDashboardOverview = () =>
   api.get("/api/encaissement/dashboard/overview");
 
 export const getEncaissementMonthlyAggregates = (year) => {
-  const params = year ? `?year=${year}` : '';
+  const params = year ? `?year=${year}` : "";
   return api.get(`/api/encaissement/dashboard/monthly-aggregates${params}`);
 };
 
 export const getEncaissementMonthlyDistribution = (year) => {
-  const params = year ? `?year=${year}` : '';
+  const params = year ? `?year=${year}` : "";
   return api.get(`/api/encaissement/dashboard/monthly-distribution${params}`);
 };
 
@@ -1536,7 +1787,8 @@ export const getEncaissementAnomalies = (params = {}) => {
   if (params.page_size) query.append("page_size", params.page_size);
   if (params.organisation) query.append("organisation", params.organisation);
   if (params.anomaly_type) query.append("anomaly_type", params.anomaly_type);
-  if (params.file_upload_id) query.append("file_upload_id", params.file_upload_id);
+  if (params.file_upload_id)
+    query.append("file_upload_id", params.file_upload_id);
   return api.get(`/api/encaissement/anomalies?${query.toString()}`);
 };
 
@@ -1544,7 +1796,9 @@ export const getEncaissementAnomalyStatistics = () =>
   api.get("/api/encaissement/anomalies/statistics");
 
 export const getEncaissementStatisticsByOrganisation = (organisation) => {
-  const params = organisation ? `?organisation=${encodeURIComponent(organisation)}` : '';
+  const params = organisation
+    ? `?organisation=${encodeURIComponent(organisation)}`
+    : "";
   return api.get(`/api/encaissement/statistics/by-organisation${params}`);
 };
 
@@ -1556,21 +1810,143 @@ export const getEncaissementAvailableOrganisations = () =>
 
 export const exportEncaissementRecords = (params = {}) => {
   const query = new URLSearchParams();
-  if (params.organisation) query.append("organisation", params.organisation);
+
+  // Organisation filter - support both array and comma-separated string
+  if (params.organisation) {
+    if (Array.isArray(params.organisation)) {
+      params.organisation.forEach((org) => query.append("organisation", org));
+    } else {
+      query.append("organisation", params.organisation);
+    }
+  }
+
+  // Date filters - prefer date_fact_start/end, fallback to date_fact_from/to
+  if (params.date_fact_start) {
+    query.append("date_fact_start", params.date_fact_start);
+  } else if (params.date_fact_from) {
+    query.append("date_fact_from", params.date_fact_from);
+  }
+
+  if (params.date_fact_end) {
+    query.append("date_fact_end", params.date_fact_end);
+  } else if (params.date_fact_to) {
+    query.append("date_fact_to", params.date_fact_to);
+  }
+
+  // Month filter
   if (params.mois) query.append("mois", params.mois);
-  if (params.date_fact_from) query.append("date_fact_from", params.date_fact_from);
-  if (params.date_fact_to) query.append("date_fact_to", params.date_fact_to);
-  if (params.include_duplicates !== undefined) query.append("include_duplicates", params.include_duplicates);
-  if (params.include_anomalies !== undefined) query.append("include_anomalies", params.include_anomalies);
-  query.append("format", params.format || "json");
+
+  // Rate filters
+  if (
+    params.taux_encaissement_min !== undefined &&
+    params.taux_encaissement_min !== ""
+  ) {
+    query.append("taux_encaissement_min", params.taux_encaissement_min);
+  }
+  if (
+    params.taux_encaissement_max !== undefined &&
+    params.taux_encaissement_max !== ""
+  ) {
+    query.append("taux_encaissement_max", params.taux_encaissement_max);
+  }
+
+  // Search filter
+  if (params.search) query.append("search", params.search);
+
+  // Other filters
+  if (params.include_duplicates !== undefined)
+    query.append("include_duplicates", params.include_duplicates);
+  if (params.include_anomalies !== undefined)
+    query.append("include_anomalies", params.include_anomalies);
+
+  // Format
+  query.append("format", params.format || "xlsx");
+  const format = (params.format || "xlsx").toLowerCase();
+
   return api.get(`/api/encaissement/export?${query.toString()}`, {
-    responseType: params.format === "csv" ? "blob" : undefined,
+    responseType: format === "csv" || format === "xlsx" ? "blob" : undefined,
   });
 };
 
 export const getEncaissementDuplicateGroups = (compositeKey) => {
-  const params = compositeKey ? `?composite_key=${encodeURIComponent(compositeKey)}` : '';
+  const params = compositeKey
+    ? `?composite_key=${encodeURIComponent(compositeKey)}`
+    : "";
   return api.get(`/api/encaissement/duplicates/groups${params}`);
+};
+
+// ===================================================================
+// Encaissement AR DOT - Enhanced Visualization Endpoints
+// ===================================================================
+
+/**
+ * Get monthly chart data for combined histogram (Encaissement & Montant TTC by month)
+ */
+export const getEncaissementMonthlyChartData = (filters = {}) => {
+  const query = new URLSearchParams();
+  if (filters.organisations)
+    query.append("organisations", filters.organisations);
+  if (filters.mois) query.append("mois", filters.mois);
+  if (filters.taux_min !== undefined)
+    query.append("taux_min", filters.taux_min);
+  if (filters.taux_max !== undefined)
+    query.append("taux_max", filters.taux_max);
+  return api.get(`/api/encaissement/monthly-chart-data?${query.toString()}`);
+};
+
+/**
+ * Get monthly pie data for 3D pie chart (Encaissement by month)
+ */
+export const getEncaissementMonthlyPieData = (filters = {}) => {
+  const query = new URLSearchParams();
+  if (filters.organisations)
+    query.append("organisations", filters.organisations);
+  if (filters.mois) query.append("mois", filters.mois);
+  if (filters.taux_min !== undefined)
+    query.append("taux_min", filters.taux_min);
+  if (filters.taux_max !== undefined)
+    query.append("taux_max", filters.taux_max);
+  return api.get(`/api/encaissement/monthly-pie-data?${query.toString()}`);
+};
+
+/**
+ * Get DOT and Taux d'encaissement data for histogram
+ */
+export const getEncaissementDotTauxData = (filters = {}) => {
+  const query = new URLSearchParams();
+  if (filters.organisations)
+    query.append("organisations", filters.organisations);
+  if (filters.mois) query.append("mois", filters.mois);
+  if (filters.taux_min !== undefined)
+    query.append("taux_min", filters.taux_min);
+  if (filters.taux_max !== undefined)
+    query.append("taux_max", filters.taux_max);
+  return api.get(`/api/encaissement/dot-taux-data?${query.toString()}`);
+};
+
+/**
+ * Get available filters for Encaissement AR DOT
+ */
+export const getEncaissementFilters = () =>
+  api.get("/api/encaissement/filters");
+
+/**
+ * Export Encaissement AR DOT data with French formatting
+ */
+export const exportEncaissementARDot = (filters = {}, format = "xlsx") => {
+  const query = new URLSearchParams();
+  if (filters.organisations)
+    query.append("organisations", filters.organisations);
+  if (filters.mois) query.append("mois", filters.mois);
+  if (filters.taux_min !== undefined)
+    query.append("taux_min", filters.taux_min);
+  if (filters.taux_max !== undefined)
+    query.append("taux_max", filters.taux_max);
+  query.append("format", format);
+
+  return api.get(`/api/encaissement/export?${query.toString()}`, {
+    responseType: "blob",
+  });
 };
 
 // ============================================================================
@@ -1590,7 +1966,8 @@ export const getCreanceRecords = (params = {}) => {
   if (params.cust_lev1) query.append("cust_lev1", params.cust_lev1);
   if (params.cust_lev2) query.append("cust_lev2", params.cust_lev2);
   if (params.cust_lev3) query.append("cust_lev3", params.cust_lev3);
-  if (params.file_upload_id) query.append("file_upload_id", params.file_upload_id);
+  if (params.file_upload_id)
+    query.append("file_upload_id", params.file_upload_id);
   if (params.sort_by) query.append("sort_by", params.sort_by);
   if (params.sort_order) query.append("sort_order", params.sort_order);
   return api.get(`/api/creance/records?${query.toString()}`);
@@ -1617,7 +1994,7 @@ export const getCreanceByCustLev2Aggregates = () =>
   api.get("/api/creance/dashboard/by-cust-lev2");
 
 export const getCreanceStatisticsByDot = (dot) => {
-  const params = dot ? `?dot=${encodeURIComponent(dot)}` : '';
+  const params = dot ? `?dot=${encodeURIComponent(dot)}` : "";
   return api.get(`/api/creance/statistics/by-dot${params}`);
 };
 

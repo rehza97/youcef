@@ -610,19 +610,34 @@ async def export_records(
 
             output = io.StringIO()
             if records:
-                # Get column names from first record
+                # Include ALL columns from the model
                 columns = [
                     'id', 'organisation', 'source', 'n_fact', 'typ_fact', 'date_fact',
-                    'mois', 'client', 'n_client', 'montant_ht', 'montant_taxe',
-                    'montant_ttc', 'encaissement', 'n_rglt', 'date_rglt',
-                    'taux_encaissement', 'montant_restant', 'is_duplicate', 'is_anomaly'
+                    'mois', 'client', 'n_client', 'obj_fact', 'periode', 'ref',
+                    'termine_flag', 'creer_par', 'montant_ht', 'montant_taxe',
+                    'montant_ttc', 'chiffre_aff_exe', 'encaissement', 'n_rglt', 'date_rglt',
+                    'facture_avoir_annulation', 'taux_encaissement', 'montant_restant',
+                    'composite_key', 'is_duplicate', 'is_anomaly', 'anomaly_reason',
+                    'created_at', 'updated_at'
                 ]
 
                 writer = csv.DictWriter(output, fieldnames=columns)
                 writer.writeheader()
 
                 for record in records:
-                    row = {col: getattr(record, col, None) for col in columns}
+                    row = {}
+                    for col in columns:
+                        value = getattr(record, col, None)
+                        # Format dates and datetimes
+                        if value and col in ['date_fact', 'date_rglt']:
+                            value = value.strftime("%Y-%m-%d") if hasattr(value, 'strftime') else value
+                        elif value and col in ['created_at', 'updated_at']:
+                            value = value.strftime("%Y-%m-%d %H:%M:%S") if hasattr(value, 'strftime') else value
+                        # Format numeric values
+                        elif value and col in ['montant_ht', 'montant_taxe', 'montant_ttc', 'chiffre_aff_exe',
+                                               'encaissement', 'taux_encaissement', 'montant_restant']:
+                            value = float(value) if value is not None else None
+                        row[col] = value
                     writer.writerow(row)
 
             output.seek(0)
@@ -632,7 +647,7 @@ async def export_records(
                 headers={"Content-Disposition": f"attachment; filename=encaissement_export_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"}
             )
         else:
-            # Return JSON format
+            # Return JSON format with ALL columns
             return {
                 "success": True,
                 "total_records": len(records),
@@ -647,16 +662,27 @@ async def export_records(
                         "mois": record.mois,
                         "client": record.client,
                         "n_client": record.n_client,
+                        "obj_fact": record.obj_fact,
+                        "periode": record.periode,
+                        "ref": record.ref,
+                        "termine_flag": record.termine_flag,
+                        "creer_par": record.creer_par,
                         "montant_ht": float(record.montant_ht) if record.montant_ht else None,
                         "montant_taxe": float(record.montant_taxe) if record.montant_taxe else None,
                         "montant_ttc": float(record.montant_ttc) if record.montant_ttc else None,
+                        "chiffre_aff_exe": float(record.chiffre_aff_exe) if record.chiffre_aff_exe else None,
                         "encaissement": float(record.encaissement) if record.encaissement else None,
                         "n_rglt": record.n_rglt,
                         "date_rglt": str(record.date_rglt) if record.date_rglt else None,
+                        "facture_avoir_annulation": record.facture_avoir_annulation,
                         "taux_encaissement": float(record.taux_encaissement) if record.taux_encaissement else None,
                         "montant_restant": float(record.montant_restant) if record.montant_restant else None,
+                        "composite_key": record.composite_key,
                         "is_duplicate": record.is_duplicate,
-                        "is_anomaly": record.is_anomaly
+                        "is_anomaly": record.is_anomaly,
+                        "anomaly_reason": record.anomaly_reason,
+                        "created_at": str(record.created_at) if record.created_at else None,
+                        "updated_at": str(record.updated_at) if record.updated_at else None
                     }
                     for record in records
                 ]

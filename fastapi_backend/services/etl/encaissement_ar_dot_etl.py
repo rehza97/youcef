@@ -703,6 +703,7 @@ class EncaissementARDotETL(BaseETLProcessor):
         """
         from models.encaissement import EncaissementARDot, EncaissementAnomaly, EncaissementAggregateView
         from models.dot import DOT
+        from services.dot_service import DOTService
 
         logger.info(f"💾 Saving Encaissement AR DOT data to database...")
 
@@ -713,24 +714,40 @@ class EncaissementARDotETL(BaseETLProcessor):
         }
 
         try:
-            # Get DOT mapping for RBAC (module-specific)
+            # Get or create DOTs for all unique organisations (like Park and Revenue modules)
             from models.dot import MODULE_ENCAISSEMENT_AR_DOT
-            dot_mapping = {}
-            dots = db_session.query(DOT).filter(DOT.module == MODULE_ENCAISSEMENT_AR_DOT).all()
-            for dot in dots:
-                dot_mapping[dot.name.upper()] = dot.id
+            dot_mapping = {}  # Cache: org_name -> dot_id
 
-            logger.info(f"📍 Found {len(dot_mapping)} DOTs for module '{MODULE_ENCAISSEMENT_AR_DOT}'")
+            # Get unique organisations from clean data
+            unique_orgs = clean_df['organisation'].dropna().unique()
+            logger.info(f"📍 Found {len(unique_orgs)} unique organisations")
+
+            # Create or get DOT for each organisation
+            for org_name in unique_orgs:
+                if not org_name or pd.isna(org_name):
+                    continue
+
+                org_name_str = str(org_name).strip()
+                if not org_name_str:
+                    continue
+
+                # Get or create DOT using DOTService (same as Park and Revenue)
+                dot = DOTService.get_or_create_dot(
+                    db=db_session,
+                    name=org_name_str,
+                    description=f"DOT for {org_name_str} region",
+                    module=MODULE_ENCAISSEMENT_AR_DOT
+                )
+                dot_mapping[org_name_str.upper()] = dot.id
+                logger.debug(f"✅ DOT '{org_name_str}' → ID: {dot.id}")
+
+            logger.info(f"✅ Created/retrieved {len(dot_mapping)} DOTs for module '{MODULE_ENCAISSEMENT_AR_DOT}'")
 
             # Save main records
             for idx, row in clean_df.iterrows():
-                # Match DOT
-                org_name = str(row.get('organisation', '')).upper()
-                matched_dot_id = None
-                for dot_name, dot_id in dot_mapping.items():
-                    if dot_name in org_name or org_name in dot_name:
-                        matched_dot_id = dot_id
-                        break
+                # Get DOT ID from mapping
+                org_name = str(row.get('organisation', '')).strip()
+                matched_dot_id = dot_mapping.get(org_name.upper())
 
                 # Create record
                 record = EncaissementARDot(
@@ -768,14 +785,29 @@ class EncaissementARDotETL(BaseETLProcessor):
 
             # Save anomalies
             if not anomalies_df.empty:
+                # Get unique organisations from anomalies that aren't in the main mapping
+                anomaly_orgs = anomalies_df['organisation'].dropna().unique()
+                for org_name in anomaly_orgs:
+                    if not org_name or pd.isna(org_name):
+                        continue
+
+                    org_name_str = str(org_name).strip()
+                    if not org_name_str or org_name_str.upper() in dot_mapping:
+                        continue
+
+                    # Create DOT for anomaly organisations
+                    dot = DOTService.get_or_create_dot(
+                        db=db_session,
+                        name=org_name_str,
+                        description=f"DOT for {org_name_str} region",
+                        module=MODULE_ENCAISSEMENT_AR_DOT
+                    )
+                    dot_mapping[org_name_str.upper()] = dot.id
+
                 for idx, row in anomalies_df.iterrows():
-                    # Match DOT
-                    org_name = str(row.get('organisation', '')).upper()
-                    matched_dot_id = None
-                    for dot_name, dot_id in dot_mapping.items():
-                        if dot_name in org_name or org_name in dot_name:
-                            matched_dot_id = dot_id
-                            break
+                    # Get DOT ID from mapping
+                    org_name = str(row.get('organisation', '')).strip()
+                    matched_dot_id = dot_mapping.get(org_name.upper())
 
                     anomaly = EncaissementAnomaly(
                         file_upload_id=file_upload_id,
@@ -810,13 +842,9 @@ class EncaissementARDotETL(BaseETLProcessor):
 
             if 'by_dot' in result.summary_metrics:
                 for dot_data in result.summary_metrics['by_dot']:
-                    # Match DOT
-                    org_name = str(dot_data.get('organisation', '')).upper()
-                    matched_dot_id = None
-                    for dot_name, dot_id in dot_mapping.items():
-                        if dot_name in org_name or org_name in dot_name:
-                            matched_dot_id = dot_id
-                            break
+                    # Get DOT ID from mapping
+                    org_name = str(dot_data.get('organisation', '')).strip()
+                    matched_dot_id = dot_mapping.get(org_name.upper())
 
                     aggregate = EncaissementAggregateView(
                         file_upload_id=file_upload_id,
