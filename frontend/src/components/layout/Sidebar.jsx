@@ -33,11 +33,11 @@ const Sidebar = () => {
       href: "/encaissement-ar-dot",
       icon: BarChart3,
     },
-    {
-      name: "Créance Périodique DOT",
-      href: "/creance-periodique-dot",
-      icon: BarChart3,
-    },
+    // {
+    //   name: "Créance Périodique DOT",
+    //   href: "/creance-periodique-dot",
+    //   icon: BarChart3,
+    // },
     {
       name: "Gestion DOT",
       href: "/dot-management",
