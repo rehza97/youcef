@@ -65,9 +65,10 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { handleApiError } from "../../lib/error-handler";
@@ -382,6 +383,7 @@ const EncaissementPage = () => {
     search: "",
     date_from: "",
     date_to: "",
+    include_exclusion_2b: false, // Exclude 2B records by default (like anomalies)
   });
 
   const debouncedSearch = useDebounce(filters.search, 500);
@@ -404,6 +406,9 @@ const EncaissementPage = () => {
             // Convert array to comma-separated string for API
             filterParams[key] = value.join(",");
           } else if (typeof value === "string" && value.trim() !== "") {
+            filterParams[key] = value;
+          } else if (typeof value === "boolean") {
+            // Include boolean values (e.g., include_exclusion_2b)
             filterParams[key] = value;
           }
         });
@@ -523,6 +528,9 @@ const EncaissementPage = () => {
             filterParams[key] = value.join(",");
           } else if (typeof value === "string" && value.trim() !== "") {
             filterParams[key] = value;
+          } else if (typeof value === "boolean") {
+            // Include boolean values (e.g., include_exclusion_2b)
+            filterParams[key] = value;
           }
         });
 
@@ -579,6 +587,9 @@ const EncaissementPage = () => {
         if (Array.isArray(value) && value.length > 0) {
           filterParams[key] = value.join(",");
         } else if (typeof value === "string" && value.trim() !== "") {
+          filterParams[key] = value;
+        } else if (typeof value === "boolean") {
+          // Include boolean values (e.g., include_exclusion_2b)
           filterParams[key] = value;
         }
       });
@@ -877,7 +888,7 @@ const EncaissementPage = () => {
     };
   }, [exportProgress.taskId, subscribeTask]);
 
-  const exportData = async (format = "excel") => {
+  const exportData = async (format = "excel", exportType = "normal") => {
     if (!validateDateRange()) return;
 
     try {
@@ -894,10 +905,18 @@ const EncaissementPage = () => {
       });
       exportFilters.format = format;
 
-      console.log("🚀 Starting async export with filters:", exportFilters);
+      console.log(
+        "🚀 Starting async export with filters:",
+        exportFilters,
+        "type:",
+        exportType
+      );
 
-      // Start async export with "both" mode to get normal + anomalies
-      const response = await startParkAnalyticsExport(exportFilters, "both");
+      // Start async export with specified type: normal, anomalies, 2b, or all
+      const response = await startParkAnalyticsExport(
+        exportFilters,
+        exportType
+      );
 
       const taskId = response.data.task_id;
 
@@ -1036,22 +1055,76 @@ const EncaissementPage = () => {
             />
             Actualiser
           </Button>
-          <Button
-            onClick={() => exportData("csv")}
-            disabled={exporting}
-            className="bg-green-600 hover:bg-green-700"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            CSV
-          </Button>
-          <Button
-            onClick={() => exportData("excel")}
-            disabled={exporting}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Excel
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                disabled={exporting}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Exporter
+                {exporting && <Loader2 className="h-4 w-4 ml-2 animate-spin" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>Données Normales</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => exportData("csv", "normal")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                CSV - Données Normales
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => exportData("excel", "normal")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Excel - Données Normales
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Anomalies</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => exportData("csv", "anomalies")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                CSV - Anomalies
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => exportData("excel", "anomalies")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Excel - Anomalies
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Facturation Groupée (2B)</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => exportData("csv", "2b")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                CSV - Facturation 2B
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => exportData("excel", "2b")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Excel - Facturation 2B
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Tout Exporter (ZIP)</DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => exportData("excel", "all")}
+                disabled={exporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Tout (Normal + Anomalies + 2B)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -1445,7 +1518,11 @@ const EncaissementPage = () => {
                     {Object.entries(filters).map(([key, value]) => {
                       const isActive = Array.isArray(value)
                         ? value.length > 0
-                        : value && value.trim() !== "";
+                        : typeof value === "string"
+                        ? value.trim() !== ""
+                        : typeof value === "boolean"
+                        ? value === true
+                        : value != null && value !== "";
 
                       if (isActive) {
                         const labels = {

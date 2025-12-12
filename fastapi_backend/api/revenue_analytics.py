@@ -37,6 +37,92 @@ export_tasks = {}
 
 
 # ============================================================================
+# Helper Functions
+# ============================================================================
+
+def apply_revenue_filters(
+    query,
+    org_name: Optional[List[str]] = None,
+    typ_fact: Optional[List[str]] = None,
+    cpt_comptable: Optional[List[str]] = None,
+    start_date: Optional[str] = None,  # Accept string for flexible parsing
+    end_date: Optional[str] = None,  # Accept string for flexible parsing
+    start_date_fact: Optional[str] = None,  # Accept string for flexible parsing
+    end_date_fact: Optional[str] = None,  # Accept string for flexible parsing
+    search: Optional[str] = None
+):
+    """
+    Apply all common filters to a revenue journal query
+
+    This ensures consistent filtering across all endpoints
+
+    Note: taux_ca_min/max filters removed since individual achievement rates
+    are no longer calculated (they're only calculated at aggregate levels)
+
+    Date parameters accept both YYYY-MM-DD and YYYY-MM formats
+    """
+    from calendar import monthrange
+
+    # Apply org_name filter
+    if org_name:
+        query = query.filter(RevenueJournal.org_name.in_(org_name))
+
+    # Apply typ_fact filter
+    if typ_fact:
+        query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
+
+    # Apply cpt_comptable filter
+    if cpt_comptable:
+        query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
+
+    # Apply Date GL filters (accept YYYY-MM or YYYY-MM-DD format)
+    if start_date:
+        # If format is YYYY-MM, add -01 to make it YYYY-MM-01
+        if len(start_date) == 7:  # YYYY-MM format
+            start_date = f"{start_date}-01"
+        query = query.filter(RevenueJournal.date_gl >= start_date)
+    if end_date:
+        # If format is YYYY-MM, calculate last day of month
+        if len(end_date) == 7:  # YYYY-MM format
+            year, month = map(int, end_date.split('-'))
+            last_day = monthrange(year, month)[1]
+            end_date = f"{end_date}-{last_day:02d}"
+        query = query.filter(RevenueJournal.date_gl <= end_date)
+
+    # Apply Date Fact filters (accept YYYY-MM or YYYY-MM-DD format)
+    if start_date_fact:
+        # If format is YYYY-MM, add -01 to make it YYYY-MM-01
+        if len(start_date_fact) == 7:  # YYYY-MM format
+            start_date_fact = f"{start_date_fact}-01"
+        query = query.filter(RevenueJournal.date_fact >= start_date_fact)
+    if end_date_fact:
+        # If format is YYYY-MM, calculate last day of month
+        if len(end_date_fact) == 7:  # YYYY-MM format
+            year, month = map(int, end_date_fact.split('-'))
+            last_day = monthrange(year, month)[1]
+            end_date_fact = f"{end_date_fact}-{last_day:02d}"
+        query = query.filter(RevenueJournal.date_fact <= end_date_fact)
+
+    # Apply search filter (searches across multiple fields)
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(
+            or_(
+                RevenueJournal.org_name.ilike(search_term),
+                RevenueJournal.n_fact.ilike(search_term),
+                RevenueJournal.client.ilike(search_term),
+                RevenueJournal.n_client.ilike(search_term),
+                RevenueJournal.cpt_comptable.ilike(search_term),
+                RevenueJournal.description_ligne_de_produit.ilike(search_term),
+                RevenueJournal.obj_fact.ilike(search_term),
+                RevenueJournal.reference.ilike(search_term)
+            )
+        )
+
+    return query
+
+
+# ============================================================================
 # Pydantic Schemas (import from revenue.py or define here)
 # ============================================================================
 
@@ -149,8 +235,13 @@ async def get_revenue_overview(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    search: Optional[str] = None
 ):
     """
     Get overview of revenue data with aggregations
@@ -170,41 +261,37 @@ async def get_revenue_overview(
         if accessible_dot_ids:
             query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
-        # Apply filters
-        if org_name:
-            query = query.filter(RevenueJournal.org_name.in_(org_name))
-        if typ_fact:
-            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
-        if cpt_comptable:
-            # Filter directly on revenue_journal.cpt_comptable
-            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
-            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
-
-        if start_date:
-            query = query.filter(RevenueJournal.date_gl >= start_date)
-
-        if end_date:
-            query = query.filter(RevenueJournal.date_gl <= end_date)
+        # Apply all filters using helper function
+        query = apply_revenue_filters(
+            query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
 
         # Total records
         total_records = query.count()
 
-        # Create a subquery with explicit select()
-        filtered_ids = query.with_entities(RevenueJournal.id).subquery()
+        # Create a query for filtered IDs
+        filtered_ids_query = query.with_entities(RevenueJournal.id)
 
         # Total revenue
         total_revenue = db.query(
             func.sum(RevenueJournal.chiffre_aff_exe_dzd)
         ).filter(RevenueJournal.id.in_(
-            db.query(filtered_ids.c.id)
+            filtered_ids_query
         )).scalar() or 0.0
 
         # Total revenue TTC
         total_revenue_ttc = db.query(
             func.sum(RevenueJournal.chiffre_aff_exe_dzd_ttc)
         ).filter(RevenueJournal.id.in_(
-            db.query(filtered_ids.c.id)
+            filtered_ids_query
         )).scalar() or 0.0
 
         # By Org Name
@@ -212,7 +299,7 @@ async def get_revenue_overview(
             RevenueJournal.org_name,
             func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total')
         ).filter(RevenueJournal.id.in_(
-            db.query(filtered_ids.c.id)
+            filtered_ids_query
         )).group_by(RevenueJournal.org_name).all()
 
         by_org_name = {row.org_name or "Unknown": float(
@@ -223,7 +310,7 @@ async def get_revenue_overview(
             func.date_trunc('month', RevenueJournal.date_gl).label('month'),
             func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total')
         ).filter(RevenueJournal.id.in_(
-            db.query(filtered_ids.c.id)
+            filtered_ids_query
         )).group_by('month').all()
 
         by_month = {str(row.month): float(row.total or 0)
@@ -316,10 +403,10 @@ async def get_revenue_preview_data(
     account_description_id: Optional[List[str]] = Query(None),
     revenue_objective_id: Optional[List[str]] = Query(None),
     # Date filters
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    start_date_fact: Optional[date] = None,
-    end_date_fact: Optional[date] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
     # Numeric range filters
     taux_ca_min: Optional[float] = None,
     taux_ca_max: Optional[float] = None,
@@ -820,8 +907,13 @@ async def get_revenue_by_org(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    search: Optional[str] = None
 ):
     """
     Get revenue data grouped by organization (DOT)
@@ -831,62 +923,102 @@ async def get_revenue_by_org(
         current_user, db, "can_view_analytics")
 
     try:
-        query = db.query(
-            RevenueJournal.org_name,
-            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label(
-                'total_revenue'),
-            func.avg(RevenueJournal.taux_realisation_ca).label(
-                'avg_achievement'),
-            func.count(RevenueJournal.id).label('record_count')
-        )
+        # Build base query for filtering (before aggregation)
+        base_query = db.query(RevenueJournal)
 
         # Apply DOT filtering based on module-specific access
         accessible_dot_ids = DOTService.get_user_accessible_dots(
             db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
         )
         if accessible_dot_ids:
-            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+            base_query = base_query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
-        # Apply filters
-        if org_name:
-            query = query.filter(RevenueJournal.org_name.in_(org_name))
-        if typ_fact:
-            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
-        if cpt_comptable:
-            # Filter directly on revenue_journal.cpt_comptable
-            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
-            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
-        if start_date:
-            query = query.filter(RevenueJournal.date_gl >= start_date)
-        if end_date:
-            query = query.filter(RevenueJournal.date_gl <= end_date)
+        # Apply all filters using helper function
+        base_query = apply_revenue_filters(
+            base_query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
+
+        # Build aggregated query from filtered base
+        # Note: achievement_rate is now calculated per DOT as (Total CA / Objectif C.A) * 100
+        # instead of averaging individual taux_realisation_ca values
+        query = db.query(
+            RevenueJournal.org_name,
+            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label(
+                'total_revenue'),
+            func.count(RevenueJournal.id).label('record_count')
+        ).filter(RevenueJournal.id.in_(
+            base_query.with_entities(RevenueJournal.id)
+        ))
 
         results = query.group_by(
             RevenueJournal.org_name).order_by(func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
 
-        # Get objectives
+        # Get all objectives - ensure we have objectives for all DOTs
         objectives_dict = {}
         objectives = db.query(RevenueObjective).all()
         for obj in objectives:
             # Use normalized dot_name for consistent matching
             from services.revenue_processing_helpers import RevenueProcessingHelpers
             normalized_dot_name = RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name)
-            objectives_dict[normalized_dot_name] = float(obj.objectif_ca or 0)
+            objectives_dict[normalized_dot_name] = {
+                'value': float(obj.objectif_ca or 0),
+                'original_name': obj.dot_name  # Keep original name for reference
+            }
 
+        # Build response from revenue journal results
         response = []
+        org_names_in_results = set()
         for row in results:
             # Normalize org_name for consistent objective lookup
             from services.revenue_processing_helpers import RevenueProcessingHelpers
             normalized_org_name = RevenueProcessingHelpers.clean_org_name_for_matching(row.org_name or "")
+            org_names_in_results.add(normalized_org_name)
+            
+            objective_data = objectives_dict.get(normalized_org_name, {})
+            objective_value = objective_data.get('value') if isinstance(objective_data, dict) else objective_data
+            
+            # Calculate achievement rate per DOT: (Total CA / Objectif C.A) * 100
+            total_revenue = float(row.total_revenue or 0)
+            achievement_rate = 0.0
+            if objective_value and objective_value > 0:
+                achievement_rate = (total_revenue / objective_value) * 100
+            elif total_revenue > 0:
+                # If there's revenue but no objective, achievement rate is undefined
+                # Use 0 or could be set to None
+                achievement_rate = 0.0
             
             response.append(RevenueByOrgResponse(
                 org_name=row.org_name or "Unknown",
-                total_revenue=float(row.total_revenue or 0),
-                achievement_rate=float(row.avg_achievement or 0),
-                objective=objectives_dict.get(normalized_org_name),
+                total_revenue=total_revenue,
+                achievement_rate=achievement_rate,  # Calculated per DOT: (CA / Objectif) * 100
+                objective=objective_value,
                 record_count=int(row.record_count)
             ))
+
+        # Also include DOTs that have objectives but no revenue data yet
+        # This ensures all 60 DOTs with objectives appear in the chart
+        for normalized_name, obj_data in objectives_dict.items():
+            if normalized_name not in org_names_in_results:
+                # This DOT has an objective but no revenue journal entries
+                original_name = obj_data.get('original_name', normalized_name)
+                response.append(RevenueByOrgResponse(
+                    org_name=original_name,
+                    total_revenue=0.0,
+                    achievement_rate=0.0,  # No achievement rate if no revenue
+                    objective=obj_data.get('value', 0),
+                    record_count=0
+                ))
+
+        # Sort by achievement rate descending (DOTs with no revenue will be at the bottom)
+        response.sort(key=lambda x: x.achievement_rate or 0, reverse=True)
 
         return response
 
@@ -900,9 +1032,15 @@ async def get_revenue_by_account(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     org_name: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    search: Optional[str] = None
 ):
     """
     Get revenue data grouped by account (Cpt Comptable)
@@ -912,32 +1050,38 @@ async def get_revenue_by_account(
         current_user, db, "can_view_analytics")
 
     try:
-        query = db.query(
-            RevenueJournal.cpt_comptable,
-            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label(
-                'total_revenue'),
-            func.count(RevenueJournal.id).label('record_count')
-        )
+        # Build base query for filtering (before aggregation)
+        base_query = db.query(RevenueJournal)
 
         # Apply DOT filtering based on module-specific access
         accessible_dot_ids = DOTService.get_user_accessible_dots(
             db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
         )
         if accessible_dot_ids:
-            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+            base_query = base_query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
-        # Apply filters
-        if org_name:
-            query = query.filter(RevenueJournal.org_name.in_(org_name))
-        if cpt_comptable:
-            # Filter directly on revenue_journal.cpt_comptable
-            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
-            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
-        if start_date:
-            query = query.filter(RevenueJournal.date_gl >= start_date)
-        if end_date:
-            query = query.filter(RevenueJournal.date_gl <= end_date)
+        # Apply all filters using helper function
+        base_query = apply_revenue_filters(
+            base_query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
+
+        # Build aggregated query from filtered base
+        query = db.query(
+            RevenueJournal.cpt_comptable,
+            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label(
+                'total_revenue'),
+            func.count(RevenueJournal.id).label('record_count')
+        ).filter(RevenueJournal.id.in_(
+            base_query.with_entities(RevenueJournal.id)
+        ))
 
         results = query.group_by(RevenueJournal.cpt_comptable).order_by(
             func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
@@ -971,8 +1115,13 @@ async def get_revenue_by_month(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    search: Optional[str] = None
 ):
     """
     Get revenue data grouped by month with achievement rates
@@ -994,36 +1143,38 @@ async def get_revenue_by_month(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Build base query
-        query = db.query(
-            func.to_char(RevenueJournal.date_gl, 'YYYY-MM').label('month'),
-            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total_revenue'),
-            func.sum(RevenueJournal.chiffre_aff_exe_dzd_ttc).label('total_revenue_ttc'),
-            func.avg(RevenueJournal.taux_realisation_ca).label('achievement_rate'),
-            func.count(RevenueJournal.id).label('record_count')
-        )
+        # Build base query for filtering (before aggregation)
+        base_query = db.query(RevenueJournal)
 
         # Apply DOT filtering based on module-specific access
         accessible_dot_ids = DOTService.get_user_accessible_dots(
             db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
         )
         if accessible_dot_ids:
-            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+            base_query = base_query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
-        # Apply filters
-        if org_name:
-            query = query.filter(RevenueJournal.org_name.in_(org_name))
-        if typ_fact:
-            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
-        if cpt_comptable:
-            # Filter directly on revenue_journal.cpt_comptable
-            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
-            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
-        if start_date:
-            query = query.filter(RevenueJournal.date_gl >= start_date)
-        if end_date:
-            query = query.filter(RevenueJournal.date_gl <= end_date)
+        # Apply all filters using helper function
+        base_query = apply_revenue_filters(
+            base_query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
+
+        # Build aggregated query from filtered base
+        query = db.query(
+            func.to_char(RevenueJournal.date_gl, 'YYYY-MM').label('month'),
+            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total_revenue'),
+            func.sum(RevenueJournal.chiffre_aff_exe_dzd_ttc).label('total_revenue_ttc'),
+            func.count(RevenueJournal.id).label('record_count')
+        ).filter(RevenueJournal.id.in_(
+            base_query.with_entities(RevenueJournal.id)
+        ))
 
         # Filter out null dates
         query = query.filter(RevenueJournal.date_gl.isnot(None))
@@ -1042,11 +1193,18 @@ async def get_revenue_by_month(
         response = []
         for row in results:
             if row.month:  # Only include valid months
+                total_revenue = float(row.total_revenue or 0)
+
+                # Calculate achievement rate per month: (Total CA for month / Monthly objective) × 100
+                achievement_rate = 0.0
+                if monthly_objective and monthly_objective > 0:
+                    achievement_rate = (total_revenue / monthly_objective) * 100
+
                 response.append(RevenueByMonthResponse(
                     month=row.month,
-                    total_revenue=float(row.total_revenue or 0),
+                    total_revenue=total_revenue,
                     total_revenue_ttc=float(row.total_revenue_ttc or 0),
-                    achievement_rate=float(row.achievement_rate or 0),
+                    achievement_rate=achievement_rate,  # Calculated per month
                     objective=monthly_objective,
                     record_count=int(row.record_count or 0)
                 ))
@@ -1067,8 +1225,13 @@ async def get_revenue_by_type_fact(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    search: Optional[str] = None
 ):
     """
     Get revenue data grouped by Type Fact (Invoice Type)
@@ -1089,52 +1252,63 @@ async def get_revenue_by_type_fact(
     PermissionService.require_permission(current_user, db, "can_view_analytics")
 
     try:
-        # Build base query
-        query = db.query(
-            RevenueJournal.typ_fact,
-            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total_revenue'),
-            func.sum(RevenueJournal.chiffre_aff_exe_dzd_ttc).label('total_revenue_ttc'),
-            func.avg(RevenueJournal.taux_realisation_ca).label('achievement_rate'),
-            func.count(RevenueJournal.id).label('record_count')
-        )
+        # Build base query for filtering (before aggregation)
+        base_query = db.query(RevenueJournal)
 
         # Apply DOT filtering based on module-specific access
         accessible_dot_ids = DOTService.get_user_accessible_dots(
             db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
         )
         if accessible_dot_ids:
-            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+            base_query = base_query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
-        # Apply filters
-        if org_name:
-            query = query.filter(RevenueJournal.org_name.in_(org_name))
-        if typ_fact:
-            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
-        if cpt_comptable:
-            # Filter directly on revenue_journal.cpt_comptable
-            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
-            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
-        if start_date:
-            query = query.filter(RevenueJournal.date_gl >= start_date)
-        if end_date:
-            query = query.filter(RevenueJournal.date_gl <= end_date)
+        # Apply all filters using helper function
+        base_query = apply_revenue_filters(
+            base_query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
 
-        # Filter out null typ_fact
-        query = query.filter(RevenueJournal.typ_fact.isnot(None))
+        # Build aggregated query from filtered base
+        # Note: achievement_rate is calculated per type, not averaged from individual entries
+        query = db.query(
+            RevenueJournal.typ_fact,
+            func.sum(RevenueJournal.chiffre_aff_exe_dzd).label('total_revenue'),
+            func.sum(RevenueJournal.chiffre_aff_exe_dzd_ttc).label('total_revenue_ttc'),
+            func.count(RevenueJournal.id).label('record_count')
+        ).filter(RevenueJournal.id.in_(
+            base_query.with_entities(RevenueJournal.id)
+        )).filter(RevenueJournal.typ_fact.isnot(None))
 
         # Group and sort
         results = query.group_by(
             RevenueJournal.typ_fact
         ).order_by(func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
 
+        # Get total objective for achievement rate calculation
+        all_objectives = db.query(RevenueObjective).all()
+        total_objective = sum(float(obj.objectif_ca or 0) for obj in all_objectives)
+
         response = []
         for row in results:
+            total_revenue = float(row.total_revenue or 0)
+
+            # Calculate achievement rate per type: (Total CA for type / Total objective) × 100
+            achievement_rate = 0.0
+            if total_objective and total_objective > 0:
+                achievement_rate = (total_revenue / total_objective) * 100
+
             response.append(RevenueByTypeFactResponse(
                 typ_fact=row.typ_fact or "Unknown",
-                total_revenue=float(row.total_revenue or 0),
+                total_revenue=total_revenue,
                 total_revenue_ttc=float(row.total_revenue_ttc or 0),
-                achievement_rate=float(row.achievement_rate or 0),
+                achievement_rate=achievement_rate,  # Calculated per type
                 record_count=int(row.record_count or 0)
             ))
 
@@ -1154,8 +1328,13 @@ async def get_revenue_by_taux_ca(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
+    taux_ca_min: Optional[float] = None,
+    taux_ca_max: Optional[float] = None,
+    search: Optional[str] = None
 ):
     """
     Get revenue data grouped by Taux de réalisation C.A ranges
@@ -1186,20 +1365,18 @@ async def get_revenue_by_taux_ca(
         if accessible_dot_ids:
             query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
 
-        # Apply filters
-        if org_name:
-            query = query.filter(RevenueJournal.org_name.in_(org_name))
-        if typ_fact:
-            query = query.filter(RevenueJournal.typ_fact.in_(typ_fact))
-        if cpt_comptable:
-            # Filter directly on revenue_journal.cpt_comptable
-            logger.info(f"🔍 [BACKEND] Filtering by cpt_comptable: {cpt_comptable} (type: {type(cpt_comptable)}, is_list: {isinstance(cpt_comptable, list)}, length: {len(cpt_comptable) if isinstance(cpt_comptable, list) else 'N/A'})")
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptable))
-            logger.info(f"🔍 [BACKEND] Applied cpt_comptable filter, query will filter on: {cpt_comptable}")
-        if start_date:
-            query = query.filter(RevenueJournal.date_gl >= start_date)
-        if end_date:
-            query = query.filter(RevenueJournal.date_gl <= end_date)
+        # Apply all filters using helper function
+        query = apply_revenue_filters(
+            query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
 
         # Filter out null taux_realisation_ca
         query = query.filter(RevenueJournal.taux_realisation_ca.isnot(None))
@@ -1392,10 +1569,10 @@ async def list_revenue_journals(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[str] = None,
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    start_date_fact: Optional[date] = None,
-    end_date_fact: Optional[date] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
     taux_ca_min: Optional[float] = None,
     taux_ca_max: Optional[float] = None,
     search: Optional[str] = None
@@ -1489,8 +1666,8 @@ async def get_revenue_pivot(
     group_by: str = Query("org_name", regex="^(org_name|month|cpt_comptable|org_month)$"),
     metric: str = Query("revenue", regex="^(revenue|count|achievement_rate)$"),
     org_name: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
 ):
     """
     Get revenue data as a pivot table with dynamic grouping
@@ -1651,10 +1828,10 @@ async def export_revenue_data(
     org_name: Optional[List[str]] = Query(None),
     typ_fact: Optional[List[str]] = Query(None),
     cpt_comptable: Optional[List[str]] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    start_date_fact: Optional[date] = None,
-    end_date_fact: Optional[date] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
     taux_ca_min: Optional[float] = None,
     taux_ca_max: Optional[float] = None,
     format: str = Query("xlsx", regex="^(xlsx|csv)$"),
@@ -1852,22 +2029,52 @@ async def export_revenue_anomalies(
         # Fetch all anomalies
         data = query.order_by(RevenueAnomaly.created_at.desc()).all()
 
-        # Convert to DataFrame
+        # Convert to DataFrame - include ALL original columns
         records = []
         for item in data:
-            records.append({
+            # Start with original row data if available
+            if item.original_data:
+                try:
+                    import json
+                    original_row = json.loads(item.original_data)
+                    # Use original row data, but exclude anomaly-specific fields we'll add separately
+                    record = {k: v for k, v in original_row.items() 
+                             if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']}
+                except (json.JSONDecodeError, TypeError):
+                    # Fallback if JSON parsing fails
+                    record = {}
+            else:
+                record = {}
+            
+            # Add/override with database fields (these are the key identifiers)
+            record.update({
                 "ID": item.id,
-                "Type Anomalie": item.anomaly_type or "Chiffre d'Affaires AR DOT",
-                "DOT (Org Name)": item.org_name,
-                "N Fact": item.n_fact,
-                "Cpt Comptable": item.cpt_comptable,
-                "Description (ligne de produit)": item.description_ligne_de_produit,
-                "Raison Anomalie": item.anomaly_reason,
-                "Date Détection": item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else None,
-                "File Upload ID": item.file_upload_id,
+                "Org Name": item.org_name or record.get('Org Name'),
+                "N Fact": item.n_fact or record.get('N Fact'),
+                "Cpt Comptable": item.cpt_comptable or record.get('Cpt Comptable'),
+                "Description (ligne de produit)": item.description_ligne_de_produit or record.get('Description (ligne de produit)'),
             })
+            
+            # Add anomaly-specific fields at the end
+            record["Type Anomalie"] = item.anomaly_type or "Chiffre d'Affaires AR DOT"
+            record["Raison Anomalie"] = item.anomaly_reason
+            record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else None
+            record["File Upload ID"] = item.file_upload_id
+            
+            records.append(record)
 
-        df = pd.DataFrame(records)
+        # Create DataFrame and ensure consistent column order
+        if records:
+            df = pd.DataFrame(records)
+            # Order columns: original columns first, then anomaly-specific columns
+            original_cols = [col for col in df.columns 
+                           if col not in ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']]
+            anomaly_cols = ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']
+            # Reorder: original columns, then anomaly columns
+            all_cols = original_cols + [col for col in anomaly_cols if col in df.columns]
+            df = df[[col for col in all_cols if col in df.columns]]
+        else:
+            df = pd.DataFrame()
 
         # Generate file
         output = io.BytesIO()
@@ -2237,20 +2444,60 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                             "progress": int(progress),
                             "message": f"Processing anomaly record {idx:,} of {len(anomaly_data):,}..."
                         }))
-                    
-                    anomaly_records.append({
+
+                    # Start with original row data if available (all 31 columns)
+                    if item.original_data:
+                        try:
+                            import json
+                            original_row = json.loads(item.original_data)
+                            # Use original row data, but exclude anomaly-specific fields we'll add separately
+                            record = {k: v for k, v in original_row.items()
+                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']}
+                        except (json.JSONDecodeError, TypeError):
+                            # Fallback if JSON parsing fails
+                            record = {}
+                    else:
+                        record = {}
+
+                    # Add/override with database fields (these are the key identifiers)
+                    record.update({
                         "ID": item.id,
-                        "Type Anomalie": item.anomaly_type or "Chiffre d'Affaires AR DOT",
-                        "DOT (Org Name)": item.org_name,
-                        "N Fact": item.n_fact,
-                        "Cpt Comptable": item.cpt_comptable,
-                        "Description (ligne de produit)": item.description_ligne_de_produit,
-                        "Raison Anomalie": item.anomaly_reason,
-                        "Date Détection": item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else "",
-                        "File Upload ID": item.file_upload_id,
+                        "Org Name": item.org_name or record.get('Org Name'),
+                        "N Fact": item.n_fact or record.get('N Fact'),
+                        "Cpt Comptable": item.cpt_comptable or record.get('Cpt Comptable'),
+                        "Description (ligne de produit)": item.description_ligne_de_produit or record.get('Description (ligne de produit)'),
                     })
-                
-                anomaly_df = pd.DataFrame(anomaly_records)
+
+                    # Add anomaly-specific fields at the end
+                    record["Type Anomalie"] = item.anomaly_type or "Chiffre d'Affaires AR DOT"
+                    record["Raison Anomalie"] = item.anomaly_reason
+                    record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else ""
+                    record["File Upload ID"] = item.file_upload_id
+
+                    anomaly_records.append(record)
+
+                # Create DataFrame and ensure consistent column order
+                if anomaly_records:
+                    anomaly_df = pd.DataFrame(anomaly_records)
+                    # Define expected column order: original columns first, then anomaly-specific
+                    original_cols = [
+                        'Org Name', 'Origine', 'N Fact', 'Typ Fact', 'Date Fact',
+                        'N Client', 'Client', 'Delai Paie', 'Devise', 'Obj Fact',
+                        'Cpt Comptable', 'Date facture GL', 'Date GL', 'Periode de facturation',
+                        'Reference', 'Termine Flag', 'Tax Amount', 'Creer Par', 'N Ligne',
+                        'Description (ligne de produit)', 'Uom', 'Qte', 'Prix Uni', 'Taux Change',
+                        'Mnt Ht', 'Tax', 'Mnt Tax', 'Mnt Ttc', 'Memo Line Id',
+                        'Chiffre Aff Exe Dzd', 'TVA', 'Chiffre_Aff_Exe_Dzd_TTC',
+                        'Objectif_CA', 'Taux de réalisation C.A'
+                    ]
+                    anomaly_cols = ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']
+                    # Keep only columns that exist, in the defined order
+                    ordered_cols = [col for col in original_cols + anomaly_cols if col in anomaly_df.columns]
+                    # Add any remaining columns that weren't in our predefined lists
+                    remaining_cols = [col for col in anomaly_df.columns if col not in ordered_cols]
+                    anomaly_df = anomaly_df[ordered_cols + remaining_cols]
+                else:
+                    anomaly_df = pd.DataFrame()
             else:
                 anomaly_df = pd.DataFrame()
 
@@ -2303,17 +2550,58 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                 data = db.query(RevenueAnomaly).all()
                 records = []
                 for item in data:
-                    records.append({
+                    # Start with original row data if available (all 31 columns)
+                    if item.original_data:
+                        try:
+                            import json
+                            original_row = json.loads(item.original_data)
+                            # Use original row data, but exclude anomaly-specific fields we'll add separately
+                            record = {k: v for k, v in original_row.items()
+                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']}
+                        except (json.JSONDecodeError, TypeError):
+                            # Fallback if JSON parsing fails
+                            record = {}
+                    else:
+                        record = {}
+
+                    # Add/override with database fields (these are the key identifiers)
+                    record.update({
                         "ID": item.id,
-                        "Type Anomalie": item.anomaly_type or "Chiffre d'Affaires AR DOT",
-                        "DOT (Org Name)": item.org_name,
-                        "N Fact": item.n_fact,
-                        "Cpt Comptable": item.cpt_comptable,
-                        "Description (ligne de produit)": item.description_ligne_de_produit,
-                        "Raison Anomalie": item.anomaly_reason,
-                        "Date Détection": item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else "",
-                        "File Upload ID": item.file_upload_id,
+                        "Org Name": item.org_name or record.get('Org Name'),
+                        "N Fact": item.n_fact or record.get('N Fact'),
+                        "Cpt Comptable": item.cpt_comptable or record.get('Cpt Comptable'),
+                        "Description (ligne de produit)": item.description_ligne_de_produit or record.get('Description (ligne de produit)'),
                     })
+
+                    # Add anomaly-specific fields at the end
+                    record["Type Anomalie"] = item.anomaly_type or "Chiffre d'Affaires AR DOT"
+                    record["Raison Anomalie"] = item.anomaly_reason
+                    record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else ""
+                    record["File Upload ID"] = item.file_upload_id
+
+                    records.append(record)
+
+                # Ensure consistent column order
+                if records:
+                    df_temp = pd.DataFrame(records)
+                    # Define expected column order: original columns first, then anomaly-specific
+                    original_cols = [
+                        'Org Name', 'Origine', 'N Fact', 'Typ Fact', 'Date Fact',
+                        'N Client', 'Client', 'Delai Paie', 'Devise', 'Obj Fact',
+                        'Cpt Comptable', 'Date facture GL', 'Date GL', 'Periode de facturation',
+                        'Reference', 'Termine Flag', 'Tax Amount', 'Creer Par', 'N Ligne',
+                        'Description (ligne de produit)', 'Uom', 'Qte', 'Prix Uni', 'Taux Change',
+                        'Mnt Ht', 'Tax', 'Mnt Tax', 'Mnt Ttc', 'Memo Line Id',
+                        'Chiffre Aff Exe Dzd', 'TVA', 'Chiffre_Aff_Exe_Dzd_TTC',
+                        'Objectif_CA', 'Taux de réalisation C.A'
+                    ]
+                    anomaly_cols = ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']
+                    # Keep only columns that exist, in the defined order
+                    ordered_cols = [col for col in original_cols + anomaly_cols if col in df_temp.columns]
+                    # Add any remaining columns that weren't in our predefined lists
+                    remaining_cols = [col for col in df_temp.columns if col not in ordered_cols]
+                    records = df_temp[ordered_cols + remaining_cols].to_dict('records')
+
                 base_filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}"
             else:
                 data = query.filter(RevenueJournal.is_anomaly.is_(False)).all()
@@ -2432,10 +2720,10 @@ async def export_revenue_data_async(
     org_name: Optional[str] = Query(None),
     typ_fact: Optional[str] = Query(None),
     cpt_comptable: Optional[str] = Query(None),
-    start_date: Optional[date] = None,
-    end_date: Optional[date] = None,
-    start_date_fact: Optional[date] = None,
-    end_date_fact: Optional[date] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    start_date_fact: Optional[str] = None,
+    end_date_fact: Optional[str] = None,
     taux_ca_min: Optional[float] = None,
     taux_ca_max: Optional[float] = None,
     current_user: User = Depends(get_current_user),

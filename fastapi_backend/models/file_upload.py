@@ -42,6 +42,8 @@ class FileUpload(Base):
         "FilePreview", back_populates="file_upload", cascade="all, delete-orphan")
     parks = relationship("Park", back_populates="file_upload",
                          cascade="all, delete-orphan")
+    parks_2b = relationship("Park2B", back_populates="file_upload",
+                           cascade="all, delete-orphan")
     revenue_journals = relationship("RevenueJournal", back_populates="file_upload",
                                     cascade="all, delete-orphan")
     account_descriptions = relationship("AccountDescription", back_populates="file_upload",

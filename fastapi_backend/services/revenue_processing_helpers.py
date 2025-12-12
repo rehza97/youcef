@@ -67,17 +67,14 @@ class RevenueProcessingHelpers:
     @staticmethod
     def detect_anomalies_in_row(row: pd.Series, cpt_col: str, desc_col: str) -> Optional[str]:
         """
-        Detect anomalies: Cpt Comptable contains 'A' AND Description doesn't start with '@'
+        Detect anomalies: Cpt Comptable contains letter 'A' (case-insensitive)
         Returns anomaly reason if found, None otherwise
         """
         cpt_value = str(row.get(cpt_col, ''))
-        desc_value = str(row.get(desc_col, ''))
 
-        # Check if Cpt Comptable contains letter 'A'
+        # Check if Cpt Comptable contains letter 'A' (case-insensitive)
         if 'A' in cpt_value.upper():
-            # Check if Description starts with '@'
-            if not desc_value.strip().startswith('@'):
-                return f"Cpt Comptable '{cpt_value}' contains 'A' but description doesn't start with '@'"
+            return f"Cpt Comptable '{cpt_value}' contains letter 'A'"
 
         return None
 

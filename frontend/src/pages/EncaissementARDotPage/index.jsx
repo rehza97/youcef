@@ -113,7 +113,10 @@ const CustomTooltip = ({ active, payload, label }) => {
             style={{ color: entry.color }}
             className="text-sm font-semibold"
           >
-            {entry.name}: {entry.name.includes("Taux") ? formatPercent(entry.value) : formatCurrency(entry.value)}
+            {entry.name}:{" "}
+            {entry.name.includes("Taux")
+              ? formatPercent(entry.value)
+              : formatCurrency(entry.value)}
           </p>
         ))}
       </div>
@@ -140,6 +143,7 @@ const EncaissementARDotPage = () => {
     taux_encaissement_min: "", // Taux encaissement minimum
     taux_encaissement_max: "", // Taux encaissement maximum
     search: "", // Global search
+    year: "", // Year filter
   });
 
   // Available filter options
@@ -151,12 +155,53 @@ const EncaissementARDotPage = () => {
 
   // Data state
   const [overview, setOverview] = useState({
+    yearly_data: [],
+    users: [],
     total_montant_ttc: 0,
     total_encaissement: 0,
     total_montant_restant: 0,
     taux_encaissement: 0,
     nombre_factures: 0,
   });
+
+  // Computed overview based on selected year
+  const displayOverview = useMemo(() => {
+    if (
+      !filters.year ||
+      filters.year === "all" ||
+      !overview.yearly_data ||
+      overview.yearly_data.length === 0
+    ) {
+      // Return totals if no year selected
+      return {
+        total_montant_ttc: overview.total_montant_ttc || 0,
+        total_encaissement: overview.total_encaissement || 0,
+        total_montant_restant: overview.total_montant_restant || 0,
+        taux_encaissement: overview.taux_encaissement || 0,
+        nombre_factures: overview.nombre_factures || 0,
+      };
+    }
+
+    // Find selected year data
+    const yearData = overview.yearly_data.find((y) => y.year === filters.year);
+    if (!yearData) {
+      return {
+        total_montant_ttc: 0,
+        total_encaissement: 0,
+        total_montant_restant: 0,
+        taux_encaissement: 0,
+        nombre_factures: 0,
+      };
+    }
+
+    return {
+      total_montant_ttc: yearData.total_montant_ttc || 0,
+      total_encaissement: yearData.total_encaissement || 0,
+      total_montant_restant: yearData.total_montant_restant || 0,
+      taux_encaissement: yearData.taux_encaissement || 0,
+      nombre_factures: yearData.nombre_factures || 0,
+    };
+  }, [filters.year, overview]);
   const [byOrganisation, setByOrganisation] = useState([]);
   const [byDateFact, setByDateFact] = useState([]);
   const [byTauxEncaissement, setByTauxEncaissement] = useState([]);
@@ -171,7 +216,7 @@ const EncaissementARDotPage = () => {
   /**
    * Fetch data
    */
-  const fetchData = async (showRefreshing = false) => {
+  const fetchData = async (showRefreshing = false, overrideYear = null) => {
     if (showRefreshing) {
       setRefreshing(true);
     } else {
@@ -179,6 +224,8 @@ const EncaissementARDotPage = () => {
     }
 
     try {
+      // Use overrideYear if provided (for immediate updates), otherwise use filters.year
+      const yearToUse = overrideYear !== null ? overrideYear : filters.year;
       // Build filter params for API calls
       const filterParams = {
         organisation:
@@ -188,6 +235,7 @@ const EncaissementARDotPage = () => {
         taux_encaissement_min: filters.taux_encaissement_min || undefined,
         taux_encaissement_max: filters.taux_encaissement_max || undefined,
         search: filters.search || undefined,
+        year: yearToUse || undefined,
       };
 
       // Remove undefined values
@@ -196,14 +244,43 @@ const EncaissementARDotPage = () => {
       );
 
       // Load all data simultaneously
-      const [ovRes, orgRes, dateRes, tauxRes] = await Promise.all([
-        getEncaissementOverview(filterParams),
-        getEncaissementByOrganisation(filterParams),
-        getEncaissementByDate(filterParams),
-        getEncaissementByEncaisseRate(filterParams),
-      ]);
+      // Fetch overview without year filter to get all available years for dropdown
+      // This ensures the year dropdown always shows all years regardless of current filters
+      const overviewParamsForYears = { ...filterParams };
+      delete overviewParamsForYears.year; // Remove year to get all available years
 
-      setOverview(ovRes.data || {});
+      // Fetch both overviews: one without year (for dropdown) and one with year (for display)
+      const [ovResForYears, ovResFiltered, orgRes, dateRes, tauxRes] =
+        await Promise.all([
+          getEncaissementOverview(overviewParamsForYears), // Get all years for dropdown
+          getEncaissementOverview(filterParams), // Get filtered overview for display
+          getEncaissementByOrganisation(filterParams),
+          getEncaissementByDate(filterParams),
+          getEncaissementByEncaisseRate(filterParams),
+        ]);
+
+      // Use the overview with all years for the dropdown
+      if (ovResForYears.data && ovResForYears.data.yearly_data) {
+        setOverview((prev) => ({
+          ...prev,
+          yearly_data: ovResForYears.data.yearly_data, // Always show all years in dropdown
+          users: ovResForYears.data.users || prev.users,
+        }));
+      }
+
+      // Use the filtered overview for display (totals, by_month, by_organisation)
+      if (ovResFiltered.data) {
+        setOverview((prev) => ({
+          ...prev,
+          total_montant_ttc: ovResFiltered.data.total_montant_ttc || 0,
+          total_encaissement: ovResFiltered.data.total_encaissement || 0,
+          total_montant_restant: ovResFiltered.data.total_montant_restant || 0,
+          taux_encaissement: ovResFiltered.data.taux_encaissement || 0,
+          nombre_factures: ovResFiltered.data.nombre_factures || 0,
+        }));
+      }
+
+      // Update other data with filtered results
       setByOrganisation(orgRes.data || []);
       setByDateFact(dateRes.data || []);
       setByTauxEncaissement(tauxRes.data || []);
@@ -249,6 +326,9 @@ const EncaissementARDotPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Note: Year filter change now triggers fetchData directly in onValueChange
+  // This ensures immediate update without waiting for useEffect
+
   /**
    * CHART 1: Montant TTC & Encaissement par Organisation
    */
@@ -268,7 +348,13 @@ const EncaissementARDotPage = () => {
    * CHART 2: Encaissement par Date Fact (Mois)
    */
   const dateFactChartData = useMemo(() => {
+    // Backend already filters by year, so we just process the data
+    if (!byDateFact || !Array.isArray(byDateFact) || byDateFact.length === 0) {
+      return [];
+    }
+
     return byDateFact
+      .filter((item) => item != null) // Filter out null/undefined items
       .map((item) => ({
         mois: item.mois || item.date_fact || "Inconnu",
         "Montant TTC": item.total_montant_ttc || 0,
@@ -301,9 +387,18 @@ const EncaissementARDotPage = () => {
    * CHART 4: Pie Chart - Encaissement par Mois (3D style)
    */
   const pieChartData = useMemo(() => {
-    const total = byDateFact.reduce((sum, item) => sum + (item.total_encaissement || 0), 0);
+    // Backend already filters by year, so we just process the data
+    if (!byDateFact || !Array.isArray(byDateFact) || byDateFact.length === 0) {
+      return [];
+    }
 
-    return byDateFact
+    const validItems = byDateFact.filter((item) => item != null);
+    const total = validItems.reduce(
+      (sum, item) => sum + (item.total_encaissement || 0),
+      0
+    );
+
+    return validItems
       .map((item) => {
         const value = item.total_encaissement || 0;
         const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
@@ -313,7 +408,7 @@ const EncaissementARDotPage = () => {
           percentage: parseFloat(percentage),
         };
       })
-      .filter(item => item.value > 0) // Only show months with encaissement
+      .filter((item) => item.value > 0) // Only show months with encaissement
       .sort((a, b) => b.value - a.value); // Sort by value descending
   }, [byDateFact]);
 
@@ -351,12 +446,13 @@ const EncaissementARDotPage = () => {
         delete exportParams.organisation;
       }
 
-      // Remove empty strings and undefined values
+      // Remove empty strings and undefined values, but keep year if it's "all"
       Object.keys(exportParams).forEach((key) => {
         if (
           exportParams[key] === undefined ||
           exportParams[key] === "" ||
-          exportParams[key] === null
+          exportParams[key] === null ||
+          exportParams[key] === "all"
         ) {
           delete exportParams[key];
         }
@@ -406,6 +502,7 @@ const EncaissementARDotPage = () => {
       taux_encaissement_min: "",
       taux_encaissement_max: "",
       search: "",
+      year: "",
     });
     toast.success("Filtres réinitialisés");
   };
@@ -425,6 +522,11 @@ const EncaissementARDotPage = () => {
       // Add filters if needed
       if (filters.organisation && filters.organisation.length > 0) {
         params.organisation = filters.organisation.join(",");
+      }
+
+      // Add year filter
+      if (filters.year) {
+        params.year = filters.year;
       }
 
       const response = await getEncaissementRecords(params);
@@ -465,6 +567,45 @@ const EncaissementARDotPage = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Encaissement AR DOT</h1>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Year Filter Dropdown */}
+          {overview.yearly_data && overview.yearly_data.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Label
+                htmlFor="year-filter"
+                className="text-sm font-medium whitespace-nowrap"
+              >
+                Année:
+              </Label>
+              <Select
+                value={filters.year || "all"}
+                onValueChange={(value) => {
+                  const yearValue = value === "all" ? "" : value;
+                  setFilters((f) => ({
+                    ...f,
+                    year: yearValue,
+                  }));
+                  // IMPORTANT: pass year as 2nd arg (overrideYear) to avoid race with state update
+                  fetchData(false, yearValue);
+                }}
+              >
+                <SelectTrigger id="year-filter" className="w-40">
+                  <SelectValue placeholder="Toutes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Toutes les années</SelectItem>
+                  {overview.yearly_data && overview.yearly_data.length > 0
+                    ? overview.yearly_data
+                        .sort((a, b) => b.year.localeCompare(a.year))
+                        .map((yearData) => (
+                          <SelectItem key={yearData.year} value={yearData.year}>
+                            {yearData.year}
+                          </SelectItem>
+                        ))
+                    : null}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <Button
             variant="outline"
             onClick={() => setShowFilters((s) => !s)}
@@ -515,10 +656,10 @@ const EncaissementARDotPage = () => {
         <CardContent className="pt-6">
           <div className="text-center">
             <div className="text-6xl font-bold mb-2">
-              {formatCurrency(overview.total_encaissement || 0)}
+              {formatCurrency(displayOverview.total_encaissement || 0)}
             </div>
             <div className="text-xl font-medium opacity-90">
-              Encaissement Total
+              Encaissement Total{filters.year ? ` (${filters.year})` : ""}
             </div>
           </div>
         </CardContent>
@@ -533,7 +674,7 @@ const EncaissementARDotPage = () => {
                 Montant TTC
               </div>
               <div className="text-3xl font-bold text-gray-900">
-                {formatCurrency(overview.total_montant_ttc || 0)}
+                {formatCurrency(displayOverview.total_montant_ttc || 0)}
               </div>
             </div>
           </CardContent>
@@ -546,7 +687,7 @@ const EncaissementARDotPage = () => {
                 Encaissement
               </div>
               <div className="text-3xl font-bold text-gray-900">
-                {formatCurrency(overview.total_encaissement || 0)}
+                {formatCurrency(displayOverview.total_encaissement || 0)}
               </div>
             </div>
           </CardContent>
@@ -559,7 +700,7 @@ const EncaissementARDotPage = () => {
                 Taux d'encaissement
               </div>
               <div className="text-3xl font-bold text-gray-900">
-                {formatPercent(overview.taux_encaissement || 0)}
+                {formatPercent(displayOverview.taux_encaissement || 0)}
               </div>
             </div>
           </CardContent>
@@ -587,6 +728,41 @@ const EncaissementARDotPage = () => {
             <div className="space-y-4">
               {/* Primary Filters */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <Label>Année</Label>
+                  <Select
+                    value={filters.year || "all"}
+                    onValueChange={(value) => {
+                      const yearValue = value === "all" ? "" : value;
+                      setFilters((f) => ({
+                        ...f,
+                        year: yearValue,
+                      }));
+                      // IMPORTANT: pass year as 2nd arg (overrideYear) to avoid race with state update
+                      fetchData(false, yearValue);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Toutes les années" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Toutes les années</SelectItem>
+                      {overview.yearly_data && overview.yearly_data.length > 0
+                        ? overview.yearly_data
+                            .sort((a, b) => b.year.localeCompare(a.year))
+                            .map((yearData) => (
+                              <SelectItem
+                                key={yearData.year}
+                                value={yearData.year}
+                              >
+                                {yearData.year}
+                              </SelectItem>
+                            ))
+                        : null}
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 <div>
                   <Label>DOT (Organisation)</Label>
                   <MultiSelect
@@ -687,6 +863,7 @@ const EncaissementARDotPage = () => {
 
                       if (isActive) {
                         const labels = {
+                          year: "Année",
                           organisation: "DOT",
                           date_fact_start: "Date Fact Début",
                           date_fact_end: "Date Fact Fin",
@@ -760,12 +937,18 @@ const EncaissementARDotPage = () => {
           <>
             <Card>
               <CardHeader>
-                <CardTitle>Histogramme combiné (Encaissement et Montant TTC par mois de Date Fact)</CardTitle>
+                <CardTitle>
+                  Histogramme combiné (Encaissement et Montant TTC par mois de
+                  Date Fact)
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {dateFactChartData.length > 0 ? (
                   <ResponsiveContainer width="100%" height={450}>
-                    <LineChart data={dateFactChartData} margin={{ bottom: 20, top: 20 }}>
+                    <LineChart
+                      data={dateFactChartData}
+                      margin={{ bottom: 20, top: 20 }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                       <XAxis
                         dataKey="mois"
@@ -826,24 +1009,36 @@ const EncaissementARDotPage = () => {
                           cx="50%"
                           cy="50%"
                           labelLine={false}
-                          label={({ name, percentage }) => `${name}: ${percentage}%`}
+                          label={({ name, percentage }) =>
+                            `${name}: ${percentage}%`
+                          }
                           outerRadius={180}
                           fill="#8884d8"
                           dataKey="value"
                         >
                           {pieChartData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={PIE_COLORS[index % PIE_COLORS.length]}
+                            />
                           ))}
                         </Pie>
                         <Tooltip
                           formatter={(value, name, props) => [
-                            `${formatCurrency(value)} (${props.payload.percentage}%)`,
+                            `${formatCurrency(value)} (${
+                              props.payload.percentage
+                            }%)`,
                             "Encaissement",
                           ]}
                         />
                         <Legend
-                          wrapperStyle={{ fontSize: "14px", paddingTop: "20px" }}
-                          formatter={(value, entry) => `${entry.payload.name} (${entry.payload.percentage}%)`}
+                          wrapperStyle={{
+                            fontSize: "14px",
+                            paddingTop: "20px",
+                          }}
+                          formatter={(value, entry) =>
+                            `${entry.payload.name} (${entry.payload.percentage}%)`
+                          }
                         />
                       </PieChart>
                     </ResponsiveContainer>
@@ -859,7 +1054,10 @@ const EncaissementARDotPage = () => {
         {activeTab === "organisation" && (
           <Card>
             <CardHeader>
-              <CardTitle>Encaissement par Organisation (Relation 1: DOT et Taux d'encaissement)</CardTitle>
+              <CardTitle>
+                Encaissement par Organisation (Relation 1: DOT et Taux
+                d'encaissement)
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {organisationChartData.length > 0 ? (
@@ -925,12 +1123,18 @@ const EncaissementARDotPage = () => {
         {activeTab === "date-fact" && (
           <Card>
             <CardHeader>
-              <CardTitle>Encaissement par Date Fact (Relation 2: Mois et Taux d'encaissement)</CardTitle>
+              <CardTitle>
+                Encaissement par Date Fact (Relation 2: Mois et Taux
+                d'encaissement)
+              </CardTitle>
             </CardHeader>
             <CardContent>
               {dateFactChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <ComposedChart data={dateFactChartData} margin={{ bottom: 20, right: 60 }}>
+                  <ComposedChart
+                    data={dateFactChartData}
+                    margin={{ bottom: 20, right: 60 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
                       dataKey="mois"

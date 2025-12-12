@@ -886,6 +886,7 @@ export const getEncaissementOverview = (filters = {}) => {
     params.append("taux_encaissement_max", filters.taux_encaissement_max);
   }
   if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/overview${queryString ? `?${queryString}` : ""}`
@@ -918,6 +919,7 @@ export const getEncaissementByOrganisation = (filters = {}) => {
     params.append("taux_encaissement_max", filters.taux_encaissement_max);
   }
   if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
   if (filters.sort_by) params.append("sort_by", filters.sort_by);
   if (filters.order) params.append("order", filters.order);
   if (filters.limit) params.append("limit", filters.limit);
@@ -953,6 +955,7 @@ export const getEncaissementByDate = (filters = {}) => {
     params.append("taux_encaissement_max", filters.taux_encaissement_max);
   }
   if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/by-date${queryString ? `?${queryString}` : ""}`
@@ -985,6 +988,7 @@ export const getEncaissementByEncaisseRate = (filters = {}) => {
     params.append("taux_encaissement_max", filters.taux_encaissement_max);
   }
   if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/by-encaisse-rate${queryString ? `?${queryString}` : ""}`
@@ -1002,7 +1006,11 @@ export const getEncaissementChartData = (chartType) => {
 export const getParkAnalyticsOverview = (filters = {}) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value && value.trim() !== "") {
+    if (typeof value === "boolean") {
+      params.append(key, value.toString());
+    } else if (value && typeof value === "string" && value.trim() !== "") {
+      params.append(key, value);
+    } else if (value && typeof value !== "string") {
       params.append(key, value);
     }
   });
@@ -1015,7 +1023,11 @@ export const getParkAnalyticsOverview = (filters = {}) => {
 export const getParkAnalyticsByTelecomType = (filters = {}) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value && value.trim() !== "") {
+    if (typeof value === "boolean") {
+      params.append(key, value.toString());
+    } else if (value && typeof value === "string" && value.trim() !== "") {
+      params.append(key, value);
+    } else if (value && typeof value !== "string") {
       params.append(key, value);
     }
   });
@@ -1028,7 +1040,11 @@ export const getParkAnalyticsByTelecomType = (filters = {}) => {
 export const getParkAnalyticsBySubscriberStatus = (filters = {}) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value && value.trim() !== "") {
+    if (typeof value === "boolean") {
+      params.append(key, value.toString());
+    } else if (value && typeof value === "string" && value.trim() !== "") {
+      params.append(key, value);
+    } else if (value && typeof value !== "string") {
       params.append(key, value);
     }
   });
@@ -1043,7 +1059,11 @@ export const getParkAnalyticsBySubscriberStatus = (filters = {}) => {
 export const getParkAnalyticsByCustomerL2 = (filters = {}) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value && value.trim() !== "") {
+    if (typeof value === "boolean") {
+      params.append(key, value.toString());
+    } else if (value && typeof value === "string" && value.trim() !== "") {
+      params.append(key, value);
+    } else if (value && typeof value !== "string") {
       params.append(key, value);
     }
   });
@@ -1056,7 +1076,11 @@ export const getParkAnalyticsByCustomerL2 = (filters = {}) => {
 export const getParkAnalyticsByCustomerL3 = (filters = {}) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value && value.trim() !== "") {
+    if (typeof value === "boolean") {
+      params.append(key, value.toString());
+    } else if (value && typeof value === "string" && value.trim() !== "") {
+      params.append(key, value);
+    } else if (value && typeof value !== "string") {
       params.append(key, value);
     }
   });
@@ -1069,7 +1093,11 @@ export const getParkAnalyticsByCustomerL3 = (filters = {}) => {
 export const getParkAnalyticsByDOT = (filters = {}) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
-    if (value && value.trim() !== "") {
+    if (typeof value === "boolean") {
+      params.append(key, value.toString());
+    } else if (value && typeof value === "string" && value.trim() !== "") {
+      params.append(key, value);
+    } else if (value && typeof value !== "string") {
       params.append(key, value);
     }
   });
@@ -1104,6 +1132,8 @@ export const getParkAnalyticsColumnValues = (column, filters = {}) => {
         params.append(key, value.join(","));
       } else if (typeof value === "string" && value.trim() !== "") {
         params.append(key, value);
+      } else if (typeof value === "boolean") {
+        params.append(key, value.toString());
       }
     }
   });
@@ -1207,6 +1237,12 @@ export const getRevenueOverview = (params = {}) => {
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   const qs = query.toString();
   console.log("🔍 [FRONTEND API] Final query string for /overview:", qs);
   return api.get(`/api/revenue/overview${qs ? `?${qs}` : ""}`);
@@ -1264,6 +1300,12 @@ export const getRevenueByOrg = (params = {}) => {
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   return api.get(
     `/api/revenue/by-org${query.toString() ? `?${query.toString()}` : ""}`
   );
@@ -1291,6 +1333,12 @@ export const getRevenueByAccount = (params = {}) => {
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   return api.get(
     `/api/revenue/by-account${query.toString() ? `?${query.toString()}` : ""}`
   );
@@ -1318,6 +1366,12 @@ export const getRevenueByTypeFact = (params = {}) => {
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   return api.get(
     `/api/revenue/by-type-fact${query.toString() ? `?${query.toString()}` : ""}`
   );
@@ -1345,6 +1399,12 @@ export const getRevenueByTauxCA = (params = {}) => {
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   return api.get(
     `/api/revenue/by-taux-ca${query.toString() ? `?${query.toString()}` : ""}`
   );
@@ -1372,6 +1432,12 @@ export const getRevenueByMonth = (params = {}) => {
   }
   if (params.start_date) query.append("start_date", params.start_date);
   if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min) query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max) query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   return api.get(
     `/api/revenue/by-month${query.toString() ? `?${query.toString()}` : ""}`
   );
@@ -1755,6 +1821,7 @@ export const getEncaissementRecords = (params = {}) => {
     query.append("is_anomaly", params.is_anomaly);
   if (params.file_upload_id)
     query.append("file_upload_id", params.file_upload_id);
+  if (params.year) query.append("year", params.year);
   if (params.sort_by) query.append("sort_by", params.sort_by);
   if (params.sort_order) query.append("sort_order", params.sort_order);
   return api.get(`/api/encaissement/records?${query.toString()}`);
@@ -1852,6 +1919,9 @@ export const exportEncaissementRecords = (params = {}) => {
 
   // Search filter
   if (params.search) query.append("search", params.search);
+
+  // Year filter
+  if (params.year) query.append("year", params.year);
 
   // Other filters
   if (params.include_duplicates !== undefined)

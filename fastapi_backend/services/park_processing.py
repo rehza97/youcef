@@ -9,6 +9,7 @@ from datetime import datetime, date
 import logging
 from sqlalchemy.orm import Session
 from models.park import Park
+from models.park_2b import Park2B
 from models.dot import DOT
 from services.dot_service import DOTService
 
@@ -490,6 +491,7 @@ class ParkDataProcessor:
         """Save processed data to database with progress tracking"""
         try:
             saved_count = 0
+            saved_2b_count = 0
             errors = []
             total_records = len(processed_data)
 
@@ -499,24 +501,44 @@ class ParkDataProcessor:
             for i, record in enumerate(processed_data):
                 try:
                     # Map Excel columns to database columns
-                    park_record = self._map_to_park_model(record)
+                    park_record, is_2b = self._map_to_park_model(record)
 
-                    # Check if record already exists
-                    existing = self.db.query(Park).filter(
-                        Park.customer_code == park_record.customer_code,
-                        Park.service_number == park_record.service_number
-                    ).first()
+                    # Route to appropriate table based on customer_l1_code
+                    if is_2b:
+                        # Save to parks_2b table
+                        existing = self.db.query(Park2B).filter(
+                            Park2B.customer_code == park_record.customer_code,
+                            Park2B.service_number == park_record.service_number
+                        ).first()
 
-                    if existing:
-                        # Update existing record
-                        for key, value in park_record.__dict__.items():
-                            if not key.startswith('_') and hasattr(existing, key):
-                                setattr(existing, key, value)
-                        existing.updated_at = datetime.utcnow()
+                        if existing:
+                            # Update existing record
+                            for key, value in park_record.__dict__.items():
+                                if not key.startswith('_') and hasattr(existing, key):
+                                    setattr(existing, key, value)
+                            existing.updated_at = datetime.utcnow()
+                        else:
+                            # Create new record
+                            park_record.created_at = datetime.utcnow()
+                            self.db.add(park_record)
+                        saved_2b_count += 1
                     else:
-                        # Create new record
-                        park_record.created_at = datetime.utcnow()
-                        self.db.add(park_record)
+                        # Save to parks table
+                        existing = self.db.query(Park).filter(
+                            Park.customer_code == park_record.customer_code,
+                            Park.service_number == park_record.service_number
+                        ).first()
+
+                        if existing:
+                            # Update existing record
+                            for key, value in park_record.__dict__.items():
+                                if not key.startswith('_') and hasattr(existing, key):
+                                    setattr(existing, key, value)
+                            existing.updated_at = datetime.utcnow()
+                        else:
+                            # Create new record
+                            park_record.created_at = datetime.utcnow()
+                            self.db.add(park_record)
 
                     saved_count += 1
 
@@ -548,14 +570,18 @@ class ParkDataProcessor:
                 progress_callback({
                     "status": "saving_complete",
                     "progress": 100,
-                    "message": f"Database save completed! Saved {saved_count:,} records successfully",
+                    "message": f"Database save completed! Saved {saved_count:,} records successfully ({saved_count - saved_2b_count:,} to parks, {saved_2b_count:,} to parks_2b)",
                     "saved_count": saved_count,
+                    "saved_2b_count": saved_2b_count,
                     "errors_count": len(errors)
                 })
+
+            logger.info(f"💾 Saved {saved_count:,} total records ({saved_count - saved_2b_count:,} to parks, {saved_2b_count:,} to parks_2b)")
 
             return {
                 "success": True,
                 "saved_count": saved_count,
+                "saved_2b_count": saved_2b_count,
                 "errors": errors
             }
 
@@ -569,19 +595,32 @@ class ParkDataProcessor:
                 "errors": []
             }
 
-    def _map_to_park_model(self, record: Dict[str, Any]) -> Park:
-        """Map Excel record to Park model using dynamic column detection"""
+    def _map_to_park_model(self, record: Dict[str, Any]) -> Tuple[Park, bool]:
+        """Map Excel record to Park or Park2B model using dynamic column detection
+
+        Returns:
+            Tuple of (park_record, is_2b) where is_2b indicates if this is a 2B record
+        """
         # Create a temporary DataFrame to use _find_column method
         temp_df = pd.DataFrame([record])
 
-        return Park(
+        # Get customer_l1_code to determine which table to use
+        customer_l1_code = record.get(
+            self._find_column(temp_df, ['Code Customer L1', 'level 1']) or 'Code Customer L1_Code Catégorie level 1')
+
+        # Check if this record should be routed to parks_2b table
+        is_2b = customer_l1_code == '2B' if customer_l1_code else False
+
+        # Create the appropriate model instance
+        ModelClass = Park2B if is_2b else Park
+
+        park_record = ModelClass(
             extraction_date=self._safe_date(record.get(
                 self._find_column(temp_df, ['Extraction Date', 'extraction']) or 'Extraction Date_Date d \'extraction')),
             dot_id=record.get('dot_id'),
             actel_code=record.get(
                 self._find_column(temp_df, ['Actel Code', 'actel']) or 'Actel Code_Code d\'actel'),
-            customer_l1_code=record.get(
-                self._find_column(temp_df, ['Code Customer L1', 'level 1']) or 'Code Customer L1_Code Catégorie level 1'),
+            customer_l1_code=customer_l1_code,
             customer_l1_description=record.get(
                 self._find_column(temp_df, ['Description Customer L1', 'level 1']) or 'Description Customer L1_Nom du Catégorie level 1'),
             customer_l2_code=record.get(
@@ -661,6 +700,8 @@ class ParkDataProcessor:
             contact_number=record.get(
                 self._find_column(temp_df, ['Contact number', 'contact']) or 'Contact number_Numéro de contact')
         )
+
+        return (park_record, is_2b)
 
     def _safe_date(self, value) -> Optional[date]:
         """Safely convert value to date"""

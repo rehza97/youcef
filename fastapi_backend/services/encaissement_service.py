@@ -4,7 +4,7 @@ Provides data access methods with RBAC filtering for Encaissement AR DOT data
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, extract
+from sqlalchemy import func, and_, or_, extract, String
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, date
 from decimal import Decimal
@@ -48,6 +48,7 @@ class EncaissementService:
         is_duplicate: Optional[bool] = None,
         is_anomaly: Optional[bool] = None,
         file_upload_id: Optional[int] = None,
+        year: Optional[str] = None,
         sort_by: str = "created_at",
         sort_order: str = "desc"
     ) -> Tuple[List[EncaissementARDot], int]:
@@ -108,6 +109,21 @@ class EncaissementService:
 
         if file_upload_id is not None:
             query = query.filter(EncaissementARDot.file_upload_id == file_upload_id)
+
+        # Filter by year - extract year from date_fact or mois
+        if year:
+            try:
+                year_int = int(year)
+                year_str = str(year_int)
+                # Filter by year from date_fact or mois
+                query = query.filter(
+                    or_(
+                        extract('year', EncaissementARDot.date_fact) == year_int,
+                        func.substring(EncaissementARDot.mois, 1, 4) == year_str
+                    )
+                )
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid year format: {year}")
 
         # Get total count before pagination
         total = query.count()

@@ -78,7 +78,12 @@ const GlobalProcessingIndicator = () => {
             </div>
 
             <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-              <span>{task.progress}%</span>
+              <span>
+                {typeof task.progress === "number"
+                  ? task.progress.toFixed(1)
+                  : task.progress}
+                %
+              </span>
               <span>{task.message || "Traitement..."}</span>
             </div>
           </div>

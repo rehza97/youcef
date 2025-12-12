@@ -471,8 +471,9 @@ class FileService:
         # Use direct SQL queries to avoid SQLAlchemy relationship loading issues
         from sqlalchemy import text
 
-        # Delete related park data
+        # Delete related park data (from both parks and parks_2b tables)
         from models.park import Park
+        from models.park_2b import Park2B
         try:
             park_count = db.query(Park).filter(
                 Park.file_upload_id == file_id).count()
@@ -482,6 +483,17 @@ class FileService:
                 db.query(Park).filter(Park.file_upload_id == file_id).delete()
         except Exception as e:
             logger.warning(f"Error deleting park records: {e}")
+
+        # Delete related parks_2b data
+        try:
+            park_2b_count = db.query(Park2B).filter(
+                Park2B.file_upload_id == file_id).count()
+            if park_2b_count > 0:
+                logger.info(
+                    f"Deleting {park_2b_count} parks_2b records related to file {file_id}")
+                db.query(Park2B).filter(Park2B.file_upload_id == file_id).delete()
+        except Exception as e:
+            logger.warning(f"Error deleting parks_2b records: {e}")
 
         # Delete related creance aggregate views first (due to foreign key constraint)
         try:

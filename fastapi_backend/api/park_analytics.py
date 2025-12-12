@@ -18,6 +18,7 @@ from database.connection import get_db
 from core.security import get_current_user
 from models.user import User
 from models.park import Park
+from models.park_2b import Park2B
 from models.dot import DOT
 from models.user_module_dot import MODULE_PARC_CORPORATE_NGBSS
 from services.dot_service import DOTService
@@ -89,7 +90,8 @@ def _run_export_background(task_id: str, export_params: dict):
             customer_l3_codes=export_params.get("customer_l3_codes"),
             search=export_params.get("search"),
             date_from=export_params.get("date_from"),
-            date_to=export_params.get("date_to")
+            date_to=export_params.get("date_to"),
+            include_exclusion_2b=export_params.get("include_exclusion_2b", False)
         )
 
         # Progress: Query built
@@ -170,8 +172,8 @@ def _run_export_background(task_id: str, export_params: dict):
 
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
 
-        # Handle "both" export type
-        if export_type == "both":
+        # Handle "all" export type (ZIP with 3 files: normal, anomalies, 2B)
+        if export_type == "all":
             normal_parks = query.all()
 
             if len(normal_parks) == 0:
@@ -212,17 +214,132 @@ def _run_export_background(task_id: str, export_params: dict):
             normal_records = parks_to_records_with_progress(normal_parks, 20, 50, "[Normal] ")
             normal_df = pd.DataFrame(normal_records)
 
-            # Process anomaly data (50-80%)
+            # Process anomaly data (50-65%)
             if anomaly_parks:
                 asyncio.run(processing_ws_manager.send_task_update(task_id, {
                     "status": "processing",
                     "progress": 50,
                     "message": f"Processing {len(anomaly_parks):,} anomaly records..."
                 }))
-                anomaly_records = parks_to_records_with_progress(anomaly_parks, 50, 80, "[Anomaly] ")
+                anomaly_records = parks_to_records_with_progress(anomaly_parks, 50, 65, "[Anomaly] ")
                 anomaly_df = pd.DataFrame(anomaly_records)
             else:
                 anomaly_df = pd.DataFrame()
+
+            # Process 2B data for Facturation Groupée (65-80%)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 65,
+                "message": "Processing Facturation Groupée (2B records)..."
+            }))
+
+            # Query parks_2b table with same filters (with eager loading for dot relationship)
+            from sqlalchemy.orm import joinedload
+            parks_2b_query = db.query(Park2B).options(joinedload(Park2B.dot))
+            if accessible_dots:
+                parks_2b_query = parks_2b_query.filter(Park2B.dot_id.in_(accessible_dots))
+
+            # Apply same filters to parks_2b
+            parks_2b_query = apply_filters_to_query(
+                query=parks_2b_query,
+                dot_ids=export_params.get("dot_ids"),
+                actel_codes=export_params.get("actel_codes"),
+                subscriber_statuses=export_params.get("subscriber_statuses"),
+                telecom_types=export_params.get("telecom_types"),
+                offer_names=export_params.get("offer_names"),
+                offer_types=export_params.get("offer_types"),
+                customer_l2_codes=export_params.get("customer_l2_codes"),
+                customer_l3_codes=export_params.get("customer_l3_codes"),
+                search=export_params.get("search"),
+                date_from=export_params.get("date_from"),
+                date_to=export_params.get("date_to"),
+                include_exclusion_2b=False
+            )
+
+            # Use pandas read_sql for faster processing of large 2B dataset
+            logger.info("🔄 Using optimized pandas query for 2B records...")
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 70,
+                "message": "Loading Facturation Groupée data (optimized)..."
+            }))
+
+            # Get the SQL query string and execute with pandas for better performance
+            from sqlalchemy import select
+            parks_2b_count = parks_2b_query.count()
+            logger.info(f"📊 Found {parks_2b_count:,} 2B records to export")
+
+            if parks_2b_count > 0:
+                # For large datasets, use pandas read_sql which is much faster
+                facturation_df = pd.read_sql(
+                    parks_2b_query.statement,
+                    db.bind
+                )
+
+                # Add DOT names by joining (pandas is faster for this)
+                dot_names = pd.read_sql(
+                    "SELECT id, name FROM dots",
+                    db.bind
+                )
+                facturation_df = facturation_df.merge(
+                    dot_names,
+                    left_on='dot_id',
+                    right_on='id',
+                    how='left',
+                    suffixes=('', '_dot')
+                )
+
+                # Rename columns to match export format
+                facturation_df = facturation_df.rename(columns={
+                    'name': 'DOT Name',
+                    'dot_id': 'DOT ID',
+                    'customer_code': 'Customer Code',
+                    'service_number': 'Service Number',
+                    'related_service_number': 'Related Service Number',
+                    'customer_full_name': 'Customer Name',
+                    'username': 'Username',
+                    'actel_code': 'Actel Code',
+                    'subscriber_status': 'Subscriber Status',
+                    'telecom_type': 'Telecom Type',
+                    'offer_name': 'Offer Name',
+                    'offer_type': 'Offer Type',
+                    'rental_fees': 'Rental Fees',
+                    'customer_l1_code': 'Customer L1 Code',
+                    'customer_l1_description': 'Customer L1 Description',
+                    'customer_l2_code': 'Customer L2 Code',
+                    'customer_l2_description': 'Customer L2 Description',
+                    'customer_l3_code': 'Customer L3 Code',
+                    'customer_l3_description': 'Customer L3 Description',
+                    'csr_name': 'CSR Name',
+                    'department_name': 'Department Name',
+                    'state': 'State',
+                    'province': 'Province',
+                    'area': 'Area',
+                    'district': 'District',
+                    'city': 'City',
+                    'town': 'Town',
+                    'postal_code': 'Postal Code',
+                    'street': 'Street',
+                    'street_number': 'Street Number',
+                    'building_no': 'Building No',
+                    'unit': 'Unit',
+                    'floor': 'Floor',
+                    'house_no': 'House No',
+                    'grid': 'Grid',
+                    'additional_address_info': 'Additional Address Info',
+                    'iccid': 'ICCID',
+                    'imsi': 'IMSI',
+                    'contact_number': 'Contact Number',
+                    'expiry_date': 'Expiry Date',
+                    'status_date': 'Status Date',
+                    'creation_date': 'Creation Date',
+                    'active_date': 'Active Date'
+                })
+
+                logger.info(f"✅ Loaded {len(facturation_df):,} 2B records using pandas")
+            else:
+                facturation_df = pd.DataFrame()
+                logger.info("ℹ️ No 2B records found")
 
             # Create ZIP file (80-95%)
             asyncio.run(processing_ws_manager.send_task_update(task_id, {
@@ -230,6 +347,7 @@ def _run_export_background(task_id: str, export_params: dict):
                 "progress": 80,
                 "message": "Creating ZIP file..."
             }))
+            logger.info("📦 Starting ZIP file creation...")
 
             # Create temp file
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.zip')
@@ -237,7 +355,13 @@ def _run_export_background(task_id: str, export_params: dict):
                 file_ext = "xlsx" if format == "excel" else "csv"
                 normal_filename = f"Parc_Corporate_NGBSS_{timestamp}.{file_ext}"
 
-                # Write normal file
+                # Write normal file (80-85%)
+                logger.info(f"📝 Writing normal data ({len(normal_parks):,} records) to {file_ext}...")
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 82,
+                    "message": f"Writing normal data ({len(normal_parks):,} records)..."
+                }))
                 normal_buffer = io.BytesIO()
                 if format == "excel":
                     with pd.ExcelWriter(normal_buffer, engine='openpyxl') as writer:
@@ -245,8 +369,15 @@ def _run_export_background(task_id: str, export_params: dict):
                 else:
                     normal_df.to_csv(normal_buffer, index=False, encoding='utf-8-sig')
                 zip_file.writestr(normal_filename, normal_buffer.getvalue())
+                logger.info(f"✅ Normal file written")
 
-                # Write anomaly file
+                # Write anomaly file (85-88%)
+                logger.info(f"📝 Writing anomaly data ({len(anomaly_parks):,} records)...")
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 85,
+                    "message": f"Writing anomalies ({len(anomaly_parks):,} records)..."
+                }))
                 if len(anomaly_parks) > 0:
                     anomaly_filename = f"Anomalie_Parc_NGBSS_{timestamp}.{file_ext}"
                     anomaly_buffer = io.BytesIO()
@@ -256,20 +387,164 @@ def _run_export_background(task_id: str, export_params: dict):
                     else:
                         anomaly_df.to_csv(anomaly_buffer, index=False, encoding='utf-8-sig')
                     zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
+                    logger.info(f"✅ Anomaly file written")
                 else:
                     zip_file.writestr("NO_ANOMALIES_FOUND.txt", "No anomalies found with the applied filters.")
+
+                # Write Facturation Groupée file (88-95%)
+                facturation_count = len(facturation_df)
+                logger.info(f"📝 Writing Facturation Groupée ({facturation_count:,} 2B records) to {file_ext}...")
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 88,
+                    "message": f"Writing Facturation Groupée ({facturation_count:,} 2B records)... This may take a few minutes."
+                }))
+                if facturation_count > 0:
+                    facturation_filename = f"Facturation_Groupee_2B_{timestamp}.{file_ext}"
+                    facturation_buffer = io.BytesIO()
+                    if format == "excel":
+                        # Optimize for large 2B datasets
+                        if facturation_count > 100000:
+                            logger.info(f"⏳ Large 2B dataset ({facturation_count:,} records). Optimizing before Excel write...")
+                            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                                "status": "processing",
+                                "progress": 90,
+                                "message": f"Preparing {facturation_count:,} 2B records for Excel... (this may take several minutes)"
+                            }))
+                            # Optimize DataFrame
+                            for col in facturation_df.select_dtypes(include=['object']).columns:
+                                facturation_df[col] = facturation_df[col].astype(str)
+                        
+                        logger.info("⏳ Converting 2B data to Excel format...")
+                        asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                            "status": "processing",
+                            "progress": 91,
+                            "message": f"Writing {facturation_count:,} 2B records to Excel... Please wait."
+                        }))
+                        with pd.ExcelWriter(facturation_buffer, engine='openpyxl') as writer:
+                            facturation_df.to_excel(writer, index=False, sheet_name='Facturation 2B')
+                        logger.info("✅ Excel conversion complete")
+                    else:
+                        # CSV - for BytesIO, write all at once (CSV is fast even for large files)
+                        facturation_df.to_csv(facturation_buffer, index=False, encoding='utf-8-sig', lineterminator='\n')
+                    logger.info("💾 Writing to ZIP...")
+                    zip_file.writestr(facturation_filename, facturation_buffer.getvalue())
+                    logger.info(f"✅ Facturation Groupée file written")
+                else:
+                    zip_file.writestr("NO_2B_RECORDS_FOUND.txt", "No 2B records found with the applied filters.")
 
             filename = f"Parc_Export_{timestamp}.zip"
             export_tasks[task_id].update({
                 "file_path": temp_file.name,
                 "filename": filename,
                 "normal_count": len(normal_parks),
-                "anomaly_count": len(anomaly_parks)
+                "anomaly_count": len(anomaly_parks),
+                "facturation_2b_count": len(facturation_df)
             })
 
         else:
             # Single file export
-            if export_type == "anomalies":
+            if export_type == "2b":
+                # Export 2B records (Facturation Groupée) - use fast pandas read_sql method
+                from sqlalchemy.orm import joinedload
+                parks_2b_query = db.query(Park2B).options(joinedload(Park2B.dot))
+                if accessible_dots:
+                    parks_2b_query = parks_2b_query.filter(Park2B.dot_id.in_(accessible_dots))
+
+                # Apply same filters to parks_2b
+                parks_2b_query = apply_filters_to_query(
+                    query=parks_2b_query,
+                    dot_ids=export_params.get("dot_ids"),
+                    actel_codes=export_params.get("actel_codes"),
+                    subscriber_statuses=export_params.get("subscriber_statuses"),
+                    telecom_types=export_params.get("telecom_types"),
+                    offer_names=export_params.get("offer_names"),
+                    offer_types=export_params.get("offer_types"),
+                    customer_l2_codes=export_params.get("customer_l2_codes"),
+                    customer_l3_codes=export_params.get("customer_l3_codes"),
+                    search=export_params.get("search"),
+                    date_from=export_params.get("date_from"),
+                    date_to=export_params.get("date_to"),
+                    include_exclusion_2b=False
+                )
+
+                parks_2b_count = parks_2b_query.count()
+                if parks_2b_count == 0:
+                    raise Exception("No 2B records found with applied filters")
+
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 40,
+                    "message": f"Loading {parks_2b_count:,} 2B records (optimized method)..."
+                }))
+
+                # Use pandas read_sql for MUCH faster processing (same as "all" export)
+                logger.info(f"🔄 Using optimized pandas query for {parks_2b_count:,} 2B records...")
+                df = pd.read_sql(parks_2b_query.statement, db.bind)
+
+                # Add DOT names by joining (pandas is faster for this)
+                dot_names = pd.read_sql("SELECT id, name FROM dots", db.bind)
+                df = df.merge(dot_names, left_on='dot_id', right_on='id', how='left', suffixes=('', '_dot'))
+
+                # Rename columns to match export format (same as "all" export)
+                df = df.rename(columns={
+                    'name': 'DOT Name',
+                    'dot_id': 'DOT ID',
+                    'customer_code': 'Customer Code',
+                    'service_number': 'Service Number',
+                    'related_service_number': 'Related Service Number',
+                    'customer_full_name': 'Customer Name',
+                    'username': 'Username',
+                    'actel_code': 'Actel Code',
+                    'subscriber_status': 'Subscriber Status',
+                    'telecom_type': 'Telecom Type',
+                    'offer_name': 'Offer Name',
+                    'offer_type': 'Offer Type',
+                    'rental_fees': 'Rental Fees',
+                    'customer_l1_code': 'Customer L1 Code',
+                    'customer_l1_description': 'Customer L1 Description',
+                    'customer_l2_code': 'Customer L2 Code',
+                    'customer_l2_description': 'Customer L2 Description',
+                    'customer_l3_code': 'Customer L3 Code',
+                    'customer_l3_description': 'Customer L3 Description',
+                    'csr_name': 'CSR Name',
+                    'department_name': 'Department Name',
+                    'state': 'State',
+                    'province': 'Province',
+                    'area': 'Area',
+                    'district': 'District',
+                    'city': 'City',
+                    'town': 'Town',
+                    'postal_code': 'Postal Code',
+                    'street': 'Street',
+                    'street_number': 'Street Number',
+                    'building_no': 'Building No',
+                    'unit': 'Unit',
+                    'floor': 'Floor',
+                    'house_no': 'House No',
+                    'grid': 'Grid',
+                    'additional_address_info': 'Additional Address Info',
+                    'iccid': 'ICCID',
+                    'imsi': 'IMSI',
+                    'contact_number': 'Contact Number',
+                    'expiry_date': 'Expiry Date',
+                    'status_date': 'Status Date',
+                    'creation_date': 'Creation Date',
+                    'active_date': 'Active Date',
+                    'extraction_date': 'Extraction Date',
+                    'created_at': 'Created At',
+                    'updated_at': 'Updated At'
+                })
+
+                # Format date columns to ISO format (matching normal export)
+                date_columns = ['Status Date', 'Creation Date', 'Active Date', 'Expiry Date', 'Extraction Date', 'Created At', 'Updated At']
+                for col in date_columns:
+                    if col in df.columns:
+                        df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%dT%H:%M:%S').fillna('')
+
+                parks = []  # Skip parks_to_records_with_progress for 2B (already have DataFrame)
+
+            elif export_type == "anomalies":
                 anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
                 anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
                 anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
@@ -292,15 +567,30 @@ def _run_export_background(task_id: str, export_params: dict):
                 anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
 
                 query = query.filter(or_(*anomaly_conditions))
+                parks = query.all()
+            else:
+                # Normal export
+                parks = query.all()
 
-            parks = query.all()
+            # Process exports: 2B already has DataFrame, others need processing
+            if export_type == "2b":
+                # DataFrame already created from pandas read_sql (fast method)
+                if len(df) == 0:
+                    raise Exception("No 2B records found with applied filters")
+                logger.info(f"✅ 2B DataFrame ready with {len(df):,} records (fast method)")
+            else:
+                # Normal and anomalies: process using ORM iteration
+                if len(parks) == 0:
+                    raise Exception("No data found with applied filters")
 
-            if len(parks) == 0:
-                raise Exception("No data found with applied filters")
-
-            # Process records (20-80%)
-            records = parks_to_records_with_progress(parks, 20, 80, "")
-            df = pd.DataFrame(records)
+                # Process records (50-80%)
+                asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                    "status": "processing",
+                    "progress": 50,
+                    "message": f"Processing {len(parks):,} records..."
+                }))
+                records = parks_to_records_with_progress(parks, 50, 80, "")
+                df = pd.DataFrame(records)
 
             # Create file (80-95%)
             asyncio.run(processing_ws_manager.send_task_update(task_id, {
@@ -311,22 +601,81 @@ def _run_export_background(task_id: str, export_params: dict):
 
             if export_type == "anomalies":
                 base_filename = f"Anomalie_Parc_NGBSS_{timestamp}"
+            elif export_type == "2b":
+                base_filename = f"Facturation_Groupee_2B_{timestamp}"
             else:
                 base_filename = f"Parc_Corporate_NGBSS_{timestamp}"
 
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format}')
+            # Use correct file extension: .xlsx for excel, .csv for csv
+            file_ext = "xlsx" if format == "excel" else "csv"
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_ext}')
+
+            # Optimize writing for large datasets
+            total_records = len(df)
+            asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                "status": "processing",
+                "progress": 85,
+                "message": f"Writing {total_records:,} records to file..."
+            }))
+
             if format == "excel":
-                with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Parc Data')
+                # Excel writing with openpyxl is slow for large files
+                # Provide clear feedback and optimize DataFrame before writing
+                if total_records > 100000:
+                    logger.info(f"📝 Large Excel dataset ({total_records:,} records). Optimizing before writing...")
+                    asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                        "status": "processing",
+                        "progress": 87,
+                        "message": f"Preparing {total_records:,} records for Excel export... (this may take several minutes for large files)"
+                    }))
+                    
+                    # Optimize DataFrame: convert object columns to string to reduce memory
+                    for col in df.select_dtypes(include=['object']).columns:
+                        df[col] = df[col].astype(str)
+                    
+                    logger.info("📝 Starting Excel write (this is the slowest step for large files)...")
+                    asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                        "status": "processing",
+                        "progress": 90,
+                        "message": f"Writing {total_records:,} records to Excel file... Please wait, this may take 5-15 minutes for very large files."
+                    }))
+                    
+                    # Write all at once (chunked writing to same sheet is complex with openpyxl)
+                    with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Parc Data')
+                    
+                    logger.info(f"✅ Excel file written successfully ({total_records:,} records)")
+                else:
+                    # For smaller files, use standard writing
+                    asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                        "status": "processing",
+                        "progress": 88,
+                        "message": f"Writing {total_records:,} records to Excel..."
+                    }))
+                    with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
+                        df.to_excel(writer, index=False, sheet_name='Parc Data')
                 filename = f"{base_filename}.xlsx"
             else:
-                df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+                # CSV writing - much faster than Excel, but optimize for very large files
+                if total_records > 500000:
+                    logger.info(f"📝 Very large CSV dataset ({total_records:,} records). Using optimized writing...")
+                    asyncio.run(processing_ws_manager.send_task_update(task_id, {
+                        "status": "processing",
+                        "progress": 88,
+                        "message": f"Writing {total_records:,} records to CSV... (this is faster than Excel)"
+                    }))
+                    # Use chunksize parameter for memory efficiency
+                    df.to_csv(temp_file.name, index=False, encoding='utf-8-sig', 
+                            lineterminator='\n', chunksize=100000)
+                else:
+                    # For smaller files, use standard writing (CSV is fast)
+                    df.to_csv(temp_file.name, index=False, encoding='utf-8-sig', lineterminator='\n')
                 filename = f"{base_filename}.csv"
 
             export_tasks[task_id].update({
                 "file_path": temp_file.name,
                 "filename": filename,
-                "record_count": len(parks)
+                "record_count": len(df)
             })
 
         # Completed
@@ -336,10 +685,17 @@ def _run_export_background(task_id: str, export_params: dict):
             "end_time": datetime.utcnow().isoformat()
         })
 
+        # Build completion message
+        if export_type == "all":
+            files_msg = f"3 files: Normal ({export_tasks[task_id]['normal_count']:,}), Anomalies ({export_tasks[task_id]['anomaly_count']:,}), Facturation 2B ({export_tasks[task_id]['facturation_2b_count']:,})"
+        else:
+            record_count = export_tasks[task_id].get('record_count', 0)
+            files_msg = f"Export completed: {record_count:,} records"
+
         asyncio.run(processing_ws_manager.send_task_update(task_id, {
             "status": "completed",
             "progress": 100,
-            "message": "Export completed successfully!",
+            "message": files_msg,
             "filename": filename,
             "download_url": f"/api/park-analytics/export-download/{task_id}"
         }))
@@ -362,6 +718,36 @@ def _run_export_background(task_id: str, export_params: dict):
         db.close()
 
 
+def get_combined_parks_query(db: Session, include_exclusion_2b: bool = False, **filter_params):
+    """Helper to get combined results from parks and parks_2b tables
+
+    Args:
+        db: Database session
+        include_exclusion_2b: If True, include records from parks_2b table
+        **filter_params: Filter parameters to apply to both queries
+
+    Returns:
+        List of park records (either from parks only, or parks + parks_2b)
+    """
+    # Build query for main parks table
+    parks_query = db.query(Park)
+    parks_query = apply_filters_to_query(parks_query, **filter_params, include_exclusion_2b=False)
+
+    if not include_exclusion_2b:
+        # Return only parks table results
+        return parks_query.all()
+
+    # Also query from parks_2b table
+    parks_2b_query = db.query(Park2B)
+    parks_2b_query = apply_filters_to_query(parks_2b_query, **filter_params, include_exclusion_2b=False)
+
+    # Combine results
+    parks_results = parks_query.all()
+    parks_2b_results = parks_2b_query.all()
+
+    return parks_results + parks_2b_results
+
+
 def apply_filters_to_query(
     query,
     dot_ids: Optional[str] = None,
@@ -374,10 +760,17 @@ def apply_filters_to_query(
     customer_l3_codes: Optional[str] = None,
     search: Optional[str] = None,
     date_from: Optional[str] = None,
-    date_to: Optional[str] = None
+    date_to: Optional[str] = None,
+    include_exclusion_2b: Optional[bool] = None
 ):
-    """Helper function to apply filters to a query"""
-    
+    """Helper function to apply filters to a query
+
+    Works with both Park and Park2B models since they have the same structure
+    """
+    # Get the model class from the query
+    # This allows the function to work with both Park and Park2B
+    model = query.column_descriptions[0]['entity']
+
     # Log all filter parameters
     filters_dict = {
         "dot_ids": dot_ids,
@@ -390,65 +783,66 @@ def apply_filters_to_query(
         "customer_l3_codes": customer_l3_codes,
         "search": search,
         "date_from": date_from,
-        "date_to": date_to
+        "date_to": date_to,
+        "include_exclusion_2b": include_exclusion_2b
     }
     # Only log non-empty filters
     active_filters = {k: v for k, v in filters_dict.items() if v}
     if active_filters:
-        logger.info(f"🔍 Applying filters: {active_filters}")
+        logger.info(f"🔍 Applying filters to {model.__name__}: {active_filters}")
 
     # Apply multiple value filters (comma-separated)
     if dot_ids:
         dot_id_list = [int(id.strip())
                        for id in dot_ids.split(',') if id.strip()]
-        query = query.filter(Park.dot_id.in_(dot_id_list))
+        query = query.filter(model.dot_id.in_(dot_id_list))
 
     if actel_codes:
         actel_list = [code.strip()
                       for code in actel_codes.split(',') if code.strip()]
-        query = query.filter(Park.actel_code.in_(actel_list))
+        query = query.filter(model.actel_code.in_(actel_list))
 
     if subscriber_statuses:
         status_list = [status.strip()
                        for status in subscriber_statuses.split(',') if status.strip()]
-        query = query.filter(Park.subscriber_status.in_(status_list))
+        query = query.filter(model.subscriber_status.in_(status_list))
 
     if telecom_types:
         telecom_list = [ttype.strip()
                         for ttype in telecom_types.split(',') if ttype.strip()]
-        query = query.filter(Park.telecom_type.in_(telecom_list))
+        query = query.filter(model.telecom_type.in_(telecom_list))
 
     if offer_names:
         offer_list = [offer.strip()
                       for offer in offer_names.split(',') if offer.strip()]
         # Use case-insensitive matching to handle variations like "Moohtarif" vs "moohtarif"
-        offer_conditions = [Park.offer_name.ilike(offer) for offer in offer_list]
+        offer_conditions = [model.offer_name.ilike(offer) for offer in offer_list]
         query = query.filter(or_(*offer_conditions))
 
     if offer_types:
         offer_type_list = [otype.strip()
                            for otype in offer_types.split(',') if otype.strip()]
-        query = query.filter(Park.offer_type.in_(offer_type_list))
+        query = query.filter(model.offer_type.in_(offer_type_list))
 
     if customer_l2_codes:
         l2_list = [code.strip()
                    for code in customer_l2_codes.split(',') if code.strip()]
-        query = query.filter(Park.customer_l2_code.in_(l2_list))
+        query = query.filter(model.customer_l2_code.in_(l2_list))
 
     if customer_l3_codes:
         l3_list = [code.strip()
                    for code in customer_l3_codes.split(',') if code.strip()]
-        query = query.filter(Park.customer_l3_code.in_(l3_list))
+        query = query.filter(model.customer_l3_code.in_(l3_list))
 
     # Apply search filter
     if search:
         search_term = f"%{search}%"
         query = query.filter(
             or_(
-                Park.customer_code.ilike(search_term),
-                Park.service_number.ilike(search_term),
-                Park.customer_full_name.ilike(search_term),
-                Park.username.ilike(search_term)
+                model.customer_code.ilike(search_term),
+                model.service_number.ilike(search_term),
+                model.customer_full_name.ilike(search_term),
+                model.username.ilike(search_term)
             )
         )
 
@@ -456,16 +850,21 @@ def apply_filters_to_query(
     if date_from:
         try:
             from_date = datetime.strptime(date_from, "%Y-%m-%d").date()
-            query = query.filter(Park.created_at >= from_date)
+            query = query.filter(model.created_at >= from_date)
         except ValueError:
             pass  # Ignore invalid date format
 
     if date_to:
         try:
             to_date = datetime.strptime(date_to, "%Y-%m-%d").date()
-            query = query.filter(Park.created_at <= to_date)
+            query = query.filter(model.created_at <= to_date)
         except ValueError:
             pass  # Ignore invalid date format
+
+    # Note: 2B records are now stored in a separate parks_2b table
+    # They are excluded by default (not in parks table)
+    # The include_exclusion_2b parameter is handled at the query level
+    # by querying from both tables when needed
 
     return query
 
@@ -498,7 +897,10 @@ async def get_park_overview(
     date_from: Optional[str] = Query(
         None, description="Filter from date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(
-        None, description="Filter to date (YYYY-MM-DD)")
+        None, description="Filter to date (YYYY-MM-DD)"),
+    # 2B Exclusion filter
+    include_exclusion_2b: Optional[bool] = Query(
+        False, description="Include records with customer_l1_code = '2B' (excluded by default)")
 ):
     """Get overview analytics for Parc Corporate NGBSS with filtering support"""
     
@@ -542,39 +944,73 @@ async def get_park_overview(
             "filters_applied": True
         }
 
-    # Apply filters
-    query = apply_filters_to_query(
+    # Apply filters to parks query
+    parks_query = apply_filters_to_query(
         query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
         offer_names, offer_types, customer_l2_codes, customer_l3_codes,
-        search, date_from, date_to
+        search, date_from, date_to, include_exclusion_2b=False
     )
 
-    # Calculate metrics
-    total_subscribers = query.count()
-
-    # Check multiple possible active status values (like the cache service does)
-    active_subscribers = query.filter(
+    # Calculate metrics from parks table
+    total_subscribers = parks_query.count()
+    active_subscribers = parks_query.filter(
         Park.subscriber_status.in_(
             ["Active", "ACTIVE", "active", "ACTIF", "actif"])
     ).count()
-
-    inactive_subscribers = query.filter(
+    inactive_subscribers = parks_query.filter(
         Park.subscriber_status.in_(
             ["Inactive", "INACTIVE", "inactive", "INACTIF", "inactif"])
     ).count()
-
-    suspended_subscribers = query.filter(
+    suspended_subscribers = parks_query.filter(
         Park.subscriber_status.in_(
             ["Suspended", "SUSPENDED", "suspended", "SUSPENDU", "suspendu"])
     ).count()
-
-    # Calculate revenue
-    revenue_result = query.with_entities(func.sum(Park.rental_fees)).scalar()
+    revenue_result = parks_query.with_entities(func.sum(Park.rental_fees)).scalar()
     total_revenue = float(revenue_result) if revenue_result else 0.0
-
-    # Get last update
-    last_record = query.order_by(Park.created_at.desc()).first()
+    last_record = parks_query.order_by(Park.created_at.desc()).first()
     last_update = last_record.created_at.isoformat() if last_record else None
+    seven_days_ago = datetime.utcnow() - timedelta(days=7)
+    recent_activity = parks_query.filter(Park.created_at >= seven_days_ago).count()
+
+    # If include_exclusion_2b is True, also query parks_2b table and combine metrics
+    if include_exclusion_2b:
+        parks_2b_query = db.query(Park2B)
+        if accessible_dots:
+            parks_2b_query = parks_2b_query.filter(Park2B.dot_id.in_(accessible_dots))
+        parks_2b_query = apply_filters_to_query(
+            parks_2b_query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+            offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+            search, date_from, date_to, include_exclusion_2b=False
+        )
+
+        # Calculate metrics from parks_2b table
+        total_subscribers_2b = parks_2b_query.count()
+        active_subscribers_2b = parks_2b_query.filter(
+            Park2B.subscriber_status.in_(
+                ["Active", "ACTIVE", "active", "ACTIF", "actif"])
+        ).count()
+        inactive_subscribers_2b = parks_2b_query.filter(
+            Park2B.subscriber_status.in_(
+                ["Inactive", "INACTIVE", "inactive", "INACTIF", "inactif"])
+        ).count()
+        suspended_subscribers_2b = parks_2b_query.filter(
+            Park2B.subscriber_status.in_(
+                ["Suspended", "SUSPENDED", "suspended", "SUSPENDU", "suspendu"])
+        ).count()
+        revenue_result_2b = parks_2b_query.with_entities(func.sum(Park2B.rental_fees)).scalar()
+        total_revenue_2b = float(revenue_result_2b) if revenue_result_2b else 0.0
+        last_record_2b = parks_2b_query.order_by(Park2B.created_at.desc()).first()
+        if last_record_2b and (not last_record or last_record_2b.created_at > last_record.created_at):
+            last_update = last_record_2b.created_at.isoformat()
+        recent_activity_2b = parks_2b_query.filter(Park2B.created_at >= seven_days_ago).count()
+
+        # Combine metrics
+        total_subscribers += total_subscribers_2b
+        active_subscribers += active_subscribers_2b
+        inactive_subscribers += inactive_subscribers_2b
+        suspended_subscribers += suspended_subscribers_2b
+        total_revenue += total_revenue_2b
+        recent_activity += recent_activity_2b
 
     # Get accessible DOTs count - only count DOTs from Parc Corporate NGBSS module
     accessible_dots = DOTService.get_user_accessible_dots(
@@ -589,11 +1025,6 @@ async def get_park_overview(
         total_dots = len(module_dots)
     else:
         total_dots = 0
-
-    # Get recent activity (last 7 days)
-    from datetime import datetime, timedelta
-    seven_days_ago = datetime.utcnow() - timedelta(days=7)
-    recent_activity = query.filter(Park.created_at >= seven_days_ago).count()
 
     return {
         "total_active_subscribers": active_subscribers,  # ✅ Match frontend expectation
@@ -636,7 +1067,10 @@ async def get_by_telecom_type(
     date_from: Optional[str] = Query(
         None, description="Filter from date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(
-        None, description="Filter to date (YYYY-MM-DD)")
+        None, description="Filter to date (YYYY-MM-DD)"),
+    # 2B Exclusion filter
+    include_exclusion_2b: Optional[bool] = Query(
+        False, description="Include records from parks_2b table")
 ):
     """Get distribution by Telecom Type with filtering support"""
     
@@ -659,31 +1093,54 @@ async def get_by_telecom_type(
     else:
         return {"distribution": [], "total": 0}
 
-    # Apply filters
-    query = apply_filters_to_query(
+    # Apply filters to parks query
+    parks_query = apply_filters_to_query(
         query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
         offer_names, offer_types, customer_l2_codes, customer_l3_codes,
-        search, date_from, date_to
+        search, date_from, date_to, include_exclusion_2b=False
     )
 
-    # Get telecom type distribution
-    telecom_distribution = query.filter(
+    # Get telecom type distribution from parks
+    parks_distribution = parks_query.filter(
         Park.telecom_type.isnot(None)
     ).with_entities(
         Park.telecom_type,
         func.count(Park.id).label('count')
-    ).group_by(Park.telecom_type).order_by(func.count(Park.id).desc()).all()
+    ).group_by(Park.telecom_type).all()
 
-    total_count = sum([item.count for item in telecom_distribution])
+    # Combine with parks_2b if needed
+    distribution_dict = {item.telecom_type or "UNKNOWN": item.count for item in parks_distribution}
+    
+    if include_exclusion_2b:
+        parks_2b_query = db.query(Park2B)
+        if accessible_dots:
+            parks_2b_query = parks_2b_query.filter(Park2B.dot_id.in_(accessible_dots))
+        parks_2b_query = apply_filters_to_query(
+            parks_2b_query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
+            offer_names, offer_types, customer_l2_codes, customer_l3_codes,
+            search, date_from, date_to, include_exclusion_2b=False
+        )
+        parks_2b_distribution = parks_2b_query.filter(
+            Park2B.telecom_type.isnot(None)
+        ).with_entities(
+            Park2B.telecom_type,
+            func.count(Park2B.id).label('count')
+        ).group_by(Park2B.telecom_type).all()
+        
+        # Merge distributions
+        for item in parks_2b_distribution:
+            key = item.telecom_type or "UNKNOWN"
+            distribution_dict[key] = distribution_dict.get(key, 0) + item.count
 
-    distribution = []
-    for item in telecom_distribution:
-        percentage = (item.count / total_count * 100) if total_count > 0 else 0
-        distribution.append({
-            "type": item.telecom_type or "UNKNOWN",
-            "count": item.count,
-            "percentage": round(percentage, 2)
-        })
+    total_count = sum(distribution_dict.values())
+    distribution = [
+        {
+            "type": key,
+            "count": count,
+            "percentage": round((count / total_count * 100) if total_count > 0 else 0, 2)
+        }
+        for key, count in sorted(distribution_dict.items(), key=lambda x: x[1], reverse=True)
+    ]
 
     return {
         "distribution": distribution,
@@ -757,7 +1214,7 @@ async def get_by_subscriber_status(
     query = apply_filters_to_query(
         query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
         offer_names, offer_types, customer_l2_codes, customer_l3_codes,
-        search, date_from, date_to
+        search, date_from, date_to, include_exclusion_2b=False
     )
 
     # Get subscriber status distribution
@@ -875,7 +1332,7 @@ async def get_by_customer_l2(
     query = apply_filters_to_query(
         query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
         offer_names, offer_types, customer_l2_codes, customer_l3_codes,
-        search, date_from, date_to
+        search, date_from, date_to, include_exclusion_2b=False
     )
 
     # Get customer L2 distribution
@@ -973,7 +1430,7 @@ async def get_by_customer_l3(
     query = apply_filters_to_query(
         query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
         offer_names, offer_types, customer_l2_codes, customer_l3_codes,
-        search, date_from, date_to
+        search, date_from, date_to, include_exclusion_2b=False
     )
 
     # Get customer L3 distribution
@@ -1060,7 +1517,7 @@ async def get_by_dot(
     park_query = apply_filters_to_query(
         park_query, dot_ids, actel_codes, subscriber_statuses, telecom_types,
         offer_names, offer_types, customer_l2_codes, customer_l3_codes,
-        search, date_from, date_to
+        search, date_from, date_to, include_exclusion_2b=False
     )
 
     # Get DOT distribution with filtered parks
@@ -1369,7 +1826,8 @@ async def get_preview_data(
             customer_l3_codes=customer_l3_codes,
             search=search,
             date_from=date_from,
-            date_to=date_to
+            date_to=date_to,
+            include_exclusion_2b=False
         )
 
         # Get total count for pagination info (after filters)
@@ -1515,7 +1973,8 @@ async def get_park_column_values(
             customer_l3_codes=customer_l3_codes,
             search=search,
             date_from=date_from,
-            date_to=date_to
+            date_to=date_to,
+            include_exclusion_2b=False
         )
         
         # Map column names to actual model attributes
@@ -1628,7 +2087,7 @@ async def get_park_column_values(
 @park_analytics_router.post("/export-async")
 async def export_data_async(
     format: str = Query("csv", regex="^(csv|excel)$"),
-    export_type: str = Query("normal", regex="^(normal|anomalies|both)$", description="Export type: normal, anomalies, or both (returns ZIP with both files)"),
+    export_type: str = Query("normal", regex="^(normal|anomalies|2b|all)$", description="Export type: normal, anomalies, 2b (Facturation Groupée), or all (returns ZIP with all 3 files)"),
     # Single value filters (for backward compatibility)
     dot_filter: Optional[str] = Query(None),
     actel_code_filter: Optional[str] = Query(None),
@@ -1764,7 +2223,7 @@ async def download_export_file(task_id: str):
 @park_analytics_router.get("/export")
 async def export_data(
     format: str = Query("csv", regex="^(csv|excel)$"),
-    export_type: str = Query("normal", regex="^(normal|anomalies|both)$", description="Export type: normal, anomalies, or both (returns ZIP with both files)"),
+    export_type: str = Query("normal", regex="^(normal|anomalies|2b|all)$", description="Export type: normal, anomalies, 2b (Facturation Groupée), or all (returns ZIP with all 3 files)"),
     # Single value filters (for backward compatibility)
     dot_filter: Optional[str] = Query(None),
     actel_code_filter: Optional[str] = Query(None),
@@ -1843,7 +2302,8 @@ async def export_data(
         customer_l3_codes=customer_l3_codes,
         search=search,
         date_from=date_from,
-        date_to=date_to
+        date_to=date_to,
+        include_exclusion_2b=False
     )
 
     # Apply backward compatibility single value filters (if not already handled)

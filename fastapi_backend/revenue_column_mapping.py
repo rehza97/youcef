@@ -372,14 +372,18 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
     """Map a revenue journal record to database dictionary"""
 
     def _get(keywords: list, default=None):
-        """Get value from record by finding column with keywords"""
+        """Get value from record by finding column with keywords (exact match first, then substring)"""
+        # Try exact match first (case-insensitive)
+        for kw in keywords:
+            for key in record.keys():
+                if normalize_column_name(kw) == normalize_column_name(key):
+                    return record.get(key, default)
+
+        # Then try substring match
         for key in record.keys():
             if any(normalize_column_name(kw) in normalize_column_name(key) for kw in keywords):
                 return record.get(key, default)
-        # Exact match fallback
-        for kw in keywords:
-            if kw in record:
-                return record.get(kw, default)
+
         return default
 
     # Maximum value for NUMERIC(15, 2): 9,999,999,999,999.99

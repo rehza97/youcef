@@ -5,7 +5,7 @@ Handles data retrieval, filtering, and aggregations for encaissement (collection
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, String
+from sqlalchemy import func, and_, or_, String, extract, Integer
 from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
@@ -34,7 +34,8 @@ def apply_encaissement_filters(
     date_fact_end: Optional[str] = None,
     taux_encaissement_min: Optional[float] = None,
     taux_encaissement_max: Optional[float] = None,
-    search: Optional[str] = None
+    search: Optional[str] = None,
+    year: Optional[str] = None
 ):
     """
     Apply common filters to encaissement query
@@ -103,6 +104,20 @@ def apply_encaissement_filters(
             )
         )
     
+    # Filter by year - extract year from date_fact or mois
+    if year and year != "all" and year.strip():
+        try:
+            year_int = int(year)
+            year_str = str(year_int)
+            query = query.filter(
+                or_(
+                    extract('year', EncaissementARDot.date_fact) == year_int,
+                    func.substring(EncaissementARDot.mois, 1, 4) == year_str
+                )
+            )
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid year format: {year}, error: {e}")
+    
     return query
 
 
@@ -147,15 +162,29 @@ class EncaissementByMonthResponse(BaseModel):
     total_montant_restant: float
 
 
-class EncaissementOverviewResponse(BaseModel):
-    """Response schema for overview analytics"""
+class EncaissementYearlyData(BaseModel):
+    """Yearly breakdown data"""
+    year: str
     total_montant_ttc: float
     total_encaissement: float
     total_montant_restant: float
-    taux_encaissement: float  # Frontend expects this field name
-    taux_encaissement_global: float  # Keep for backward compatibility
-    nombre_factures: int  # Frontend expects this field name
-    nombre_factures_total: int  # Keep for backward compatibility
+    taux_encaissement: float
+    nombre_factures: int
+    nombre_organisations: int
+    by_organisation: Dict[str, float]
+    by_month: Dict[str, float]
+
+
+class EncaissementOverviewResponse(BaseModel):
+    """Response schema for overview analytics - now returns yearly breakdown"""
+    yearly_data: List[EncaissementYearlyData]
+    users: List[str]  # Unique users from creer_par field
+    # Keep totals for backward compatibility (sum of all years)
+    total_montant_ttc: float
+    total_encaissement: float
+    total_montant_restant: float
+    taux_encaissement: float
+    nombre_factures: int
     nombre_organisations: int
     by_organisation: Dict[str, float]
     by_month: Dict[str, float]
@@ -199,7 +228,8 @@ async def get_overview(
     date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
-    search: Optional[str] = Query(None)
+    search: Optional[str] = Query(None),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
 ):
     """
     Get overview analytics for encaissement data
@@ -238,66 +268,179 @@ async def get_overview(
             date_fact_end=date_fact_end,
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
-            search=search
+            search=search,
+            year=year
         )
 
-        # Get totals
-        total_montant_ttc = query.with_entities(
-            func.sum(EncaissementARDot.montant_ttc)
-        ).scalar() or 0.0
-
-        total_encaissement = query.with_entities(
-            func.sum(EncaissementARDot.encaissement)
-        ).scalar() or 0.0
-
-        total_montant_restant = total_montant_ttc - total_encaissement
-
-        # Global collection rate
-        taux_global = (total_encaissement / total_montant_ttc * 100) if total_montant_ttc > 0 else 0.0
-
-        # Number of records
-        nombre_factures = query.count()
-
-        # Number of unique organizations
-        nombre_organisations = query.with_entities(
-            func.count(func.distinct(EncaissementARDot.organisation))
-        ).scalar() or 0
-
-        # By organization - use the filtered query
-        org_data = query.with_entities(
-            EncaissementARDot.organisation,
-            func.sum(EncaissementARDot.montant_ttc).label('total')
+        # Extract unique users from creer_par field
+        users_query = query.with_entities(
+            EncaissementARDot.creer_par
         ).filter(
-            EncaissementARDot.organisation.isnot(None)
-        ).group_by(
-            EncaissementARDot.organisation
-        ).order_by(func.sum(EncaissementARDot.montant_ttc).desc()).all()
+            EncaissementARDot.creer_par.isnot(None),
+            EncaissementARDot.creer_par != ""
+        ).distinct().all()
+        
+        users = sorted([row.creer_par for row in users_query if row.creer_par])
 
-        by_organisation = {row.organisation: float(row.total or 0) for row in org_data}
+        # Group by year - extract year from date_fact or mois
+        # Get all records and extract year in Python (more reliable)
+        all_records = query.all()
+        
+        # Build yearly data dictionary
+        yearly_data_dict = {}
+        
+        # If year filter is applied, we should only process records from that year
+        # But we still group by year in case there are edge cases
+        filter_year_str = None
+        if year and year != "all" and year.strip():
+            try:
+                filter_year_int = int(year.strip())
+                filter_year_str = str(filter_year_int)
+            except (ValueError, TypeError):
+                pass
+        
+        for record in all_records:
+            # Extract year from date_fact or mois
+            year_str = None
+            if record.date_fact:
+                year_str = str(record.date_fact.year)
+            elif record.mois and len(record.mois) >= 4:
+                # Extract year from YYYY-MM format
+                year_str = record.mois[:4]
+            
+            if not year_str:
+                continue
+            
+            # If year filter is applied, skip records that don't match
+            if filter_year_str and year_str != filter_year_str:
+                continue
+                
+            if year_str not in yearly_data_dict:
+                yearly_data_dict[year_str] = {
+                    'montant_ttc': 0.0,
+                    'encaissement': 0.0,
+                    'factures': set(),
+                    'organisations': set(),
+                    'by_organisation': {},
+                    'by_month': {}
+                }
+            
+            montant_ttc = float(record.montant_ttc or 0)
+            encaissement = float(record.encaissement or 0)
+            
+            yearly_data_dict[year_str]['montant_ttc'] += montant_ttc
+            yearly_data_dict[year_str]['encaissement'] += encaissement
+            yearly_data_dict[year_str]['factures'].add(record.id)
+            
+            if record.organisation:
+                yearly_data_dict[year_str]['organisations'].add(record.organisation)
+                if record.organisation not in yearly_data_dict[year_str]['by_organisation']:
+                    yearly_data_dict[year_str]['by_organisation'][record.organisation] = 0.0
+                yearly_data_dict[year_str]['by_organisation'][record.organisation] += montant_ttc
+            
+            if record.mois:
+                if record.mois not in yearly_data_dict[year_str]['by_month']:
+                    yearly_data_dict[year_str]['by_month'][record.mois] = 0.0
+                yearly_data_dict[year_str]['by_month'][record.mois] += montant_ttc
 
-        # By month - use the filtered query
-        month_data = query.with_entities(
-            EncaissementARDot.mois,
-            func.sum(EncaissementARDot.montant_ttc).label('total')
-        ).filter(
-            EncaissementARDot.mois.isnot(None)
-        ).group_by(
-            EncaissementARDot.mois
-        ).order_by(EncaissementARDot.mois).all()
+        # Build yearly response
+        yearly_data = []
+        for year_str in sorted(yearly_data_dict.keys(), reverse=True):
+            year_info = yearly_data_dict[year_str]
+            total_ttc = year_info['montant_ttc']
+            total_enc = year_info['encaissement']
+            total_restant = total_ttc - total_enc
+            taux = (total_enc / total_ttc * 100) if total_ttc > 0 else 0.0
+            
+            yearly_data.append(EncaissementYearlyData(
+                year=year_str,
+                total_montant_ttc=total_ttc,
+                total_encaissement=total_enc,
+                total_montant_restant=total_restant,
+                taux_encaissement=float(taux),
+                nombre_factures=len(year_info['factures']),
+                nombre_organisations=len(year_info['organisations']),
+                by_organisation=year_info['by_organisation'],
+                by_month=year_info['by_month']
+            ))
 
-        by_month = {row.mois: float(row.total or 0) for row in month_data}
+        # Calculate totals across all years (for backward compatibility)
+        # BUT: If year filter is applied, only sum the selected year's data
+        if year and year != "all" and year.strip():
+            year_str = str(year).strip()
+            selected_year_data = next(
+                (y for y in yearly_data if str(y.year).strip() == year_str), None
+            )
+            if selected_year_data:
+                total_montant_ttc = selected_year_data.total_montant_ttc
+                total_encaissement = selected_year_data.total_encaissement
+                total_montant_restant = selected_year_data.total_montant_restant
+                taux_global = selected_year_data.taux_encaissement
+                nombre_factures = selected_year_data.nombre_factures
+            else:
+                total_montant_ttc = 0.0
+                total_encaissement = 0.0
+                total_montant_restant = 0.0
+                taux_global = 0.0
+                nombre_factures = 0
+        else:
+            # No year filter - sum across all years
+            total_montant_ttc = sum(y.total_montant_ttc for y in yearly_data)
+            total_encaissement = sum(y.total_encaissement for y in yearly_data)
+            total_montant_restant = total_montant_ttc - total_encaissement
+            taux_global = (total_encaissement / total_montant_ttc * 100) if total_montant_ttc > 0 else 0.0
+            nombre_factures = sum(y.nombre_factures for y in yearly_data)
+        
+        # Aggregate by_organisation across all years
+        # BUT: If year filter is applied, only include organisations from that year
+        all_orgs = set()
+        by_organisation = {}
+        if year and year != "all" and year.strip():
+            # Year filter is applied - only include organisations from the selected year
+            # Normalize year to string for comparison
+            year_str = str(year).strip()
+            selected_year_data = next(
+                (y for y in yearly_data if str(y.year).strip() == year_str), None
+            )
+            if selected_year_data:
+                by_organisation = selected_year_data.by_organisation.copy()
+                all_orgs = set(selected_year_data.by_organisation.keys())
+        else:
+            # No year filter - aggregate across all years
+            for year_data in yearly_data:
+                all_orgs.update(year_data.by_organisation.keys())
+                for org, value in year_data.by_organisation.items():
+                    by_organisation[org] = by_organisation.get(org, 0.0) + value
+        
+        # Aggregate by_month across all years
+        # BUT: If year filter is applied, only include months from that year
+        by_month = {}
+        if year and year != "all" and year.strip():
+            # Year filter is applied - only include months from the selected year
+            # Normalize year to string for comparison
+            year_str = str(year).strip()
+            selected_year_data = next(
+                (y for y in yearly_data if str(y.year).strip() == year_str), None
+            )
+            if selected_year_data:
+                by_month = selected_year_data.by_month.copy()
+        else:
+            # No year filter - aggregate across all years
+            for year_data in yearly_data:
+                for month, value in year_data.by_month.items():
+                    by_month[month] = by_month.get(month, 0.0) + value
 
-        logger.info(f"Overview retrieved: Total TTC={total_montant_ttc}, Collection Rate={taux_global:.2f}%")
+        logger.info(f"Overview retrieved: {len(yearly_data)} years, {len(users)} users, Total TTC={total_montant_ttc}, Collection Rate={taux_global:.2f}%")
 
         return {
+            "yearly_data": yearly_data,
+            "users": users,
             "total_montant_ttc": float(total_montant_ttc),
             "total_encaissement": float(total_encaissement),
             "total_montant_restant": float(total_montant_restant),
-            "taux_encaissement": float(taux_global),  # Frontend expects taux_encaissement
-            "taux_encaissement_global": float(taux_global),  # Keep for backward compatibility
-            "nombre_factures": nombre_factures,  # Frontend expects nombre_factures
-            "nombre_factures_total": nombre_factures,  # Keep for backward compatibility
-            "nombre_organisations": nombre_organisations,
+            "taux_encaissement": float(taux_global),
+            "nombre_factures": nombre_factures,
+            "nombre_organisations": len(all_orgs),
             "by_organisation": by_organisation,
             "by_month": by_month
         }
@@ -323,7 +466,8 @@ async def get_by_organisation(
     date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
-    search: Optional[str] = Query(None)
+    search: Optional[str] = Query(None),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
 ):
     """
     Get encaissement data grouped by organization
@@ -365,7 +509,8 @@ async def get_by_organisation(
             date_fact_end=date_fact_end,
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
-            search=search
+            search=search,
+            year=year
         )
 
         # Build aggregation query with filters applied
@@ -522,7 +667,8 @@ async def get_by_date(
     date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
-    search: Optional[str] = Query(None)
+    search: Optional[str] = Query(None),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
 ):
     """
     Get encaissement data grouped by date (month)
@@ -560,7 +706,8 @@ async def get_by_date(
             date_fact_end=date_fact_end,
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
-            search=search
+            search=search,
+            year=year
         )
 
         # Group by month
@@ -616,7 +763,8 @@ async def get_by_encaisse_rate(
     date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
-    search: Optional[str] = Query(None)
+    search: Optional[str] = Query(None),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
 ):
     """
     Get encaissement data grouped by collection rate buckets
@@ -654,7 +802,8 @@ async def get_by_encaisse_rate(
             date_fact_end=date_fact_end,
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
-            search=search
+            search=search,
+            year=year
         )
 
         # Get all records
@@ -1014,6 +1163,8 @@ async def export_encaissement_data(
     taux_max: Optional[float] = Query(None, description="Maximum collection rate (legacy)"),
     # Search filter
     search: Optional[str] = Query(None, description="Search in client, n_fact, or organisation"),
+    # Year filter
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
     # Other filters
     include_duplicates: bool = Query(True, description="Include duplicate records"),
     include_anomalies: bool = Query(True, description="Include anomaly records"),
@@ -1070,7 +1221,8 @@ async def export_encaissement_data(
             date_fact_end=end_date,
             taux_encaissement_min=taux_min_val,
             taux_encaissement_max=taux_max_val,
-            search=search
+            search=search,
+            year=year
         )
         
         # Apply mois filter if provided (separate from date range)

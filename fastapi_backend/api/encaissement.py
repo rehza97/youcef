@@ -170,6 +170,7 @@ async def get_encaissement_records(
     is_duplicate: Optional[bool] = Query(None, description="Filter duplicates"),
     is_anomaly: Optional[bool] = Query(None, description="Filter anomalies"),
     file_upload_id: Optional[int] = Query(None, description="Filter by file upload"),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
     sort_by: str = Query("created_at", description="Sort by column"),
     sort_order: str = Query("desc", description="Sort order (asc/desc)"),
     current_user: User = Depends(get_current_user),
@@ -197,6 +198,7 @@ async def get_encaissement_records(
             is_duplicate=is_duplicate,
             is_anomaly=is_anomaly,
             file_upload_id=file_upload_id,
+            year=year,
             sort_by=sort_by,
             sort_order=sort_order
         )
@@ -289,6 +291,7 @@ async def get_preview_data(
             page_size=page_size,
             organisation=organisation,  # Will be handled by service for single org
             mois=mois,
+            year=str(year) if year else None,  # Convert int to string for service
             sort_by=sort_by,
             sort_order=sort_order
         )
@@ -304,14 +307,6 @@ async def get_preview_data(
             ]
             # Recalculate total if needed (approximate)
             records = filtered_records
-        
-        # Apply year filter if provided
-        if year:
-            filtered_by_year = [
-                r for r in records
-                if r.date_fact and r.date_fact.year == year
-            ]
-            records = filtered_by_year
         
         total_pages = (total + page_size - 1) // page_size if total > 0 else 1
 

@@ -1238,21 +1238,52 @@ class BackgroundProcessor:
             if 'updated_at' not in df.columns:
                 df['updated_at'] = datetime.utcnow()
 
-            # ✅ STEP 6: Bulk insert (already optimized)
-            logger.info(f"💾 Bulk inserting {len(df)} records into database...")
-            with self.bulk_engine.begin() as conn:
-                df.to_sql(
-                    'parks',
-                    conn,
-                    if_exists='append',
-                    index=False,
-                    method='multi',
-                    chunksize=10000
-                )
+            # ✅ STEP 6: Split dataframe based on customer_l1_code and bulk insert
+            # Separate 2B records from regular records
+            if 'customer_l1_code' in df.columns:
+                parks_2b_df = df[df['customer_l1_code'] == '2B'].copy()
+                parks_df = df[df['customer_l1_code'] != '2B'].copy()
+            else:
+                parks_df = df.copy()
+                parks_2b_df = pd.DataFrame()
 
+            saved_count = 0
+            saved_2b_count = 0
+
+            # Insert regular records into parks table
+            if len(parks_df) > 0:
+                logger.info(f"💾 Bulk inserting {len(parks_df)} records into parks table...")
+                with self.bulk_engine.begin() as conn:
+                    parks_df.to_sql(
+                        'parks',
+                        conn,
+                        if_exists='append',
+                        index=False,
+                        method='multi',
+                        chunksize=10000
+                    )
+                saved_count = len(parks_df)
+                logger.info(f"✅ SAVED {saved_count} records to parks table!")
+
+            # Insert 2B records into parks_2b table
+            if len(parks_2b_df) > 0:
+                logger.info(f"💾 Bulk inserting {len(parks_2b_df)} 2B records into parks_2b table...")
+                with self.bulk_engine.begin() as conn:
+                    parks_2b_df.to_sql(
+                        'parks_2b',
+                        conn,
+                        if_exists='append',
+                        index=False,
+                        method='multi',
+                        chunksize=10000
+                    )
+                saved_2b_count = len(parks_2b_df)
+                logger.info(f"✅ SAVED {saved_2b_count} 2B records to parks_2b table!")
+
+            total_saved = saved_count + saved_2b_count
             logger.info(
-                f"✅ SAVED {len(df)} records to database successfully!")
-            return len(df)
+                f"✅ SAVED {total_saved} total records ({saved_count} to parks, {saved_2b_count} to parks_2b)!")
+            return total_saved
 
         except Exception as e:
             logger.error(f"❌ Vectorized bulk save failed: {e}")

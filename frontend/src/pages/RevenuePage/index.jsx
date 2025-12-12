@@ -113,15 +113,15 @@ const OverviewCard = ({ title, value, icon: Icon, subtitle }) => (
     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
       <CardTitle className="text-sm font-medium">{title}</CardTitle>
       {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
-      </CardHeader>
+    </CardHeader>
     <CardContent>
       <div className="text-2xl font-bold">{value}</div>
       {subtitle && (
         <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
       )}
-      </CardContent>
-    </Card>
-  );
+    </CardContent>
+  </Card>
+);
 
 const EmptyState = ({ message = "Aucune donnée disponible" }) => (
   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -131,14 +131,14 @@ const EmptyState = ({ message = "Aucune donnée disponible" }) => (
 );
 
 // Excel-style Filter Component
-const ExcelFilter = ({ 
-  column, 
-  label, 
-  values = [], 
-  selected = [], 
-  onFilterChange, 
+const ExcelFilter = ({
+  column,
+  label,
+  values = [],
+  selected = [],
+  onFilterChange,
   onFetchValues,
-  loading = false 
+  loading = false,
 }) => {
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -160,9 +160,7 @@ const ExcelFilter = ({
 
   const handleToggle = (value) => {
     setTempSelected((prev) =>
-      prev.includes(value)
-        ? prev.filter((v) => v !== value)
-        : [...prev, value]
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
     );
   };
 
@@ -221,14 +219,15 @@ const ExcelFilter = ({
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-8 h-8 text-sm"
             />
-        </div>
+          </div>
         </div>
         <div className="p-2 border-b flex items-center justify-between">
           <button
             onClick={handleSelectAll}
             className="text-xs text-blue-600 hover:text-blue-800"
           >
-            {tempSelected.length === filteredValues.length && filteredValues.length > 0
+            {tempSelected.length === filteredValues.length &&
+            filteredValues.length > 0
               ? "Tout désélectionner"
               : "Tout sélectionner"}
           </button>
@@ -268,11 +267,7 @@ const ExcelFilter = ({
           >
             Effacer
           </Button>
-          <Button
-            size="sm"
-            onClick={handleApply}
-            className="h-7 text-xs"
-          >
+          <Button size="sm" onClick={handleApply} className="h-7 text-xs">
             OK
           </Button>
         </div>
@@ -312,6 +307,34 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 const CustomTooltipPercent = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload; // Get full data object
+    return (
+      <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
+        <p className="font-bold text-gray-900 mb-2">{label}</p>
+        <p
+          style={{ color: payload[0].color }}
+          className="text-sm font-semibold mb-1"
+        >
+          Taux de réalisation: {formatPercent(payload[0].value)}
+        </p>
+        {data.objectif_ca > 0 && (
+          <p className="text-sm text-gray-700">
+            Objectif C.A: {formatNumber(data.objectif_ca)} DZD
+          </p>
+        )}
+        {data.total_revenue > 0 && (
+          <p className="text-sm text-gray-700">
+            Chiffre d'Affaires: {formatNumber(data.total_revenue)} DZD
+          </p>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
+
+const CustomTooltipObjective = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
     return (
       <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
         <p className="font-bold text-gray-900 mb-2">{label}</p>
@@ -319,7 +342,7 @@ const CustomTooltipPercent = ({ active, payload, label }) => {
           style={{ color: payload[0].color }}
           className="text-sm font-semibold"
         >
-          Taux: {formatPercent(payload[0].value)}
+          Objectif C.A: {formatNumber(payload[0].value)} DZD
         </p>
       </div>
     );
@@ -332,47 +355,228 @@ const CustomTooltipPercent = ({ active, payload, label }) => {
 const REVENUE_JOURNAL_COLUMNS = [
   { key: "org_name", label: "Org Name", filterable: true, sortable: true },
   { key: "origine", label: "Origine", filterable: true, sortable: false },
-  { key: "n_fact", label: "N Fact", filterable: true, sortable: true, format: "mono" },
+  {
+    key: "n_fact",
+    label: "N Fact",
+    filterable: true,
+    sortable: true,
+    format: "mono",
+  },
   { key: "typ_fact", label: "Typ Fact", filterable: true, sortable: false },
-  { key: "date_fact", label: "Date Fact", filterable: true, sortable: true, format: "date" },
-  { key: "n_client", label: "N Client", filterable: true, sortable: false, format: "mono" },
-  { key: "client", label: "Client", filterable: true, sortable: false, format: "truncate" },
+  {
+    key: "date_fact",
+    label: "Date Fact",
+    filterable: true,
+    sortable: true,
+    format: "date",
+  },
+  {
+    key: "n_client",
+    label: "N Client",
+    filterable: true,
+    sortable: false,
+    format: "mono",
+  },
+  {
+    key: "client",
+    label: "Client",
+    filterable: true,
+    sortable: false,
+    format: "truncate",
+  },
   { key: "delai_paie", label: "Delai Paie", filterable: true, sortable: false },
   { key: "devise", label: "Devise", filterable: true, sortable: false },
-  { key: "obj_fact", label: "Obj Fact", filterable: true, sortable: false, format: "truncate" },
-  { key: "cpt_comptable", label: "Cpt Comptable", filterable: true, sortable: false, format: "mono" },
-  { key: "date_facture_gl", label: "Date facture GL", filterable: true, sortable: false, format: "date" },
-  { key: "date_gl", label: "Date GL", filterable: true, sortable: true, format: "date" },
-  { key: "periode_de_facturation", label: "Periode de facturation", filterable: true, sortable: false },
-  { key: "reference", label: "Reference", filterable: true, sortable: false, format: "truncate" },
-  { key: "termine_flag", label: "Termine Flag", filterable: true, sortable: false, format: "boolean" },
-  { key: "tax_amount", label: "Tax Amount", filterable: true, sortable: false, format: "number" },
+  {
+    key: "obj_fact",
+    label: "Obj Fact",
+    filterable: true,
+    sortable: false,
+    format: "truncate",
+  },
+  {
+    key: "cpt_comptable",
+    label: "Cpt Comptable",
+    filterable: true,
+    sortable: false,
+    format: "mono",
+  },
+  {
+    key: "date_facture_gl",
+    label: "Date facture GL",
+    filterable: true,
+    sortable: false,
+    format: "date",
+  },
+  {
+    key: "date_gl",
+    label: "Date GL",
+    filterable: true,
+    sortable: true,
+    format: "date",
+  },
+  {
+    key: "periode_de_facturation",
+    label: "Periode de facturation",
+    filterable: true,
+    sortable: false,
+  },
+  {
+    key: "reference",
+    label: "Reference",
+    filterable: true,
+    sortable: false,
+    format: "truncate",
+  },
+  {
+    key: "termine_flag",
+    label: "Termine Flag",
+    filterable: true,
+    sortable: false,
+    format: "boolean",
+  },
+  {
+    key: "tax_amount",
+    label: "Tax Amount",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
   { key: "creer_par", label: "Creer Par", filterable: true, sortable: false },
   { key: "n_ligne", label: "N Ligne", filterable: true, sortable: false },
-  { key: "description_ligne_de_produit", label: "Description (ligne de produit)", filterable: true, sortable: false, format: "truncate" },
+  {
+    key: "description_ligne_de_produit",
+    label: "Description (ligne de produit)",
+    filterable: true,
+    sortable: false,
+    format: "truncate",
+  },
   { key: "uom", label: "Uom", filterable: true, sortable: false },
-  { key: "qte", label: "Qte", filterable: true, sortable: false, format: "number" },
-  { key: "prix_uni", label: "Prix Uni", filterable: true, sortable: false, format: "number" },
-  { key: "taux_change", label: "Taux Change", filterable: true, sortable: false, format: "number" },
-  { key: "mnt_ht", label: "Mnt Ht", filterable: true, sortable: false, format: "number" },
+  {
+    key: "qte",
+    label: "Qte",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "prix_uni",
+    label: "Prix Uni",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "taux_change",
+    label: "Taux Change",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "mnt_ht",
+    label: "Mnt Ht",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
   { key: "tax", label: "Tax", filterable: true, sortable: false },
-  { key: "mnt_tax", label: "Mnt Tax", filterable: true, sortable: false, format: "number" },
-  { key: "mnt_ttc", label: "Mnt Ttc", filterable: true, sortable: false, format: "number" },
-  { key: "memo_line_id", label: "Memo Line Id", filterable: true, sortable: false },
-  { key: "chiffre_aff_exe_dzd", label: "Chiffre Aff Exe Dzd", filterable: true, sortable: true, format: "number" },
+  {
+    key: "mnt_tax",
+    label: "Mnt Tax",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "mnt_ttc",
+    label: "Mnt Ttc",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "memo_line_id",
+    label: "Memo Line Id",
+    filterable: true,
+    sortable: false,
+  },
+  {
+    key: "chiffre_aff_exe_dzd",
+    label: "Chiffre Aff Exe Dzd",
+    filterable: true,
+    sortable: true,
+    format: "number",
+  },
   // Additional columns not in the specified list (added at the end)
   { key: "id", label: "ID", filterable: true, sortable: true, format: "mono" },
-  { key: "file_upload_id", label: "File Upload ID", filterable: true, sortable: false },
+  {
+    key: "file_upload_id",
+    label: "File Upload ID",
+    filterable: true,
+    sortable: false,
+  },
   { key: "dot_id", label: "DOT ID", filterable: true, sortable: false },
-  { key: "tva", label: "TVA", filterable: true, sortable: false, format: "percent" },
-  { key: "chiffre_aff_exe_dzd_ttc", label: "Chiffre Aff Exe DZD TTC", filterable: true, sortable: false, format: "number" },
-  { key: "taux_realisation_ca", label: "Taux Réalisation CA", filterable: true, sortable: true, format: "percent" },
-  { key: "account_description_id", label: "Account Desc ID", filterable: true, sortable: false },
-  { key: "revenue_objective_id", label: "Revenue Obj ID", filterable: true, sortable: false },
-  { key: "is_anomaly", label: "Is Anomaly", filterable: true, sortable: false, format: "boolean" },
-  { key: "anomaly_reason", label: "Anomaly Reason", filterable: true, sortable: false, format: "truncate" },
-  { key: "created_at", label: "Créé le", filterable: true, sortable: true, format: "datetime" },
-  { key: "updated_at", label: "Modifié le", filterable: true, sortable: false, format: "datetime" },
+  {
+    key: "tva",
+    label: "TVA",
+    filterable: true,
+    sortable: false,
+    format: "percent",
+  },
+  {
+    key: "chiffre_aff_exe_dzd_ttc",
+    label: "Chiffre Aff Exe DZD TTC",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "taux_realisation_ca",
+    label: "Taux Réalisation CA",
+    filterable: true,
+    sortable: true,
+    format: "percent",
+  },
+  {
+    key: "account_description_id",
+    label: "Account Desc ID",
+    filterable: true,
+    sortable: false,
+  },
+  {
+    key: "revenue_objective_id",
+    label: "Revenue Obj ID",
+    filterable: true,
+    sortable: false,
+  },
+  {
+    key: "is_anomaly",
+    label: "Is Anomaly",
+    filterable: true,
+    sortable: false,
+    format: "boolean",
+  },
+  {
+    key: "anomaly_reason",
+    label: "Anomaly Reason",
+    filterable: true,
+    sortable: false,
+    format: "truncate",
+  },
+  {
+    key: "created_at",
+    label: "Créé le",
+    filterable: true,
+    sortable: true,
+    format: "datetime",
+  },
+  {
+    key: "updated_at",
+    label: "Modifié le",
+    filterable: true,
+    sortable: false,
+    format: "datetime",
+  },
 ];
 
 /**
@@ -381,16 +585,16 @@ const REVENUE_JOURNAL_COLUMNS = [
 const RevenuePage = () => {
   // WebSocket context
   const { subscribeTask } = useProcessing();
-  
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState({
     isOpen: false,
     taskId: null,
-    status: 'idle',
+    status: "idle",
     progress: 0,
-    message: '',
+    message: "",
     filename: null,
     downloadUrl: null,
   });
@@ -446,7 +650,7 @@ const RevenuePage = () => {
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPageSize, setPreviewPageSize] = useState(10);
   const [previewTableType, setPreviewTableType] = useState("journal"); // "journal", "objectives", "account-descriptions"
-  
+
   // Column filters and values
   const [columnFilters, setColumnFilters] = useState({});
   const [columnValues, setColumnValues] = useState({});
@@ -469,7 +673,8 @@ const RevenuePage = () => {
       const filterParams = {
         org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
         typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
-        cpt_comptable: filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
+        cpt_comptable:
+          filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
         start_date: filters.date_gl_start || undefined,
         end_date: filters.date_gl_end || undefined,
         start_date_fact: filters.date_fact_start || undefined,
@@ -485,7 +690,7 @@ const RevenuePage = () => {
         cpt_comptable_type: typeof filterParams.cpt_comptable,
         cpt_comptable_isArray: Array.isArray(filterParams.cpt_comptable),
         cpt_comptable_length: filterParams.cpt_comptable?.length,
-        all_filters: filterParams
+        all_filters: filterParams,
       });
 
       // Remove undefined values
@@ -498,17 +703,17 @@ const RevenuePage = () => {
         cpt_comptable_type: typeof filterParams.cpt_comptable,
         cpt_comptable_isArray: Array.isArray(filterParams.cpt_comptable),
         cpt_comptable_length: filterParams.cpt_comptable?.length,
-        all_filters: filterParams
+        all_filters: filterParams,
       });
 
       // Load all data simultaneously
       const [ovRes, orgRes, accRes, typeFactRes, monthRes, tauxCARes] =
         await Promise.all([
-        getRevenueOverview(filterParams),
-        getRevenueByOrg(filterParams),
-        getRevenueByAccount(filterParams),
-        getRevenueByTypeFact(filterParams),
-        getRevenueByMonth(filterParams),
+          getRevenueOverview(filterParams),
+          getRevenueByOrg(filterParams),
+          getRevenueByAccount(filterParams),
+          getRevenueByTypeFact(filterParams),
+          getRevenueByMonth(filterParams),
           getRevenueByTauxCA(filterParams),
         ]);
 
@@ -603,7 +808,10 @@ const RevenuePage = () => {
   const accountChartData = useMemo(() => {
     return byAccount
       .map((item) => ({
-        compte: (item.description || item.cpt_comptable || "Inconnu").substring(0, 50),
+        compte: (item.description || item.cpt_comptable || "Inconnu").substring(
+          0,
+          50
+        ),
         Total: item.total_revenue || 0,
       }))
       .sort((a, b) => b.Total - a.Total)
@@ -617,10 +825,12 @@ const RevenuePage = () => {
     return byOrg
       .map((item) => ({
         dot: item.org_name || "Inconnu",
-        taux: item.achievement_rate || 0,
+        objectif_ca: item.objective || 0, // Only DOT name and objectif_ca from revenue_objectives
+        taux: item.achievement_rate || 0, // Achievement rate for "BY Taux C.A" tab
+        total_revenue: item.total_revenue || 0, // Total revenue for tooltip
       }))
-      .sort((a, b) => b.taux - a.taux)
-      .slice(0, 30);
+      .filter((item) => item.objectif_ca > 0) // Only show DOTs with objectives
+      .sort((a, b) => b.taux - a.taux); // Sort by achievement rate (taux) from high to low
   }, [byOrg]);
 
   /**
@@ -631,32 +841,42 @@ const RevenuePage = () => {
       setExporting(true);
 
       const exportParams = { ...filters, format };
-      
+
       // Convert arrays to comma-separated strings, or remove if empty
       if (Array.isArray(exportParams.org_name)) {
-        exportParams.org_name = exportParams.org_name.length > 0 
-          ? exportParams.org_name.join(",") 
-          : undefined;
+        exportParams.org_name =
+          exportParams.org_name.length > 0
+            ? exportParams.org_name.join(",")
+            : undefined;
       }
       if (Array.isArray(exportParams.typ_fact)) {
-        exportParams.typ_fact = exportParams.typ_fact.length > 0 
-          ? exportParams.typ_fact.join(",") 
-          : undefined;
+        exportParams.typ_fact =
+          exportParams.typ_fact.length > 0
+            ? exportParams.typ_fact.join(",")
+            : undefined;
       }
       if (Array.isArray(exportParams.cpt_comptable)) {
-        exportParams.cpt_comptable = exportParams.cpt_comptable.length > 0 
-          ? exportParams.cpt_comptable.join(",") 
-          : undefined;
+        exportParams.cpt_comptable =
+          exportParams.cpt_comptable.length > 0
+            ? exportParams.cpt_comptable.join(",")
+            : undefined;
       }
-      
+
       // Remove empty strings and undefined values
       Object.keys(exportParams).forEach((key) => {
-        if (exportParams[key] === undefined || exportParams[key] === "" || exportParams[key] === null) {
+        if (
+          exportParams[key] === undefined ||
+          exportParams[key] === "" ||
+          exportParams[key] === null
+        ) {
           delete exportParams[key];
         }
       });
 
-      console.log("🚀 Starting async revenue export with filters:", exportParams);
+      console.log(
+        "🚀 Starting async revenue export with filters:",
+        exportParams
+      );
 
       // Start async export with "both" mode to get normal + anomalies
       const response = await startRevenueExport(exportParams, "both");
@@ -667,9 +887,9 @@ const RevenuePage = () => {
       setExportProgress({
         isOpen: true,
         taskId,
-        status: 'processing',
+        status: "processing",
         progress: 0,
-        message: 'Démarrage de l\'export...',
+        message: "Démarrage de l'export...",
         filename: null,
         downloadUrl: null,
       });
@@ -689,7 +909,9 @@ const RevenuePage = () => {
 
       // Response is a blob
       const blob = response.data;
-      const filename = exportProgress.filename || `revenue_export_${new Date().toISOString().split('T')[0]}.zip`;
+      const filename =
+        exportProgress.filename ||
+        `revenue_export_${new Date().toISOString().split("T")[0]}.zip`;
 
       // Create download link
       const url = window.URL.createObjectURL(blob);
@@ -702,7 +924,7 @@ const RevenuePage = () => {
       document.body.removeChild(a);
 
       toast.success("Export téléchargé avec succès");
-      setExportProgress(prev => ({ ...prev, isOpen: false }));
+      setExportProgress((prev) => ({ ...prev, isOpen: false }));
     } catch (error) {
       toast.error("Erreur lors du téléchargement de l'export");
     }
@@ -711,9 +933,12 @@ const RevenuePage = () => {
   // WebSocket listener for export progress
   useEffect(() => {
     const handleExportUpdate = (message) => {
-      if (message.type === 'processing_update' && message.task_id === exportProgress.taskId) {
+      if (
+        message.type === "processing_update" &&
+        message.task_id === exportProgress.taskId
+      ) {
         const updateData = message.data;
-        setExportProgress(prev => ({
+        setExportProgress((prev) => ({
           ...prev,
           status: updateData.status || prev.status,
           progress: updateData.progress || prev.progress,
@@ -761,9 +986,9 @@ const RevenuePage = () => {
 
     try {
       setPreviewLoading(true);
-      
+
       const offset = (previewPage - 1) * previewPageSize;
-      
+
       let response;
       if (previewTableType === "objectives") {
         response = await getRevenueObjectivesPreview(
@@ -773,9 +998,12 @@ const RevenuePage = () => {
         );
       } else if (previewTableType === "account-descriptions") {
         response = await getAccountDescriptionsPreview(
-          { 
+          {
             search: filters.search || undefined,
-            cpt_comptable: filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
+            cpt_comptable:
+              filters.cpt_comptable.length > 0
+                ? filters.cpt_comptable
+                : undefined,
           },
           previewPageSize,
           offset
@@ -785,15 +1013,26 @@ const RevenuePage = () => {
         // Build filter params - merge main filters with column filters
         const filterParams = {
           ...columnFilters, // Include all column-specific filters
-          org_name: filters.org_name.length > 0 ? filters.org_name : columnFilters.org_name || undefined,
-          typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : columnFilters.typ_fact || undefined,
-          cpt_comptable: filters.cpt_comptable.length > 0 ? filters.cpt_comptable : columnFilters.cpt_comptable || undefined,
+          org_name:
+            filters.org_name.length > 0
+              ? filters.org_name
+              : columnFilters.org_name || undefined,
+          typ_fact:
+            filters.typ_fact.length > 0
+              ? filters.typ_fact
+              : columnFilters.typ_fact || undefined,
+          cpt_comptable:
+            filters.cpt_comptable.length > 0
+              ? filters.cpt_comptable
+              : columnFilters.cpt_comptable || undefined,
           start_date: filters.date_gl_start || undefined,
           end_date: filters.date_gl_end || undefined,
           start_date_fact: filters.date_fact_start || undefined,
           end_date_fact: filters.date_fact_end || undefined,
-          taux_ca_min: filters.taux_ca_min || columnFilters.taux_ca_min || undefined,
-          taux_ca_max: filters.taux_ca_max || columnFilters.taux_ca_max || undefined,
+          taux_ca_min:
+            filters.taux_ca_min || columnFilters.taux_ca_min || undefined,
+          taux_ca_max:
+            filters.taux_ca_max || columnFilters.taux_ca_max || undefined,
           search: filters.search || undefined,
           order_by: orderBy,
           order_direction: orderDirection,
@@ -825,29 +1064,42 @@ const RevenuePage = () => {
   }, [activeTab, previewTableType, previewPage, previewPageSize, filters]);
 
   // Fetch column values for a specific column
-  const fetchColumnValues = useCallback(async (column) => {
-    if (columnValues[column] || loadingColumnValues[column]) return;
-    
-    try {
-      setLoadingColumnValues((prev) => ({ ...prev, [column]: true }));
-      const response = await getRevenueColumnValues(column);
-      setColumnValues((prev) => ({
-        ...prev,
-        [column]: response.data?.values || [],
-      }));
-    } catch (err) {
-      console.error(`Error fetching values for column ${column}:`, err);
-    } finally {
-      setLoadingColumnValues((prev) => ({ ...prev, [column]: false }));
-    }
-  }, [columnValues, loadingColumnValues]);
+  const fetchColumnValues = useCallback(
+    async (column) => {
+      if (columnValues[column] || loadingColumnValues[column]) return;
+
+      try {
+        setLoadingColumnValues((prev) => ({ ...prev, [column]: true }));
+        const response = await getRevenueColumnValues(column);
+        setColumnValues((prev) => ({
+          ...prev,
+          [column]: response.data?.values || [],
+        }));
+      } catch (err) {
+        console.error(`Error fetching values for column ${column}:`, err);
+      } finally {
+        setLoadingColumnValues((prev) => ({ ...prev, [column]: false }));
+      }
+    },
+    [columnValues, loadingColumnValues]
+  );
 
   // Fetch preview data when tab changes or filters/page changes
   useEffect(() => {
     if (activeTab === "preview") {
       fetchPreviewData();
     }
-  }, [activeTab, previewTableType, previewPage, previewPageSize, filters, columnFilters, orderBy, orderDirection, fetchPreviewData]);
+  }, [
+    activeTab,
+    previewTableType,
+    previewPage,
+    previewPageSize,
+    filters,
+    columnFilters,
+    orderBy,
+    orderDirection,
+    fetchPreviewData,
+  ]);
 
   // Handle column filter change
   const handleColumnFilterChange = (column, values) => {
@@ -936,20 +1188,25 @@ const RevenuePage = () => {
       </div>
 
       {/* Export Progress Dialog */}
-      <Dialog open={exportProgress.isOpen} onOpenChange={(open) => setExportProgress(prev => ({ ...prev, isOpen: open }))}>
+      <Dialog
+        open={exportProgress.isOpen}
+        onOpenChange={(open) =>
+          setExportProgress((prev) => ({ ...prev, isOpen: open }))
+        }
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Progression de l'Export</DialogTitle>
             <DialogDescription>
-              {exportProgress.status === 'completed' 
-                ? 'Export terminé avec succès!' 
-                : exportProgress.status === 'failed'
-                ? 'Erreur lors de l\'export'
-                : 'Votre export est en cours de traitement...'}
+              {exportProgress.status === "completed"
+                ? "Export terminé avec succès!"
+                : exportProgress.status === "failed"
+                ? "Erreur lors de l'export"
+                : "Votre export est en cours de traitement..."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {exportProgress.status === 'processing' && (
+            {exportProgress.status === "processing" && (
               <>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
@@ -963,11 +1220,12 @@ const RevenuePage = () => {
                   <Progress value={exportProgress.progress} className="h-2" />
                 </div>
                 <p className="text-xs text-muted-foreground text-center">
-                  Veuillez patienter, cette opération peut prendre quelques instants...
+                  Veuillez patienter, cette opération peut prendre quelques
+                  instants...
                 </p>
               </>
             )}
-            {exportProgress.status === 'completed' && (
+            {exportProgress.status === "completed" && (
               <div className="space-y-4">
                 <div className="flex items-center justify-center space-x-2 text-green-600">
                   <CheckCircle2 className="h-6 w-6" />
@@ -988,18 +1246,21 @@ const RevenuePage = () => {
                 </Button>
               </div>
             )}
-            {exportProgress.status === 'failed' && (
+            {exportProgress.status === "failed" && (
               <div className="space-y-4">
                 <div className="flex items-center justify-center space-x-2 text-red-600">
                   <XCircle className="h-6 w-6" />
                   <span className="font-semibold">Échec de l'export</span>
                 </div>
                 <p className="text-sm text-center text-muted-foreground">
-                  {exportProgress.message || "Une erreur s'est produite lors de l'export"}
+                  {exportProgress.message ||
+                    "Une erreur s'est produite lors de l'export"}
                 </p>
                 <Button
                   variant="outline"
-                  onClick={() => setExportProgress(prev => ({ ...prev, isOpen: false }))}
+                  onClick={() =>
+                    setExportProgress((prev) => ({ ...prev, isOpen: false }))
+                  }
                   className="w-full"
                 >
                   Fermer
@@ -1068,8 +1329,8 @@ const RevenuePage = () => {
 
       {/* Enhanced Filters */}
       {showFilters && (
-      <Card>
-        <CardHeader>
+        <Card>
+          <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Filtres Avancés</CardTitle>
               <div className="flex gap-2">
@@ -1082,157 +1343,139 @@ const RevenuePage = () => {
                 </Button>
               </div>
             </div>
-        </CardHeader>
+          </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {/* Primary Filters */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
+                <div>
                   <Label>DOT</Label>
-              <MultiSelect
-                options={filterOptions.org_names.map((name) => ({
-                  label: name,
-                  value: name,
-                }))}
-                selected={filters.org_name}
-                onChange={(values) =>
-                  setFilters((f) => ({ ...f, org_name: values }))
-                }
-                placeholder="Tous les DOTs"
-              />
-            </div>
+                  <MultiSelect
+                    options={filterOptions.org_names.map((name) => ({
+                      label: name,
+                      value: name,
+                    }))}
+                    selected={filters.org_name}
+                    onChange={(values) =>
+                      setFilters((f) => ({ ...f, org_name: values }))
+                    }
+                    placeholder="Tous les DOTs"
+                  />
+                </div>
 
-            <div>
+                <div>
                   <Label>Type Fact</Label>
-              <MultiSelect
-                options={filterOptions.typ_fact_list.map((type) => ({
-                  label: type,
-                  value: type,
-                }))}
-                selected={filters.typ_fact}
-                onChange={(values) =>
-                  setFilters((f) => ({ ...f, typ_fact: values }))
-                }
+                  <MultiSelect
+                    options={filterOptions.typ_fact_list.map((type) => ({
+                      label: type,
+                      value: type,
+                    }))}
+                    selected={filters.typ_fact}
+                    onChange={(values) =>
+                      setFilters((f) => ({ ...f, typ_fact: values }))
+                    }
                     placeholder="Tous les statuts"
-              />
-          </div>
+                  />
+                </div>
 
-            <div>
+                <div>
                   <Label>Compte comptable</Label>
-              <MultiSelect
-                options={filterOptions.cpt_comptable_list.map((item) => ({
-                  label: `${item.code} - ${item.description || "Sans description"}`,
-                  value: item.code,
-                }))}
-                selected={filters.cpt_comptable}
-                onChange={(values) => {
-                  console.log("🔍 [FRONTEND] Compte comptable filter changed:", {
-                    values: values,
-                    values_type: typeof values,
-                    values_isArray: Array.isArray(values),
-                    values_length: values?.length,
-                    values_content: values
-                  });
-                  setFilters((f) => ({ ...f, cpt_comptable: values }))
-                }}
-                placeholder="Tous les comptes comptables"
-                showSelectAll={true}
-              />
-            </div>
+                  <MultiSelect
+                    options={filterOptions.cpt_comptable_list.map((item) => ({
+                      label: `${item.code} - ${
+                        item.description || "Sans description"
+                      }`,
+                      value: item.code,
+                    }))}
+                    selected={filters.cpt_comptable}
+                    onChange={(values) => {
+                      console.log(
+                        "🔍 [FRONTEND] Compte comptable filter changed:",
+                        {
+                          values: values,
+                          values_type: typeof values,
+                          values_isArray: Array.isArray(values),
+                          values_length: values?.length,
+                          values_content: values,
+                        }
+                      );
+                      setFilters((f) => ({ ...f, cpt_comptable: values }));
+                    }}
+                    placeholder="Tous les comptes comptables"
+                    showSelectAll={true}
+                  />
+                </div>
 
-            <div>
-                  <Label>Taux de réalisation C.A (%)</Label>
-                  <div className="flex gap-2">
-              <Input
-                      type="number"
-                      placeholder="Min"
-                      value={filters.taux_ca_min}
-                onChange={(e) =>
-                        setFilters((f) => ({ ...f, taux_ca_min: e.target.value }))
-                      }
-                    />
-              <Input
-                      type="number"
-                      placeholder="Max"
-                      value={filters.taux_ca_max}
-                onChange={(e) =>
-                        setFilters((f) => ({ ...f, taux_ca_max: e.target.value }))
-                }
-              />
-            </div>
+                <div>
+                  <Label>Recherche</Label>
+                  <Input
+                    placeholder="Recherche dans tous les champs..."
+                    value={filters.search || ""}
+                    onChange={(e) =>
+                      setFilters((f) => ({ ...f, search: e.target.value }))
+                    }
+                  />
                 </div>
               </div>
 
               {/* Secondary Filters */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
+                <div>
                   <Label>Date Fact - Début (Mois)</Label>
-              <Input
-                type="month"
+                  <Input
+                    type="month"
                     value={filters.date_fact_start}
-                onChange={(e) =>
+                    onChange={(e) =>
                       setFilters((f) => ({
                         ...f,
                         date_fact_start: e.target.value,
                       }))
-                }
-              />
-          </div>
+                    }
+                  />
+                </div>
 
-          <div>
+                <div>
                   <Label>Date Fact - Fin (Mois)</Label>
-            <Input
+                  <Input
                     type="month"
                     value={filters.date_fact_end}
-              onChange={(e) =>
+                    onChange={(e) =>
                       setFilters((f) => ({
                         ...f,
                         date_fact_end: e.target.value,
                       }))
                     }
                   />
-          </div>
+                </div>
 
-            <div>
+                <div>
                   <Label>Date GL - Début (Mois)</Label>
-              <Input
+                  <Input
                     type="month"
                     value={filters.date_gl_start}
-                onChange={(e) =>
+                    onChange={(e) =>
                       setFilters((f) => ({
                         ...f,
                         date_gl_start: e.target.value,
                       }))
-                }
-              />
-            </div>
+                    }
+                  />
+                </div>
 
-            <div>
+                <div>
                   <Label>Date GL - Fin (Mois)</Label>
-              <Input
+                  <Input
                     type="month"
                     value={filters.date_gl_end}
-                onChange={(e) =>
+                    onChange={(e) =>
                       setFilters((f) => ({
                         ...f,
                         date_gl_end: e.target.value,
                       }))
-                }
-              />
-            </div>
-          </div>
-
-              {/* Search */}
-          <div>
-                <Label>Recherche Globale</Label>
-            <Input
-              placeholder="Recherche dans tous les champs..."
-              value={filters.search}
-              onChange={(e) =>
-                setFilters((f) => ({ ...f, search: e.target.value }))
-              }
-            />
-          </div>
+                    }
+                  />
+                </div>
+              </div>
 
               {/* Active Filters Summary */}
               {activeFilterCount > 0 && (
@@ -1264,10 +1507,20 @@ const RevenuePage = () => {
 
                         const displayValue = Array.isArray(value)
                           ? key === "cpt_comptable"
-                            ? value.map(code => {
-                                const item = filterOptions.cpt_comptable_list.find(c => c.code === code);
-                                return item ? `${code} - ${item.description?.substring(0, 30) || "Sans description"}` : code;
-                              }).join(", ")
+                            ? value
+                                .map((code) => {
+                                  const item =
+                                    filterOptions.cpt_comptable_list.find(
+                                      (c) => c.code === code
+                                    );
+                                  return item
+                                    ? `${code} - ${
+                                        item.description?.substring(0, 30) ||
+                                        "Sans description"
+                                      }`
+                                    : code;
+                                })
+                                .join(", ")
                             : `${value.length} sélectionné(s)`
                           : value;
 
@@ -1281,8 +1534,8 @@ const RevenuePage = () => {
                             <X
                               className="h-3 w-3 ml-1 cursor-pointer"
                               onClick={() =>
-                        setFilters((f) => ({
-                          ...f,
+                                setFilters((f) => ({
+                                  ...f,
                                   [key]: Array.isArray(value) ? [] : "",
                                 }))
                               }
@@ -1292,10 +1545,10 @@ const RevenuePage = () => {
                       }
                       return null;
                     })}
+                  </div>
                 </div>
-            </div>
               )}
-          </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -1304,14 +1557,14 @@ const RevenuePage = () => {
       <div className="flex flex-wrap gap-2 border-b pb-2">
         {[
           { id: "overview", label: "OVERVIEW", icon: BarChart3 },
-          { id: "dot", label: "BY DOT", icon: Building },
+          { id: "dot", label: "BY C.A", icon: Building },
           { id: "type-fact", label: "BY Type Fact", icon: FileText },
           { id: "date-gl", label: "BY Date GL", icon: BarChart3 },
           { id: "cpt-comptable", label: "BY Cpt Comptable", icon: FileText },
           { id: "taux-ca", label: "BY Taux C.A", icon: TrendingUp },
           { id: "preview", label: "PREVIEW DATA", icon: FileText },
         ].map((tab) => (
-            <Button
+          <Button
             key={tab.id}
             variant={activeTab === tab.id ? "default" : "ghost"}
             onClick={() => setActiveTab(tab.id)}
@@ -1320,52 +1573,52 @@ const RevenuePage = () => {
           >
             <tab.icon className="h-4 w-4" />
             {tab.label}
-            </Button>
+          </Button>
         ))}
-          </div>
+      </div>
 
       {/* Tab Content */}
       <div className="space-y-6">
         {activeTab === "overview" && (
-      <Card>
+          <Card>
             <CardHeader>
               <CardTitle>C.A vs Objectif par Mois</CardTitle>
             </CardHeader>
             <CardContent>
               {monthlyChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={450}>
-                <BarChart data={monthlyChartData} margin={{ bottom: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                  <XAxis
-                    dataKey="mois"
-                    angle={0}
-                    textAnchor="middle"
-                    style={{ fontSize: "12px" }}
-                  />
-                  <YAxis
-                    tickFormatter={(value) =>
+                <ResponsiveContainer width="100%" height={450}>
+                  <BarChart data={monthlyChartData} margin={{ bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="mois"
+                      angle={0}
+                      textAnchor="middle"
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) =>
                         new Intl.NumberFormat("fr-FR", {
                           notation: "compact",
                         }).format(value)
-                    }
-                    style={{ fontSize: "12px" }}
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend
-                    wrapperStyle={{ fontSize: "14px", paddingTop: "20px" }}
-                  />
-                  <Bar
-                    dataKey="Somme de_Chiffre d'affaires"
-                    fill={COLORS.primary}
-                    radius={[4, 4, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="Somme de_Objectif C.A"
-                    fill={COLORS.secondary}
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "20px" }}
+                    />
+                    <Bar
+                      dataKey="Somme de_Chiffre d'affaires"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="Somme de_Objectif C.A"
+                      fill={COLORS.secondary}
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
               ) : (
                 <EmptyState message="Aucune donnée disponible" />
               )}
@@ -1376,15 +1629,198 @@ const RevenuePage = () => {
         {activeTab === "dot" && (
           <Card>
             <CardHeader>
-              <CardTitle>DOT et Taux de Réalisation</CardTitle>
+              <CardTitle>DOT et Objectif C.A</CardTitle>
             </CardHeader>
             <CardContent>
               {dotTauxChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={700}>
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(700, dotTauxChartData.length * 25)}
+                >
                   <BarChart
                     data={dotTauxChartData}
                     layout="vertical"
-                    margin={{ left: 120, right: 20 }}
+                    margin={{ left: 120, right: 20, top: 10, bottom: 10 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      type="number"
+                      tickFormatter={(value) => formatNumber(value)}
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      dataKey="dot"
+                      type="category"
+                      width={110}
+                      tick={{ fontSize: 11 }}
+                    />
+                    <Tooltip content={<CustomTooltipObjective />} />
+                    <Bar
+                      dataKey="objectif_ca"
+                      radius={[0, 4, 4, 0]}
+                      fill={COLORS.primary}
+                    >
+                      {dotTauxChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS.primary} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée DOT disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "type-fact" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue par Type Fact</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {byTypeFact.length > 0 ? (
+                <ResponsiveContainer width="100%" height={450}>
+                  <BarChart data={byTypeFact} margin={{ bottom: 80, left: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="typ_fact"
+                      angle={-45}
+                      textAnchor="end"
+                      interval={0}
+                      style={{ fontSize: "10px" }}
+                      height={100}
+                    />
+                    <YAxis
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="total_revenue"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Type Fact disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "date-gl" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue par Date GL (Mois)</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {byMonth.length > 0 ? (
+                <ResponsiveContainer width="100%" height={450}>
+                  <BarChart data={byMonth} margin={{ bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="month"
+                      angle={0}
+                      textAnchor="middle"
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="total_revenue"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Date GL disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "cpt-comptable" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Description Cpt Comptable</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {accountChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={450}>
+                  <BarChart
+                    data={accountChartData}
+                    margin={{ bottom: 80, left: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="compte"
+                      angle={-45}
+                      textAnchor="end"
+                      interval={0}
+                      style={{ fontSize: "10px" }}
+                      height={100}
+                    />
+                    <YAxis
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="Total"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Compte Comptable disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "taux-ca" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>DOT et Taux de Réalisation C.A</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {dotTauxChartData.length > 0 ? (
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(700, dotTauxChartData.length * 25)}
+                >
+                  <BarChart
+                    data={dotTauxChartData}
+                    layout="vertical"
+                    margin={{ left: 120, right: 20, top: 10, bottom: 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
@@ -1418,169 +1854,6 @@ const RevenuePage = () => {
           </Card>
         )}
 
-        {activeTab === "type-fact" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Revenue par Type Fact</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {byTypeFact.length > 0 ? (
-              <ResponsiveContainer width="100%" height={450}>
-                  <BarChart data={byTypeFact} margin={{ bottom: 80, left: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                  <XAxis
-                      dataKey="typ_fact"
-                    angle={-45}
-                    textAnchor="end"
-                    interval={0}
-                    style={{ fontSize: "10px" }}
-                    height={100}
-                  />
-                  <YAxis
-                    tickFormatter={(value) =>
-                        new Intl.NumberFormat("fr-FR", {
-                          notation: "compact",
-                        }).format(value)
-                    }
-                    style={{ fontSize: "12px" }}
-                  />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }} />
-                    <Bar
-                      dataKey="total_revenue"
-                      fill={COLORS.primary}
-                      radius={[4, 4, 0, 0]}
-                    />
-                </BarChart>
-              </ResponsiveContainer>
-              ) : (
-                <EmptyState message="Aucune donnée Type Fact disponible" />
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {activeTab === "date-gl" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Revenue par Date GL (Mois)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {byMonth.length > 0 ? (
-                <ResponsiveContainer width="100%" height={450}>
-                  <BarChart data={byMonth} margin={{ bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                    <XAxis
-                      dataKey="month"
-                      angle={0}
-                      textAnchor="middle"
-                      style={{ fontSize: "12px" }}
-                    />
-                    <YAxis
-                      tickFormatter={(value) =>
-                        new Intl.NumberFormat("fr-FR", {
-                          notation: "compact",
-                        }).format(value)
-                      }
-                      style={{ fontSize: "12px" }}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }} />
-                    <Bar
-                      dataKey="total_revenue"
-                      fill={COLORS.primary}
-                      radius={[4, 4, 0, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyState message="Aucune donnée Date GL disponible" />
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {activeTab === "cpt-comptable" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Description Cpt Comptable</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {accountChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={450}>
-                <BarChart
-                    data={accountChartData}
-                    margin={{ bottom: 80, left: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                  <XAxis
-                      dataKey="compte"
-                      angle={-45}
-                      textAnchor="end"
-                      interval={0}
-                      style={{ fontSize: "10px" }}
-                      height={100}
-                    />
-                    <YAxis
-                      tickFormatter={(value) =>
-                        new Intl.NumberFormat("fr-FR", {
-                          notation: "compact",
-                        }).format(value)
-                      }
-                      style={{ fontSize: "12px" }}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }} />
-                    <Bar dataKey="Total" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyState message="Aucune donnée Compte Comptable disponible" />
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {activeTab === "taux-ca" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Revenue par Taux C.A</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {byTauxCA.length > 0 ? (
-                <ResponsiveContainer width="100%" height={450}>
-                  <BarChart data={byTauxCA} margin={{ bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                    <XAxis
-                      dataKey="taux_range"
-                      angle={0}
-                      textAnchor="middle"
-                    style={{ fontSize: "12px" }}
-                  />
-                  <YAxis
-                      tickFormatter={(value) =>
-                        new Intl.NumberFormat("fr-FR", {
-                          notation: "compact",
-                        }).format(value)
-                      }
-                      style={{ fontSize: "12px" }}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }} />
-                    <Bar
-                      dataKey="total_revenue"
-                      fill={COLORS.primary}
-                      radius={[4, 4, 0, 0]}
-                    />
-                </BarChart>
-              </ResponsiveContainer>
-              ) : (
-                <EmptyState message="Aucune donnée Taux C.A disponible" />
-              )}
-        </CardContent>
-      </Card>
-        )}
-
         {activeTab === "preview" && (
           <Card>
             <CardHeader>
@@ -1602,9 +1875,13 @@ const RevenuePage = () => {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="journal">Journal (Revenue Journal)</SelectItem>
+                        <SelectItem value="journal">
+                          Journal (Revenue Journal)
+                        </SelectItem>
                         <SelectItem value="objectives">Objectif C.A</SelectItem>
-                        <SelectItem value="account-descriptions">Description Cpt Comptable</SelectItem>
+                        <SelectItem value="account-descriptions">
+                          Description Cpt Comptable
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1679,10 +1956,16 @@ const RevenuePage = () => {
                               {REVENUE_JOURNAL_COLUMNS.map((col) => (
                                 <TableHead
                                   key={col.key}
-                                  className={col.key === "id" ? "sticky left-0 bg-background z-10" : ""}
+                                  className={
+                                    col.key === "id"
+                                      ? "sticky left-0 bg-background z-10"
+                                      : ""
+                                  }
                                 >
                                   <div className="flex items-center justify-between gap-1 min-w-[120px]">
-                                    <span className="text-xs font-medium flex-1 truncate">{col.label}</span>
+                                    <span className="text-xs font-medium flex-1 truncate">
+                                      {col.label}
+                                    </span>
                                     <div className="flex items-center gap-1">
                                       {col.sortable && (
                                         <button
@@ -1693,11 +1976,11 @@ const RevenuePage = () => {
                                           className="hover:text-primary p-0.5"
                                           title="Trier"
                                         >
-                                          {orderBy === col.key ? (
-                                            orderDirection === "asc" ? "↑" : "↓"
-                                          ) : (
-                                            "⇅"
-                                          )}
+                                          {orderBy === col.key
+                                            ? orderDirection === "asc"
+                                              ? "↑"
+                                              : "↓"
+                                            : "⇅"}
                                         </button>
                                       )}
                                       {/* All columns have filters now */}
@@ -1706,8 +1989,15 @@ const RevenuePage = () => {
                                         label={col.label}
                                         values={columnValues[col.key] || []}
                                         selected={columnFilters[col.key] || []}
-                                        onFilterChange={(values) => handleColumnFilterChange(col.key, values)}
-                                        onFetchValues={() => fetchColumnValues(col.key)}
+                                        onFilterChange={(values) =>
+                                          handleColumnFilterChange(
+                                            col.key,
+                                            values
+                                          )
+                                        }
+                                        onFetchValues={() =>
+                                          fetchColumnValues(col.key)
+                                        }
                                         loading={loadingColumnValues[col.key]}
                                       />
                                     </div>
@@ -1731,15 +2021,21 @@ const RevenuePage = () => {
                                   {formatNumber(record.objectif_ca || 0)}
                                 </TableCell>
                                 <TableCell>{record.dot_id || "-"}</TableCell>
-                                <TableCell>{record.file_upload_id || "-"}</TableCell>
+                                <TableCell>
+                                  {record.file_upload_id || "-"}
+                                </TableCell>
                                 <TableCell className="text-xs">
                                   {record.created_at
-                                    ? new Date(record.created_at).toLocaleString("fr-FR")
+                                    ? new Date(
+                                        record.created_at
+                                      ).toLocaleString("fr-FR")
                                     : "-"}
                                 </TableCell>
                                 <TableCell className="text-xs">
                                   {record.updated_at
-                                    ? new Date(record.updated_at).toLocaleString("fr-FR")
+                                    ? new Date(
+                                        record.updated_at
+                                      ).toLocaleString("fr-FR")
                                     : "-"}
                                 </TableCell>
                               </>
@@ -1759,15 +2055,21 @@ const RevenuePage = () => {
                                 <TableCell>{record.type_cpte || "-"}</TableCell>
                                 <TableCell>{record.auxil || "-"}</TableCell>
                                 <TableCell>{record.let || "-"}</TableCell>
-                                <TableCell>{record.file_upload_id || "-"}</TableCell>
+                                <TableCell>
+                                  {record.file_upload_id || "-"}
+                                </TableCell>
                                 <TableCell className="text-xs">
                                   {record.created_at
-                                    ? new Date(record.created_at).toLocaleString("fr-FR")
+                                    ? new Date(
+                                        record.created_at
+                                      ).toLocaleString("fr-FR")
                                     : "-"}
                                 </TableCell>
                                 <TableCell className="text-xs">
                                   {record.updated_at
-                                    ? new Date(record.updated_at).toLocaleString("fr-FR")
+                                    ? new Date(
+                                        record.updated_at
+                                      ).toLocaleString("fr-FR")
                                     : "-"}
                                 </TableCell>
                               </>
@@ -1777,12 +2079,16 @@ const RevenuePage = () => {
                                 {REVENUE_JOURNAL_COLUMNS.map((col) => {
                                   const value = record[col.key];
                                   let displayValue = "-";
-                                  
+
                                   if (value !== null && value !== undefined) {
                                     if (col.format === "date") {
-                                      displayValue = new Date(value).toLocaleDateString("fr-FR");
+                                      displayValue = new Date(
+                                        value
+                                      ).toLocaleDateString("fr-FR");
                                     } else if (col.format === "datetime") {
-                                      displayValue = new Date(value).toLocaleString("fr-FR");
+                                      displayValue = new Date(
+                                        value
+                                      ).toLocaleString("fr-FR");
                                     } else if (col.format === "number") {
                                       displayValue = formatNumber(value);
                                     } else if (col.format === "percent") {
@@ -1793,16 +2099,38 @@ const RevenuePage = () => {
                                       displayValue = String(value);
                                     }
                                   }
-                                  
+
                                   return (
                                     <TableCell
                                       key={col.key}
                                       className={`
-                                        ${col.key === "id" ? "sticky left-0 bg-background z-10" : ""}
-                                        ${col.format === "mono" ? "font-mono text-xs" : ""}
-                                        ${col.format === "truncate" ? "max-w-[200px] truncate" : ""}
-                                        ${col.format === "number" || col.format === "percent" ? "text-right" : ""}
-                                        ${col.format === "date" || col.format === "datetime" ? "text-xs" : ""}
+                                        ${
+                                          col.key === "id"
+                                            ? "sticky left-0 bg-background z-10"
+                                            : ""
+                                        }
+                                        ${
+                                          col.format === "mono"
+                                            ? "font-mono text-xs"
+                                            : ""
+                                        }
+                                        ${
+                                          col.format === "truncate"
+                                            ? "max-w-[200px] truncate"
+                                            : ""
+                                        }
+                                        ${
+                                          col.format === "number" ||
+                                          col.format === "percent"
+                                            ? "text-right"
+                                            : ""
+                                        }
+                                        ${
+                                          col.format === "date" ||
+                                          col.format === "datetime"
+                                            ? "text-xs"
+                                            : ""
+                                        }
                                       `}
                                     >
                                       {displayValue}
@@ -1845,7 +2173,9 @@ const RevenuePage = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setPreviewPage((p) => Math.max(1, p - 1))}
+                        onClick={() =>
+                          setPreviewPage((p) => Math.max(1, p - 1))
+                        }
                         disabled={previewPage === 1 || previewLoading}
                       >
                         Précédent
