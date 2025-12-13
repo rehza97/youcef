@@ -2000,6 +2000,12 @@ export const getEncaissementDotTauxData = (filters = {}) => {
 export const getEncaissementFilters = () =>
   api.get("/api/encaissement/filters");
 
+export const getEncaissementColumnValues = (column) => {
+  return api.get(
+    `/api/encaissement/preview-data/column-values?column=${column}`
+  );
+};
+
 /**
  * Export Encaissement AR DOT data with French formatting
  */

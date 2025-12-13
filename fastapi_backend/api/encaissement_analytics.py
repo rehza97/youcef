@@ -282,8 +282,19 @@ async def get_overview(
         
         users = sorted([row.creer_par for row in users_query if row.creer_par])
 
+        # Use SQL aggregation for accurate totals (more efficient and precise than Python sum)
+        # First, get totals using SQL SUM for accuracy
+        total_result = query.with_entities(
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement'),
+            func.count(EncaissementARDot.id).label('total_count')
+        ).first()
+        
+        sql_total_ttc = float(total_result.total_montant_ttc or 0) if total_result else 0.0
+        sql_total_enc = float(total_result.total_encaissement or 0) if total_result else 0.0
+        
         # Group by year - extract year from date_fact or mois
-        # Get all records and extract year in Python (more reliable)
+        # Get all records for year grouping (needed for yearly breakdown)
         all_records = query.all()
         
         # Build yearly data dictionary
@@ -365,30 +376,24 @@ async def get_overview(
             ))
 
         # Calculate totals across all years (for backward compatibility)
-        # BUT: If year filter is applied, only sum the selected year's data
+        # ALWAYS use SQL SUM for accurate totals (more precise than Python sum)
+        # The SQL SUM already has all filters applied (including year filter if present)
+        # This ensures database-level precision and consistency
+        total_montant_ttc = sql_total_ttc
+        total_encaissement = sql_total_enc
+        total_montant_restant = total_montant_ttc - total_encaissement
+        taux_global = (total_encaissement / total_montant_ttc * 100) if total_montant_ttc > 0 else 0.0
+        
+        # For nombre_factures, use count from SQL or sum from yearly_data
         if year and year != "all" and year.strip():
+            # Year filter applied - get count from selected year
             year_str = str(year).strip()
             selected_year_data = next(
                 (y for y in yearly_data if str(y.year).strip() == year_str), None
             )
-            if selected_year_data:
-                total_montant_ttc = selected_year_data.total_montant_ttc
-                total_encaissement = selected_year_data.total_encaissement
-                total_montant_restant = selected_year_data.total_montant_restant
-                taux_global = selected_year_data.taux_encaissement
-                nombre_factures = selected_year_data.nombre_factures
-            else:
-                total_montant_ttc = 0.0
-                total_encaissement = 0.0
-                total_montant_restant = 0.0
-                taux_global = 0.0
-                nombre_factures = 0
+            nombre_factures = selected_year_data.nombre_factures if selected_year_data else 0
         else:
-            # No year filter - sum across all years
-            total_montant_ttc = sum(y.total_montant_ttc for y in yearly_data)
-            total_encaissement = sum(y.total_encaissement for y in yearly_data)
-            total_montant_restant = total_montant_ttc - total_encaissement
-            taux_global = (total_encaissement / total_montant_ttc * 100) if total_montant_ttc > 0 else 0.0
+            # No year filter - sum counts from all years
             nombre_factures = sum(y.nombre_factures for y in yearly_data)
         
         # Aggregate by_organisation across all years

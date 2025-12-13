@@ -32,6 +32,7 @@ import {
   AlertCircle,
   Calendar,
   Percent,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,6 +43,7 @@ import {
   getEncaissementFilters,
   getEncaissementRecords,
   exportEncaissementRecords,
+  getEncaissementColumnValues,
 } from "../../services/api";
 import {
   Table,
@@ -58,6 +60,241 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+  DropdownMenuCheckboxItem,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+
+// Excel-style Filter Component
+const ExcelFilter = ({
+  column,
+  label,
+  values = [],
+  selected = [],
+  onFilterChange,
+  onFetchValues,
+  loading = false,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [tempSelected, setTempSelected] = useState(selected);
+
+  // Initialize tempSelected when dropdown opens
+  useEffect(() => {
+    if (open) {
+      setTempSelected(selected);
+      if (values.length === 0 && !loading) {
+        onFetchValues();
+      }
+    }
+  }, [open, selected, values.length, loading, onFetchValues]);
+
+  const filteredValues = values.filter((val) =>
+    val.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleToggle = (value) => {
+    setTempSelected((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (tempSelected.length === filteredValues.length) {
+      setTempSelected([]);
+    } else {
+      setTempSelected([...filteredValues]);
+    }
+  };
+
+  const handleApply = () => {
+    onFilterChange(tempSelected);
+    setOpen(false);
+    setSearchTerm("");
+  };
+
+  const handleClear = () => {
+    setTempSelected([]);
+    onFilterChange([]);
+    setOpen(false);
+    setSearchTerm("");
+  };
+
+  const hasFilter = selected.length > 0;
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          className={`flex items-center gap-1 px-1 py-0.5 rounded hover:bg-gray-100 ${
+            hasFilter ? "bg-blue-100 text-blue-700" : ""
+          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen(true);
+          }}
+        >
+          <Filter className="h-3 w-3" />
+          {hasFilter && (
+            <span className="text-xs font-semibold">{selected.length}</span>
+          )}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="w-64 max-h-96 overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-2 border-b">
+          <div className="relative">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Rechercher..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8 h-8 text-sm"
+            />
+          </div>
+        </div>
+        <div className="p-2 border-b flex items-center justify-between">
+          <button
+            onClick={handleSelectAll}
+            className="text-xs text-blue-600 hover:text-blue-800"
+          >
+            {tempSelected.length === filteredValues.length &&
+            filteredValues.length > 0
+              ? "Tout désélectionner"
+              : "Tout sélectionner"}
+          </button>
+          <span className="text-xs text-muted-foreground">
+            {tempSelected.length} sélectionné(s)
+          </span>
+        </div>
+        <div className="overflow-y-auto flex-1 max-h-64">
+          {loading ? (
+            <div className="p-4 text-center text-sm text-muted-foreground">
+              Chargement...
+            </div>
+          ) : filteredValues.length === 0 ? (
+            <div className="p-4 text-center text-sm text-muted-foreground">
+              Aucun résultat trouvé.
+            </div>
+          ) : (
+            filteredValues.map((value) => (
+              <DropdownMenuCheckboxItem
+                key={value}
+                checked={tempSelected.includes(value)}
+                onCheckedChange={() => handleToggle(value)}
+                className="text-sm"
+              >
+                {value}
+              </DropdownMenuCheckboxItem>
+            ))
+          )}
+        </div>
+        <DropdownMenuSeparator />
+        <div className="p-2 flex gap-2 justify-end border-t">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleClear}
+            className="h-7 text-xs"
+          >
+            Effacer
+          </Button>
+          <Button size="sm" onClick={handleApply} className="h-7 text-xs">
+            OK
+          </Button>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
+
+// Column definitions for Encaissement AR DOT table
+const ENCAISSEMENT_COLUMNS = [
+  {
+    key: "organisation",
+    label: "Organisation",
+    filterable: true,
+    sortable: true,
+  },
+  { key: "source", label: "Source", filterable: true, sortable: false },
+  {
+    key: "n_fact",
+    label: "N. Fact",
+    filterable: true,
+    sortable: true,
+    format: "mono",
+  },
+  { key: "typ_fact", label: "Typ Fact", filterable: true, sortable: false },
+  {
+    key: "date_fact",
+    label: "Date Fact",
+    filterable: true,
+    sortable: true,
+    format: "date",
+  },
+  {
+    key: "client",
+    label: "Client",
+    filterable: true,
+    sortable: false,
+    format: "truncate",
+  },
+  {
+    key: "n_client",
+    label: "N Client",
+    filterable: true,
+    sortable: false,
+    format: "mono",
+  },
+  {
+    key: "montant_ht",
+    label: "Montant HT",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "montant_taxe",
+    label: "Montant Taxe",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "montant_ttc",
+    label: "Montant TTC",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "encaissement",
+    label: "Encaissement",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+  {
+    key: "taux_encaissement",
+    label: "Taux Encaissement",
+    filterable: true,
+    sortable: false,
+    format: "percent",
+  },
+  {
+    key: "montant_restant",
+    label: "Montant Restant",
+    filterable: true,
+    sortable: false,
+    format: "number",
+  },
+];
 
 // Formatage français avec séparateur de milliers et 2 décimales
 const formatNumber = (value) => {
@@ -212,6 +449,13 @@ const EncaissementARDotPage = () => {
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPageSize, setPreviewPageSize] = useState(10);
+
+  // Column filters and values for Excel-style filtering
+  const [columnFilters, setColumnFilters] = useState({});
+  const [columnValues, setColumnValues] = useState({});
+  const [loadingColumnValues, setLoadingColumnValues] = useState({});
+  const [orderBy, setOrderBy] = useState("date_fact");
+  const [orderDirection, setOrderDirection] = useState("desc");
 
   /**
    * Fetch data
@@ -507,6 +751,53 @@ const EncaissementARDotPage = () => {
     toast.success("Filtres réinitialisés");
   };
 
+  // Fetch column values for Excel filter
+  const fetchColumnValues = useCallback(
+    async (column) => {
+      if (columnValues[column] || loadingColumnValues[column]) return;
+
+      try {
+        setLoadingColumnValues((prev) => ({ ...prev, [column]: true }));
+        const response = await getEncaissementColumnValues(column);
+        setColumnValues((prev) => ({
+          ...prev,
+          [column]: response.data?.values || [],
+        }));
+      } catch (err) {
+        console.error(`Error fetching values for column ${column}:`, err);
+        // If endpoint doesn't exist yet, set empty array
+        setColumnValues((prev) => ({
+          ...prev,
+          [column]: [],
+        }));
+      } finally {
+        setLoadingColumnValues((prev) => ({ ...prev, [column]: false }));
+      }
+    },
+    [columnValues, loadingColumnValues]
+  );
+
+  // Handle column filter change
+  const handleColumnFilterChange = (column, values) => {
+    setColumnFilters((prev) => ({
+      ...prev,
+      [column]: values.length > 0 ? values : undefined,
+    }));
+    setPreviewPage(1); // Reset to first page when filter changes
+  };
+
+  // Handle column sort
+  const handleColumnSort = (column) => {
+    if (orderBy === column) {
+      // Toggle direction
+      setOrderDirection(orderDirection === "asc" ? "desc" : "asc");
+    } else {
+      setOrderBy(column);
+      setOrderDirection("asc");
+    }
+    setPreviewPage(1);
+  };
+
   // Fetch preview data
   const fetchPreviewData = useCallback(async () => {
     if (activeTab !== "preview") return;
@@ -519,7 +810,7 @@ const EncaissementARDotPage = () => {
         page_size: previewPageSize,
       };
 
-      // Add filters if needed
+      // Add main filters
       if (filters.organisation && filters.organisation.length > 0) {
         params.organisation = filters.organisation.join(",");
       }
@@ -527,6 +818,23 @@ const EncaissementARDotPage = () => {
       // Add year filter
       if (filters.year) {
         params.year = filters.year;
+      }
+
+      // Merge column filters with main filters
+      Object.keys(columnFilters).forEach((key) => {
+        if (
+          columnFilters[key] &&
+          Array.isArray(columnFilters[key]) &&
+          columnFilters[key].length > 0
+        ) {
+          params[key] = columnFilters[key].join(",");
+        }
+      });
+
+      // Add sorting
+      if (orderBy) {
+        params.sort_by = orderBy;
+        params.sort_order = orderDirection;
       }
 
       const response = await getEncaissementRecords(params);
@@ -539,14 +847,31 @@ const EncaissementARDotPage = () => {
     } finally {
       setPreviewLoading(false);
     }
-  }, [activeTab, previewPage, previewPageSize, filters]);
+  }, [
+    activeTab,
+    previewPage,
+    previewPageSize,
+    filters,
+    columnFilters,
+    orderBy,
+    orderDirection,
+  ]);
 
   // Fetch preview data when tab changes or filters/page changes
   useEffect(() => {
     if (activeTab === "preview") {
       fetchPreviewData();
     }
-  }, [activeTab, previewPage, previewPageSize, filters, fetchPreviewData]);
+  }, [
+    activeTab,
+    previewPage,
+    previewPageSize,
+    filters,
+    columnFilters,
+    orderBy,
+    orderDirection,
+    fetchPreviewData,
+  ]);
 
   const getActiveFilterCount = () => {
     return Object.values(filters).filter((v) => {
@@ -1291,19 +1616,58 @@ const EncaissementARDotPage = () => {
                           <TableHead className="sticky left-0 bg-background z-10">
                             ID
                           </TableHead>
-                          <TableHead>Organisation</TableHead>
-                          <TableHead>Source</TableHead>
-                          <TableHead>N. Fact</TableHead>
-                          <TableHead>Typ Fact</TableHead>
-                          <TableHead>Date Fact</TableHead>
-                          <TableHead>Client</TableHead>
-                          <TableHead>N Client</TableHead>
-                          <TableHead>Montant HT</TableHead>
-                          <TableHead>Montant Taxe</TableHead>
-                          <TableHead>Montant TTC</TableHead>
-                          <TableHead>Encaissement</TableHead>
-                          <TableHead>Taux Encaissement</TableHead>
-                          <TableHead>Montant Restant</TableHead>
+                          {ENCAISSEMENT_COLUMNS.map((col) => (
+                            <TableHead
+                              key={col.key}
+                              className={
+                                col.key === "id"
+                                  ? "sticky left-0 bg-background z-10"
+                                  : ""
+                              }
+                            >
+                              <div className="flex items-center justify-between gap-1 min-w-[120px]">
+                                <span className="text-xs font-medium flex-1 truncate">
+                                  {col.label}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {col.sortable && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleColumnSort(col.key);
+                                      }}
+                                      className="hover:text-primary p-0.5"
+                                      title="Trier"
+                                    >
+                                      {orderBy === col.key
+                                        ? orderDirection === "asc"
+                                          ? "↑"
+                                          : "↓"
+                                        : "⇅"}
+                                    </button>
+                                  )}
+                                  {col.filterable && (
+                                    <ExcelFilter
+                                      column={col.key}
+                                      label={col.label}
+                                      values={columnValues[col.key] || []}
+                                      selected={columnFilters[col.key] || []}
+                                      onFilterChange={(values) =>
+                                        handleColumnFilterChange(
+                                          col.key,
+                                          values
+                                        )
+                                      }
+                                      onFetchValues={() =>
+                                        fetchColumnValues(col.key)
+                                      }
+                                      loading={loadingColumnValues[col.key]}
+                                    />
+                                  )}
+                                </div>
+                              </div>
+                            </TableHead>
+                          ))}
                           <TableHead>Créé le</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -1313,56 +1677,48 @@ const EncaissementARDotPage = () => {
                             <TableCell className="font-mono text-xs sticky left-0 bg-background z-10">
                               {record.id || "-"}
                             </TableCell>
-                            <TableCell>{record.organisation || "-"}</TableCell>
-                            <TableCell>{record.source || "-"}</TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {record.n_fact || "-"}
-                            </TableCell>
-                            <TableCell>{record.typ_fact || "-"}</TableCell>
-                            <TableCell className="text-xs">
-                              {record.date_fact
-                                ? new Date(record.date_fact).toLocaleDateString(
-                                    "fr-FR"
-                                  )
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="max-w-[200px] truncate">
-                              {record.client || "-"}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {record.n_client || "-"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {record.montant_ht
-                                ? formatCurrency(record.montant_ht)
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {record.montant_taxe
-                                ? formatCurrency(record.montant_taxe)
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="text-right font-semibold">
-                              {record.montant_ttc
-                                ? formatCurrency(record.montant_ttc)
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="text-right font-semibold text-green-600">
-                              {record.encaissement
-                                ? formatCurrency(record.encaissement)
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {record.taux_encaissement !== null &&
-                              record.taux_encaissement !== undefined
-                                ? formatPercent(record.taux_encaissement)
-                                : "-"}
-                            </TableCell>
-                            <TableCell className="text-right">
-                              {record.montant_restant
-                                ? formatCurrency(record.montant_restant)
-                                : "-"}
-                            </TableCell>
+                            {ENCAISSEMENT_COLUMNS.map((col) => {
+                              const value = record[col.key];
+                              let displayValue = "-";
+
+                              if (value !== null && value !== undefined) {
+                                if (col.format === "date") {
+                                  displayValue = new Date(
+                                    value
+                                  ).toLocaleDateString("fr-FR");
+                                } else if (col.format === "mono") {
+                                  displayValue = value;
+                                } else if (col.format === "number") {
+                                  displayValue = formatCurrency(value);
+                                } else if (col.format === "percent") {
+                                  displayValue = formatPercent(value);
+                                } else if (col.format === "truncate") {
+                                  displayValue = value;
+                                } else {
+                                  displayValue = value;
+                                }
+                              }
+
+                              return (
+                                <TableCell
+                                  key={col.key}
+                                  className={
+                                    col.format === "mono"
+                                      ? "font-mono text-xs"
+                                      : col.format === "number" ||
+                                        col.format === "percent"
+                                      ? "text-right"
+                                      : col.format === "truncate"
+                                      ? "max-w-[200px] truncate"
+                                      : col.format === "date"
+                                      ? "text-xs"
+                                      : ""
+                                  }
+                                >
+                                  {displayValue}
+                                </TableCell>
+                              );
+                            })}
                             <TableCell className="text-xs">
                               {record.created_at
                                 ? new Date(record.created_at).toLocaleString(

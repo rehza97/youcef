@@ -94,26 +94,22 @@ class EncaissementARDotETL(BaseETLProcessor):
             # Step 4: Transform data (sort, detect duplicates, calculate KPIs)
             transformed_df = self._transform_step(validated_df, result)
 
-            # Step 5: Detect anomalies
-            final_df, anomalies_df = self._detect_anomalies_step(transformed_df, result)
+            # Step 5: Generate aggregated views for visualization
+            self._generate_views_step(transformed_df, result)
 
-            # Step 6: Generate aggregated views for visualization
-            self._generate_views_step(final_df, result)
+            # Step 6: Output results
+            self._output_step(transformed_df, result)
 
-            # Step 7: Output results
-            self._output_step(final_df, anomalies_df, result)
-
-            # Step 8: Save to database (if session provided)
+            # Step 7: Save to database (if session provided)
             if db_session and file_upload_id:
-                saved_counts = self.save_to_database(final_df, anomalies_df, file_upload_id, db_session, result)
+                saved_counts = self.save_to_database(transformed_df, file_upload_id, db_session, result)
                 result.metadata["database_saved"] = saved_counts
 
-            result.output_records_count = len(final_df)
-            result.anomaly_records_count = len(anomalies_df)
+            result.output_records_count = len(transformed_df)
+            result.anomaly_records_count = 0
 
             logger.info(f"✅ Encaissement AR DOT ETL completed successfully")
             logger.info(f"   Output records: {result.output_records_count}")
-            logger.info(f"   Anomaly records: {result.anomaly_records_count}")
 
         except Exception as e:
             error_msg = f"Encaissement AR DOT ETL process failed: {str(e)}"
@@ -477,18 +473,20 @@ class EncaissementARDotETL(BaseETLProcessor):
 
             # RULE 7: Calculate Taux d'encaissement
             if 'montant_ttc' in transformed_df.columns and 'encaissement' in transformed_df.columns:
+                # Calculate rate for all values, including negatives
+                # Only set to 0 if montant_ttc is exactly 0 (to avoid division by zero)
                 transformed_df['taux_encaissement'] = np.where(
-                    transformed_df['montant_ttc'] > 0,
+                    transformed_df['montant_ttc'] != 0,
                     (transformed_df['encaissement'] / transformed_df['montant_ttc'] * 100).round(2),
                     0.00
                 )
 
-                # Handle infinite values
+                # Handle infinite values (shouldn't happen, but safety check)
                 transformed_df['taux_encaissement'] = transformed_df['taux_encaissement'].replace(
                     [np.inf, -np.inf], 0.00
                 )
 
-                logger.info("✅ Calculated Taux d'encaissement")
+                logger.info("✅ Calculated Taux d'encaissement (preserving negative values)")
 
             # Calculate additional KPIs
             transformed_df['montant_restant'] = (
@@ -512,56 +510,6 @@ class EncaissementARDotETL(BaseETLProcessor):
             step.fail(str(e))
             raise
 
-    def _detect_anomalies_step(self, df: pd.DataFrame, result: ETLResult) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """Step 5: Detect anomalies based on business rules"""
-        step = ETLStep(
-            step_type=ETLStepType.DETECT_ANOMALIES,
-            name="detect_anomalies",
-            description="Identify anomalous Encaissement records"
-        )
-        step.start()
-        result.add_step(step)
-
-        try:
-            step.records_processed = len(df)
-
-            # Define anomaly detection rules
-            anomaly_rules = {
-                "negative_montant_ttc": {
-                    "type": "range_check",
-                    "column": "montant_ttc",
-                    "min": 0
-                },
-                "negative_encaissement": {
-                    "type": "range_check",
-                    "column": "encaissement",
-                    "min": 0
-                },
-                "excessive_taux_encaissement": {
-                    "type": "range_check",
-                    "column": "taux_encaissement",
-                    "min": 0,
-                    "max": 150  # Allow some margin for over-collection
-                },
-                "zero_n_fact": {
-                    "type": "range_check",
-                    "column": "n_fact",
-                    "min": 1
-                }
-            }
-
-            clean_data, anomalies = ETLUtils.detect_anomalies(df, anomaly_rules)
-
-            step.metadata["anomaly_rules"] = list(anomaly_rules.keys())
-            step.metadata["anomalies_found"] = len(anomalies)
-
-            step.complete(len(clean_data))
-            return clean_data, anomalies
-
-        except Exception as e:
-            step.fail(str(e))
-            raise
-
     def _generate_views_step(self, df: pd.DataFrame, result: ETLResult) -> None:
         """Step 6: Generate aggregated views for visualizations"""
         step = ETLStep(
@@ -576,12 +524,14 @@ class EncaissementARDotETL(BaseETLProcessor):
             views = {}
 
             # OVERVIEW - Global KPIs
+            montant_ttc_sum = df['montant_ttc'].sum()
+            encaissement_sum = df['encaissement'].sum()
             views["overview"] = {
-                "total_montant_ttc": float(df['montant_ttc'].sum()),
-                "total_encaissement": float(df['encaissement'].sum()),
+                "total_montant_ttc": float(montant_ttc_sum),
+                "total_encaissement": float(encaissement_sum),
                 "total_montant_restant": float(df['montant_restant'].sum()),
                 "taux_encaissement_global": float(
-                    (df['encaissement'].sum() / df['montant_ttc'].sum() * 100) if df['montant_ttc'].sum() > 0 else 0
+                    (encaissement_sum / montant_ttc_sum * 100) if montant_ttc_sum != 0 else 0
                 ),
                 "nombre_factures": int(df['n_fact'].count()),
                 "nombre_organisations": int(df['organisation'].nunique())
@@ -644,12 +594,12 @@ class EncaissementARDotETL(BaseETLProcessor):
             step.fail(str(e))
             raise
 
-    def _output_step(self, clean_df: pd.DataFrame, anomalies_df: pd.DataFrame, result: ETLResult) -> None:
-        """Step 7: Output Encaissement AR DOT results"""
+    def _output_step(self, clean_df: pd.DataFrame, result: ETLResult) -> None:
+        """Step 6: Output Encaissement AR DOT results"""
         step = ETLStep(
             step_type=ETLStepType.OUTPUT,
             name="output_results",
-            description="Save processed Encaissement data and anomalies to files"
+            description="Save processed Encaissement data to files"
         )
         step.start()
         result.add_step(step)
@@ -668,32 +618,20 @@ class EncaissementARDotETL(BaseETLProcessor):
                 result.output_files.append(clean_path)
                 logger.info(f"💾 Saved cleaned data: {clean_path}")
 
-            # Save anomalies
-            if not anomalies_df.empty:
-                anomaly_dir = Path("uploads/temp/anomalies/encaissement_ar_dot")
-                anomaly_filename = ETLUtils.generate_timestamped_filename(
-                    "encaissement_ar_dot_anomalies", "xlsx", timestamp
-                )
-                anomaly_path = anomaly_dir / anomaly_filename
-                ETLUtils.save_dataframe(anomalies_df, anomaly_path, format="excel")
-                result.anomaly_files.append(anomaly_path)
-                logger.info(f"⚠️ Saved anomalies: {anomaly_path}")
-
-            step.metadata["files_created"] = len(result.output_files) + len(result.anomaly_files)
+            step.metadata["files_created"] = len(result.output_files)
             step.complete()
 
         except Exception as e:
             step.fail(str(e))
             raise
 
-    def save_to_database(self, clean_df: pd.DataFrame, anomalies_df: pd.DataFrame,
+    def save_to_database(self, clean_df: pd.DataFrame,
                         file_upload_id: int, db_session, result: ETLResult) -> Dict[str, int]:
         """
         Save processed data to database with DOT relationships for RBAC
 
         Args:
             clean_df: Cleaned encaissement data
-            anomalies_df: Anomaly records
             file_upload_id: ID of uploaded file
             db_session: SQLAlchemy database session
             result: ETLResult containing aggregated views
@@ -701,7 +639,7 @@ class EncaissementARDotETL(BaseETLProcessor):
         Returns:
             Dictionary with counts of saved records
         """
-        from models.encaissement import EncaissementARDot, EncaissementAnomaly, EncaissementAggregateView
+        from models.encaissement import EncaissementARDot, EncaissementAggregateView
         from models.dot import DOT
         from services.dot_service import DOTService
 
@@ -709,7 +647,6 @@ class EncaissementARDotETL(BaseETLProcessor):
 
         saved_counts = {
             "main_records": 0,
-            "anomalies": 0,
             "aggregates": 0
         }
 
@@ -777,52 +714,10 @@ class EncaissementARDotETL(BaseETLProcessor):
                     taux_encaissement=float(row.get('taux_encaissement', 0)) if pd.notna(row.get('taux_encaissement')) else None,
                     montant_restant=float(row.get('montant_restant', 0)) if pd.notna(row.get('montant_restant')) else None,
                     composite_key=row.get('composite_key'),
-                    is_duplicate=bool(row.get('is_duplicate', False)),
-                    is_anomaly=False
+                    is_duplicate=bool(row.get('is_duplicate', False))
                 )
                 db_session.add(record)
                 saved_counts["main_records"] += 1
-
-            # Save anomalies
-            if not anomalies_df.empty:
-                # Get unique organisations from anomalies that aren't in the main mapping
-                anomaly_orgs = anomalies_df['organisation'].dropna().unique()
-                for org_name in anomaly_orgs:
-                    if not org_name or pd.isna(org_name):
-                        continue
-
-                    org_name_str = str(org_name).strip()
-                    if not org_name_str or org_name_str.upper() in dot_mapping:
-                        continue
-
-                    # Create DOT for anomaly organisations
-                    dot = DOTService.get_or_create_dot(
-                        db=db_session,
-                        name=org_name_str,
-                        description=f"DOT for {org_name_str} region",
-                        module=MODULE_ENCAISSEMENT_AR_DOT
-                    )
-                    dot_mapping[org_name_str.upper()] = dot.id
-
-                for idx, row in anomalies_df.iterrows():
-                    # Get DOT ID from mapping
-                    org_name = str(row.get('organisation', '')).strip()
-                    matched_dot_id = dot_mapping.get(org_name.upper())
-
-                    anomaly = EncaissementAnomaly(
-                        file_upload_id=file_upload_id,
-                        dot_id=matched_dot_id,
-                        organisation=row.get('organisation'),
-                        n_fact=int(row.get('n_fact', 0)) if pd.notna(row.get('n_fact')) else None,
-                        typ_fact=row.get('typ_fact'),
-                        montant_ttc=float(row.get('montant_ttc', 0)) if pd.notna(row.get('montant_ttc')) else None,
-                        encaissement=float(row.get('encaissement', 0)) if pd.notna(row.get('encaissement')) else None,
-                        anomaly_type=row.get('anomaly_type', 'Unknown'),
-                        anomaly_reason=row.get('anomaly_reason'),
-                        original_data=json.dumps(row.to_dict(), default=str)
-                    )
-                    db_session.add(anomaly)
-                    saved_counts["anomalies"] += 1
 
             # Save aggregated views
             if 'by_month' in result.summary_metrics:
@@ -880,7 +775,7 @@ class EncaissementARDotETL(BaseETLProcessor):
             db_session.commit()
 
             logger.info(f"✅ Saved to database: {saved_counts['main_records']} records, "
-                       f"{saved_counts['anomalies']} anomalies, {saved_counts['aggregates']} aggregates")
+                       f"{saved_counts['aggregates']} aggregates")
 
             return saved_counts
 

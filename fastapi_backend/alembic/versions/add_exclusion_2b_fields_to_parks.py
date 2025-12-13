@@ -222,3 +222,4 @@ def downgrade():
     # Drop parks_2b table
     op.drop_table('parks_2b')
 
+

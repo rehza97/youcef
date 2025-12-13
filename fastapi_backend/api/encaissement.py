@@ -323,6 +323,104 @@ async def get_preview_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/preview-data/column-values")
+async def get_encaissement_column_values(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    column: str = Query(..., description="Column name to get unique values for"),
+    limit: int = Query(1000, ge=1, le=5000, description="Maximum number of values to return")
+):
+    """
+    Get unique values for a specific column in EncaissementARDot table.
+    Used for populating dropdown filters in Excel-style filter component.
+    Supports ALL columns in the EncaissementARDot table.
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_view_kpi_data")
+    
+    try:
+        from models.encaissement import EncaissementARDot
+        
+        # Map column names to actual model attributes
+        column_map = {
+            "id": EncaissementARDot.id,
+            "file_upload_id": EncaissementARDot.file_upload_id,
+            "dot_id": EncaissementARDot.dot_id,
+            "organisation": EncaissementARDot.organisation,
+            "source": EncaissementARDot.source,
+            "n_fact": EncaissementARDot.n_fact,
+            "typ_fact": EncaissementARDot.typ_fact,
+            "date_fact": EncaissementARDot.date_fact,
+            "mois": EncaissementARDot.mois,
+            "client": EncaissementARDot.client,
+            "n_client": EncaissementARDot.n_client,
+            "obj_fact": EncaissementARDot.obj_fact,
+            "periode": EncaissementARDot.periode,
+            "ref": EncaissementARDot.ref,
+            "termine_flag": EncaissementARDot.termine_flag,
+            "creer_par": EncaissementARDot.creer_par,
+            "montant_ht": EncaissementARDot.montant_ht,
+            "montant_taxe": EncaissementARDot.montant_taxe,
+            "montant_ttc": EncaissementARDot.montant_ttc,
+            "chiffre_aff_exe": EncaissementARDot.chiffre_aff_exe,
+            "encaissement": EncaissementARDot.encaissement,
+            "n_rglt": EncaissementARDot.n_rglt,
+            "date_rglt": EncaissementARDot.date_rglt,
+            "facture_avoir_annulation": EncaissementARDot.facture_avoir_annulation,
+            "taux_encaissement": EncaissementARDot.taux_encaissement,
+            "montant_restant": EncaissementARDot.montant_restant,
+            "composite_key": EncaissementARDot.composite_key,
+            "is_duplicate": EncaissementARDot.is_duplicate,
+            "created_at": EncaissementARDot.created_at,
+            "updated_at": EncaissementARDot.updated_at,
+        }
+        
+        if column not in column_map:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Column '{column}' not found. Available columns: {list(column_map.keys())}"
+            )
+        
+        # Apply RBAC filtering
+        service = EncaissementService(db)
+        query = service._apply_rbac_filter(
+            db.query(EncaissementARDot),
+            current_user
+        )
+        
+        # Get unique values
+        values = query.with_entities(column_map[column]) \
+            .filter(column_map[column].isnot(None)) \
+            .distinct() \
+            .order_by(column_map[column].asc()) \
+            .limit(limit) \
+            .all()
+        
+        # Convert to list of strings, filtering out None
+        unique_values = []
+        for v in values:
+            if v[0] is not None:
+                # Format based on type
+                if isinstance(v[0], (datetime, date)):
+                    unique_values.append(v[0].isoformat())
+                elif isinstance(v[0], bool):
+                    unique_values.append("Oui" if v[0] else "Non")
+                else:
+                    unique_values.append(str(v[0]))
+        
+        return {
+            "column": column,
+            "values": unique_values,
+            "count": len(unique_values)
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting column values for {column}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============================================================================
 # Anomaly Endpoints
 # ============================================================================
