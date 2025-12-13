@@ -107,6 +107,25 @@ const COLORS = {
   danger: "#D9534F", // Rouge
 };
 
+/**
+ * Get color based on achievement rate ranges
+ * 0% to 30%: Red (danger)
+ * 30% to 70%: Orange (secondary)
+ * 70% to 100%: Blue (primary)
+ * >=100%: Green (success)
+ */
+const getColorByAchievementRate = (taux) => {
+  if (taux >= 100) {
+    return COLORS.success; // Green for >=100%
+  } else if (taux >= 70) {
+    return COLORS.primary; // Blue for 70% to 100%
+  } else if (taux >= 30) {
+    return COLORS.secondary; // Orange for 30% to 70%
+  } else {
+    return COLORS.danger; // Red for 0% to 30%
+  }
+};
+
 // Sub-components
 const OverviewCard = ({ title, value, icon: Icon, subtitle }) => (
   <Card>
@@ -310,7 +329,7 @@ const CustomTooltipPercent = ({ active, payload, label }) => {
     const data = payload[0].payload; // Get full data object
     return (
       <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
-        <p className="font-bold text-gray-900 mb-2">{label}</p>
+        <p className="font-bold text-gray-900 mb-2">{data.dot || label}</p>
         <p
           style={{ color: payload[0].color }}
           className="text-sm font-semibold mb-1"
@@ -335,15 +354,26 @@ const CustomTooltipPercent = ({ active, payload, label }) => {
 
 const CustomTooltipObjective = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload; // Get full data object
     return (
       <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
-        <p className="font-bold text-gray-900 mb-2">{label}</p>
+        <p className="font-bold text-gray-900 mb-2">{data.dot || label}</p>
         <p
           style={{ color: payload[0].color }}
-          className="text-sm font-semibold"
+          className="text-sm font-semibold mb-1"
         >
-          Objectif C.A: {formatNumber(payload[0].value)} DZD
+          Chiffre d'affaires: {formatNumber(payload[0].value)} DZD
         </p>
+        {data.objectif_ca > 0 && (
+          <p className="text-sm text-gray-700">
+            Objectif C.A: {formatNumber(data.objectif_ca)} DZD
+          </p>
+        )}
+        {data.taux > 0 && (
+          <p className="text-sm text-gray-700">
+            Taux de réalisation: {formatPercent(data.taux)}
+          </p>
+        )}
       </div>
     );
   }
@@ -819,18 +849,45 @@ const RevenuePage = () => {
   }, [byAccount]);
 
   /**
-   * CHART 3: DOT et Taux de réalisation
+   * CHART: DOT et Chiffre d'affaires (CA)
+   * Shows revenue by DOT, sorted from highest to lowest CA
+   */
+  const dotCAChartData = useMemo(() => {
+    return byOrg
+      .map((item) => ({
+        dot: item.org_name || "Inconnu",
+        objectif_ca: item.objective || 0, // Objective for tooltip
+        taux: item.achievement_rate || 0, // Achievement rate for tooltip
+        total_revenue: item.total_revenue || 0, // Chiffre d'affaires (CA) - main chart value
+      }))
+      .filter((item) => item.total_revenue > 0) // Only show DOTs with revenue
+      .sort((a, b) => b.total_revenue - a.total_revenue) // Sort by CA from high to low
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1, // Add ranking number (1-based)
+        label: `${index + 1}. ${item.dot}`, // Label with rank number
+      }));
+  }, [byOrg]);
+
+  /**
+   * CHART: DOT et Taux de Réalisation C.A
+   * Shows achievement rate by DOT, sorted from highest to lowest taux
    */
   const dotTauxChartData = useMemo(() => {
     return byOrg
       .map((item) => ({
         dot: item.org_name || "Inconnu",
-        objectif_ca: item.objective || 0, // Only DOT name and objectif_ca from revenue_objectives
-        taux: item.achievement_rate || 0, // Achievement rate for "BY Taux C.A" tab
+        objectif_ca: item.objective || 0, // Objective for tooltip
+        taux: item.achievement_rate || 0, // Achievement rate - main chart value
         total_revenue: item.total_revenue || 0, // Total revenue for tooltip
       }))
-      .filter((item) => item.objectif_ca > 0) // Only show DOTs with objectives
-      .sort((a, b) => b.taux - a.taux); // Sort by achievement rate (taux) from high to low
+      .filter((item) => item.total_revenue > 0) // Only show DOTs with revenue
+      .sort((a, b) => b.taux - a.taux) // Sort by achievement rate from high to low
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1, // Add ranking number (1-based)
+        label: `${index + 1}. ${item.dot}`, // Label with rank number
+      }));
   }, [byOrg]);
 
   /**
@@ -840,27 +897,49 @@ const RevenuePage = () => {
     try {
       setExporting(true);
 
-      const exportParams = { ...filters, format };
+      // Map filter names to API parameter names
+      const exportParams = {
+        format,
+        org_name:
+          filters.org_name.length > 0
+            ? Array.isArray(filters.org_name)
+              ? filters.org_name.join(",")
+              : filters.org_name
+            : undefined,
+        typ_fact:
+          filters.typ_fact.length > 0
+            ? Array.isArray(filters.typ_fact)
+              ? filters.typ_fact.join(",")
+              : filters.typ_fact
+            : undefined,
+        cpt_comptable:
+          filters.cpt_comptable.length > 0
+            ? Array.isArray(filters.cpt_comptable)
+              ? filters.cpt_comptable.join(",")
+              : filters.cpt_comptable
+            : undefined,
+        start_date: filters.date_gl_start || undefined,
+        end_date: filters.date_gl_end || undefined,
+        start_date_fact: filters.date_fact_start || undefined,
+        end_date_fact: filters.date_fact_end || undefined,
+        taux_ca_min: filters.taux_ca_min || undefined,
+        taux_ca_max: filters.taux_ca_max || undefined,
+        search: filters.search || undefined,
+      };
 
-      // Convert arrays to comma-separated strings, or remove if empty
-      if (Array.isArray(exportParams.org_name)) {
-        exportParams.org_name =
-          exportParams.org_name.length > 0
-            ? exportParams.org_name.join(",")
-            : undefined;
-      }
-      if (Array.isArray(exportParams.typ_fact)) {
-        exportParams.typ_fact =
-          exportParams.typ_fact.length > 0
-            ? exportParams.typ_fact.join(",")
-            : undefined;
-      }
-      if (Array.isArray(exportParams.cpt_comptable)) {
-        exportParams.cpt_comptable =
-          exportParams.cpt_comptable.length > 0
-            ? exportParams.cpt_comptable.join(",")
-            : undefined;
-      }
+      // Log filter params BEFORE cleanup
+      console.log("🔍 [EXPORT] Filter params BEFORE cleanup:", {
+        date_gl_start: filters.date_gl_start,
+        date_gl_end: filters.date_gl_end,
+        date_fact_start: filters.date_fact_start,
+        date_fact_end: filters.date_fact_end,
+        search: filters.search,
+        exportParams_start_date: exportParams.start_date,
+        exportParams_end_date: exportParams.end_date,
+        exportParams_start_date_fact: exportParams.start_date_fact,
+        exportParams_end_date_fact: exportParams.end_date_fact,
+        exportParams_search: exportParams.search,
+      });
 
       // Remove empty strings and undefined values
       Object.keys(exportParams).forEach((key) => {
@@ -874,7 +953,7 @@ const RevenuePage = () => {
       });
 
       console.log(
-        "🚀 Starting async revenue export with filters:",
+        "🚀 [EXPORT] Starting async revenue export with filters AFTER cleanup:",
         exportParams
       );
 
@@ -1038,10 +1117,27 @@ const RevenuePage = () => {
           order_direction: orderDirection,
         };
 
+        // Log filter params BEFORE cleanup
+        console.log("🔍 [PREVIEW] Filter params BEFORE cleanup:", {
+          date_gl_start: filters.date_gl_start,
+          date_gl_end: filters.date_gl_end,
+          date_fact_start: filters.date_fact_start,
+          date_fact_end: filters.date_fact_end,
+          search: filters.search,
+          filterParams_start_date: filterParams.start_date,
+          filterParams_end_date: filterParams.end_date,
+          filterParams_start_date_fact: filterParams.start_date_fact,
+          filterParams_end_date_fact: filterParams.end_date_fact,
+          filterParams_search: filterParams.search,
+        });
+
         // Remove undefined values
         Object.keys(filterParams).forEach(
           (key) => filterParams[key] === undefined && delete filterParams[key]
         );
+
+        // Log filter params AFTER cleanup
+        console.log("🔍 [PREVIEW] Filter params AFTER cleanup:", filterParams);
 
         response = await getRevenuePreviewData(
           filterParams,
@@ -1629,18 +1725,18 @@ const RevenuePage = () => {
         {activeTab === "dot" && (
           <Card>
             <CardHeader>
-              <CardTitle>DOT et Objectif C.A</CardTitle>
+              <CardTitle>DOT et Chiffre d'affaires</CardTitle>
             </CardHeader>
             <CardContent>
-              {dotTauxChartData.length > 0 ? (
+              {dotCAChartData.length > 0 ? (
                 <ResponsiveContainer
                   width="100%"
-                  height={Math.max(700, dotTauxChartData.length * 25)}
+                  height={Math.max(700, dotCAChartData.length * 25)}
                 >
                   <BarChart
-                    data={dotTauxChartData}
+                    data={dotCAChartData}
                     layout="vertical"
-                    margin={{ left: 120, right: 20, top: 10, bottom: 10 }}
+                    margin={{ left: 140, right: 20, top: 10, bottom: 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
@@ -1649,18 +1745,18 @@ const RevenuePage = () => {
                       style={{ fontSize: "12px" }}
                     />
                     <YAxis
-                      dataKey="dot"
+                      dataKey="label"
                       type="category"
-                      width={110}
+                      width={130}
                       tick={{ fontSize: 11 }}
                     />
                     <Tooltip content={<CustomTooltipObjective />} />
                     <Bar
-                      dataKey="objectif_ca"
+                      dataKey="total_revenue"
                       radius={[0, 4, 4, 0]}
                       fill={COLORS.primary}
                     >
-                      {dotTauxChartData.map((entry, index) => (
+                      {dotCAChartData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS.primary} />
                       ))}
                     </Bar>
@@ -1820,7 +1916,7 @@ const RevenuePage = () => {
                   <BarChart
                     data={dotTauxChartData}
                     layout="vertical"
-                    margin={{ left: 120, right: 20, top: 10, bottom: 10 }}
+                    margin={{ left: 140, right: 20, top: 10, bottom: 10 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
@@ -1829,9 +1925,9 @@ const RevenuePage = () => {
                       style={{ fontSize: "12px" }}
                     />
                     <YAxis
-                      dataKey="dot"
+                      dataKey="label"
                       type="category"
-                      width={110}
+                      width={130}
                       tick={{ fontSize: 11 }}
                     />
                     <Tooltip content={<CustomTooltipPercent />} />
@@ -1839,9 +1935,7 @@ const RevenuePage = () => {
                       {dotTauxChartData.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
-                          fill={
-                            entry.taux >= 100 ? COLORS.success : COLORS.primary
-                          }
+                          fill={getColorByAchievementRate(entry.taux)}
                         />
                       ))}
                     </Bar>

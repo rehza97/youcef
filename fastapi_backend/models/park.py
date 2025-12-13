@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Numeric, Date
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Numeric, Date, Boolean
 from sqlalchemy.orm import relationship
 from database.connection import Base
 
@@ -83,10 +83,54 @@ class Park(Base):
     imsi = Column(String(100), nullable=True, index=True)
     contact_number = Column(String(100), nullable=True)
 
+    # Anomaly flags
+    is_anomaly = Column(Boolean, default=False, index=True, nullable=False)
+    anomaly_reason = Column(Text, nullable=True)
+
     # Metadata
     created_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=True)
 
     def __repr__(self):
-        return f"<Park(id={self.id}, customer_code='{self.customer_code}', service_number='{self.service_number}')>"
+        return f"<Park(id={self.id}, customer_code='{self.customer_code}', service_number='{self.service_number}', is_anomaly={self.is_anomaly})>"
+
+
+class ParkAnomaly(Base):
+    """
+    Parc Corporate NGBSS Anomalies
+    Stores records that match anomaly criteria:
+    - Code Customer L3: Categories 5 and 57
+    - Offer Name containing: Moohtarif, Solutions Hébergements
+    - Telecom Type: X25, WIFI, WIMAX
+    """
+    __tablename__ = "park_anomalies"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # File relationship
+    file_upload_id = Column(Integer, ForeignKey("file_uploads.id"), nullable=True, index=True)
+    file_upload = relationship("FileUpload", back_populates="park_anomalies")
+
+    # Reference to original data (key fields for identification)
+    dot_id = Column(Integer, ForeignKey("dots.id"), nullable=True, index=True)
+    dot = relationship("DOT")
+    actel_code = Column(String(100), nullable=True, index=True)
+    customer_code = Column(String(100), nullable=True, index=True)
+    service_number = Column(String(100), nullable=True, index=True)
+    customer_l3_code = Column(String(100), nullable=True, index=True)
+    telecom_type = Column(String(100), nullable=True, index=True)
+    offer_name = Column(String(255), nullable=True, index=True)
+
+    # Anomaly details
+    anomaly_type = Column(String(100), default="Anomalie Parc NGBSS", nullable=False)
+    anomaly_reason = Column(Text, nullable=True)
+
+    # Original record data (JSON string containing all fields)
+    original_data = Column(Text, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, nullable=True)
+
+    def __repr__(self):
+        return f"<ParkAnomaly(id={self.id}, service_number='{self.service_number}', reason='{self.anomaly_reason}')>"
 

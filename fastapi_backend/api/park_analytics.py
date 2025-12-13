@@ -25,6 +25,7 @@ from services.dot_service import DOTService
 from services.permission_service import PermissionService
 from services.kpi_cache_service import kpi_cache_service
 from services.processing_websocket import processing_ws_manager
+from services.park_anomaly_rules import apply_default_anomaly_exclusion, apply_anomaly_only
 import asyncio
 import uuid
 import threading
@@ -174,34 +175,37 @@ def _run_export_background(task_id: str, export_params: dict):
 
         # Handle "all" export type (ZIP with 3 files: normal, anomalies, 2B)
         if export_type == "all":
+            # Normal parks (exclude anomalies) - query already has anomaly filter from apply_filters_to_query
             normal_parks = query.all()
 
             if len(normal_parks) == 0:
                 raise Exception("No data found with applied filters")
 
-            # Get anomaly data
-            anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
-            anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
-            anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
-
-            anomaly_conditions = []
-            for offer in anomaly_offer_names:
-                # Handle "Solutions Hébergements" with both é and e
-                if "Hébergement" in offer or "Hebergement" in offer:
-                    # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
-                    anomaly_conditions.append(
-                        or_(
-                            Park.offer_name.ilike("%Solutions Hébergement%"),
-                            Park.offer_name.ilike("%Solutions Hebergement%")
-                        )
-                    )
-                else:
-                    # For other patterns like "Moohtarif", use simple ilike
-                    anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
-            anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
-            anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
-
-            anomaly_query = query.filter(or_(*anomaly_conditions))
+            # Get anomaly data - query for anomalies only (bypass anomaly exclusion)
+            anomaly_query = db.query(Park)
+            if accessible_dots:
+                anomaly_query = anomaly_query.filter(Park.dot_id.in_(accessible_dots))
+            
+            # Apply filters WITHOUT anomaly exclusion
+            anomaly_query = apply_filters_to_query(
+                query=anomaly_query,
+                dot_ids=export_params.get("dot_ids"),
+                actel_codes=export_params.get("actel_codes"),
+                subscriber_statuses=export_params.get("subscriber_statuses"),
+                telecom_types=export_params.get("telecom_types"),
+                offer_names=export_params.get("offer_names"),
+                offer_types=export_params.get("offer_types"),
+                customer_l2_codes=export_params.get("customer_l2_codes"),
+                customer_l3_codes=export_params.get("customer_l3_codes"),
+                search=export_params.get("search"),
+                date_from=export_params.get("date_from"),
+                date_to=export_params.get("date_to"),
+                include_exclusion_2b=False,
+                exclude_anomalies=False  # Don't exclude anomalies
+            )
+            
+            # Filter to get ONLY anomalies (flag + safety-net rules)
+            anomaly_query = apply_anomaly_only(anomaly_query, Park)
             anomaly_parks = anomaly_query.all()
 
             # Process normal data (10-50%)
@@ -545,28 +549,31 @@ def _run_export_background(task_id: str, export_params: dict):
                 parks = []  # Skip parks_to_records_with_progress for 2B (already have DataFrame)
 
             elif export_type == "anomalies":
-                anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
-                anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
-                anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
+                # Export only records marked as anomalies during processing
+                query = db.query(Park)
+                if accessible_dots:
+                    query = query.filter(Park.dot_id.in_(accessible_dots))
 
-                anomaly_conditions = []
-                for offer in anomaly_offer_names:
-                    # Handle "Solutions Hébergements" with both é and e
-                    if "Hébergement" in offer or "Hebergement" in offer:
-                        # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
-                        anomaly_conditions.append(
-                            or_(
-                                Park.offer_name.ilike("%Solutions Hébergement%"),
-                                Park.offer_name.ilike("%Solutions Hebergement%")
-                            )
-                        )
-                    else:
-                        # For other patterns like "Moohtarif", use simple ilike
-                        anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
-                anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
-                anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
+                # Apply filters WITHOUT the anomaly exclusion (exclude_anomalies=False)
+                query = apply_filters_to_query(
+                    query=query,
+                    dot_ids=export_params.get("dot_ids"),
+                    actel_codes=export_params.get("actel_codes"),
+                    subscriber_statuses=export_params.get("subscriber_statuses"),
+                    telecom_types=export_params.get("telecom_types"),
+                    offer_names=export_params.get("offer_names"),
+                    offer_types=export_params.get("offer_types"),
+                    customer_l2_codes=export_params.get("customer_l2_codes"),
+                    customer_l3_codes=export_params.get("customer_l3_codes"),
+                    search=export_params.get("search"),
+                    date_from=export_params.get("date_from"),
+                    date_to=export_params.get("date_to"),
+                    include_exclusion_2b=False,
+                    exclude_anomalies=False  # Don't exclude anomalies
+                )
 
-                query = query.filter(or_(*anomaly_conditions))
+                # Filter to get ONLY anomalies (supports both persisted flag + rule safety net)
+                query = apply_anomaly_only(query, Park)
                 parks = query.all()
             else:
                 # Normal export
@@ -761,11 +768,16 @@ def apply_filters_to_query(
     search: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    include_exclusion_2b: Optional[bool] = None
+    include_exclusion_2b: Optional[bool] = None,
+    exclude_anomalies: bool = True
 ):
     """Helper function to apply filters to a query
 
     Works with both Park and Park2B models since they have the same structure
+
+    Args:
+        exclude_anomalies: If True (default), filter out anomalies from results.
+                          Set to False for anomaly-only exports.
     """
     # Get the model class from the query
     # This allows the function to work with both Park and Park2B
@@ -865,6 +877,12 @@ def apply_filters_to_query(
     # They are excluded by default (not in parks table)
     # The include_exclusion_2b parameter is handled at the query level
     # by querying from both tables when needed
+
+    # Filter out anomalies from visualizations and analytics (unless explicitly disabled)
+    # Anomalies should only be visible in the anomaly export
+    if exclude_anomalies:
+        query = apply_default_anomaly_exclusion(query, model)
+        logger.info(f"🚫 Filtering out anomalies for {model.__name__} (exclude_anomalies={exclude_anomalies})")
 
     return query
 
@@ -1577,6 +1595,10 @@ async def get_available_filters(
             "customer_l3_codes": []
         }
 
+    # IMPORTANT: Filter out anomalies from filter dropdowns
+    # Anomalies should not appear in filter options
+    query = apply_default_anomaly_exclusion(query, Park)
+
     # Get DOTs - filter by Parc Corporate NGBSS module
     dots = db.query(DOT).filter(
         DOT.id.in_(accessible_dots),
@@ -1830,14 +1852,20 @@ async def get_preview_data(
             include_exclusion_2b=False
         )
 
-        # Get total count for pagination info (after filters)
+        # Get total count for pagination info (after filters, including anomaly exclusion)
         total_count = query.count()
+        logger.info(f"📊 Preview data query: {total_count:,} records (anomalies excluded)")
 
         # Apply pagination
         records = query.order_by(Park.created_at.desc()) \
             .offset(offset) \
             .limit(limit) \
             .all()
+        
+        # Verify no anomalies in results (safety check)
+        anomaly_count = sum(1 for r in records if r.is_anomaly)
+        if anomaly_count > 0:
+            logger.warning(f"⚠️ WARNING: Found {anomaly_count} anomalies in preview data results! This should not happen.")
 
         # Format response with all fields
         preview_records = []
@@ -1961,6 +1989,7 @@ async def get_park_column_values(
         
         # Apply all active filters to the base query
         # This ensures we only get values that exist in the filtered dataset
+        # exclude_anomalies=True by default - anomalies should NOT appear in Excel-like filter dropdowns
         base_query = apply_filters_to_query(
             query=base_query,
             dot_ids=dot_ids,
@@ -1974,8 +2003,11 @@ async def get_park_column_values(
             search=search,
             date_from=date_from,
             date_to=date_to,
-            include_exclusion_2b=False
+            include_exclusion_2b=False,
+            exclude_anomalies=True  # Explicitly exclude anomalies from Excel-like filter dropdowns
         )
+        
+        logger.info(f"🔍 Column values query for '{column}': filtering out anomalies (exclude_anomalies=True)")
         
         # Map column names to actual model attributes
         column_map = {
@@ -2402,35 +2434,46 @@ async def export_data(
 
     # Handle "both" export type - create ZIP with both files
     if export_type == "both":
-        # Get normal data (all filtered records)
+        # Get normal data (all filtered records, excluding anomalies)
+        # query already has anomaly filter from apply_filters_to_query
         normal_parks = query.all()
 
         if len(normal_parks) == 0:
             raise HTTPException(status_code=404, detail="No data found with applied filters")
 
-        # Get anomaly data (filtered records + anomaly criteria)
-        anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
-        anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
-        anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
-
-        anomaly_conditions = []
-        for offer in anomaly_offer_names:
-            # Handle "Solutions Hébergements" with both é and e
-            if "Hébergement" in offer or "Hebergement" in offer:
-                # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
-                anomaly_conditions.append(
-                    or_(
-                        Park.offer_name.ilike("%Solutions Hébergement%"),
-                        Park.offer_name.ilike("%Solutions Hebergement%")
-                    )
-                )
-            else:
-                # For other patterns like "Moohtarif", use simple ilike
-                anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
-        anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
-        anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
-
-        anomaly_query = query.filter(or_(*anomaly_conditions))
+        # Get anomaly data - query for anomalies only (bypass anomaly exclusion)
+        anomaly_query = db.query(Park)
+        if accessible_dots:
+            anomaly_query = anomaly_query.filter(Park.dot_id.in_(accessible_dots))
+        
+        # Apply filters WITHOUT anomaly exclusion
+        anomaly_query = apply_filters_to_query(
+            query=anomaly_query,
+            dot_ids=dot_ids,
+            actel_codes=actel_codes,
+            subscriber_statuses=subscriber_statuses,
+            telecom_types=telecom_types,
+            offer_names=offer_names,
+            offer_types=offer_types,
+            customer_l2_codes=customer_l2_codes,
+            customer_l3_codes=customer_l3_codes,
+            search=search,
+            date_from=date_from,
+            date_to=date_to,
+            include_exclusion_2b=False,
+            exclude_anomalies=False  # Don't exclude anomalies
+        )
+        
+        # Apply backward compatibility single value filters (if not already handled)
+        if actel_code_filter and not actel_codes:
+            anomaly_query = anomaly_query.filter(Park.actel_code.ilike(f"%{actel_code_filter}%"))
+        if subscriber_status_filter and not subscriber_statuses:
+            anomaly_query = anomaly_query.filter(Park.subscriber_status == subscriber_status_filter)
+        if telecom_type_filter and not telecom_types:
+            anomaly_query = anomaly_query.filter(Park.telecom_type == telecom_type_filter)
+        
+        # Filter to get ONLY anomalies (flag + safety-net rules)
+        anomaly_query = apply_anomaly_only(anomaly_query, Park)
         anomaly_parks = anomaly_query.all()
 
         logger.info(
@@ -2471,30 +2514,41 @@ async def export_data(
 
     # Handle single file export (normal or anomalies only)
     else:
-        # If exporting anomalies only, filter for anomaly criteria
+        # If exporting anomalies only, filter for anomalies using database flag
         if export_type == "anomalies":
-            anomaly_offer_names = ["Moohtarif", "Solutions Hébergements"]
-            anomaly_l3_categories = ["5", "57"]  # Changed to strings to match VARCHAR column type
-            anomaly_telecom_types = ["WIFI", "WIMAX", "X25"]
-
-            anomaly_conditions = []
-            for offer in anomaly_offer_names:
-                # Handle "Solutions Hébergements" with both é and e
-                if "Hébergement" in offer or "Hebergement" in offer:
-                    # Match both "Solutions Hébergements" and "Solutions Hebergements" (case-insensitive)
-                    anomaly_conditions.append(
-                        or_(
-                            Park.offer_name.ilike("%Solutions Hébergement%"),
-                            Park.offer_name.ilike("%Solutions Hebergement%")
-                        )
-                    )
-                else:
-                    # For other patterns like "Moohtarif", use simple ilike
-                    anomaly_conditions.append(Park.offer_name.ilike(f"%{offer}%"))
-            anomaly_conditions.append(Park.customer_l3_code.in_(anomaly_l3_categories))
-            anomaly_conditions.append(Park.telecom_type.in_(anomaly_telecom_types))
-
-            query = query.filter(or_(*anomaly_conditions))
+            # Rebuild query without anomaly exclusion
+            anomaly_query = db.query(Park)
+            if accessible_dots:
+                anomaly_query = anomaly_query.filter(Park.dot_id.in_(accessible_dots))
+            
+            # Apply filters WITHOUT anomaly exclusion
+            anomaly_query = apply_filters_to_query(
+                query=anomaly_query,
+                dot_ids=dot_ids,
+                actel_codes=actel_codes,
+                subscriber_statuses=subscriber_statuses,
+                telecom_types=telecom_types,
+                offer_names=offer_names,
+                offer_types=offer_types,
+                customer_l2_codes=customer_l2_codes,
+                customer_l3_codes=customer_l3_codes,
+                search=search,
+                date_from=date_from,
+                date_to=date_to,
+                include_exclusion_2b=False,
+                exclude_anomalies=False  # Don't exclude anomalies
+            )
+            
+            # Apply backward compatibility single value filters (if not already handled)
+            if actel_code_filter and not actel_codes:
+                anomaly_query = anomaly_query.filter(Park.actel_code.ilike(f"%{actel_code_filter}%"))
+            if subscriber_status_filter and not subscriber_statuses:
+                anomaly_query = anomaly_query.filter(Park.subscriber_status == subscriber_status_filter)
+            if telecom_type_filter and not telecom_types:
+                anomaly_query = anomaly_query.filter(Park.telecom_type == telecom_type_filter)
+            
+            # Filter to get ONLY anomalies (flag + safety-net rules)
+            query = apply_anomaly_only(anomaly_query, Park)
 
         # Get total count first for better error handling
         total_count = query.count()

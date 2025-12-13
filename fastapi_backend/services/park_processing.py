@@ -12,6 +12,7 @@ from models.park import Park
 from models.park_2b import Park2B
 from models.dot import DOT
 from services.dot_service import DOTService
+from services.park_anomaly_rules import detect_anomaly_fields, normalize_customer_l3_code
 
 logger = logging.getLogger(__name__)
 
@@ -614,6 +615,12 @@ class ParkDataProcessor:
         # Create the appropriate model instance
         ModelClass = Park2B if is_2b else Park
 
+        # Normalize L3 code early (Excel often provides 5.0 / 57.0)
+        raw_l3_code = record.get(
+            self._find_column(temp_df, ['Code Customer L3', 'level 3']) or 'Code Customer L3_Code Catégorie level 3'
+        )
+        normalized_l3_code = normalize_customer_l3_code(raw_l3_code)
+
         park_record = ModelClass(
             extraction_date=self._safe_date(record.get(
                 self._find_column(temp_df, ['Extraction Date', 'extraction']) or 'Extraction Date_Date d \'extraction')),
@@ -627,8 +634,7 @@ class ParkDataProcessor:
                 self._find_column(temp_df, ['Code Customer L2', 'level 2']) or 'Code Customer L2_Code Catégorie level 2'),
             customer_l2_description=record.get(
                 self._find_column(temp_df, ['Description Customer L2', 'level 2']) or 'Description Customer L2_Nom du Catégorie level 2'),
-            customer_l3_code=record.get(
-                self._find_column(temp_df, ['Code Customer L3', 'level 3']) or 'Code Customer L3_Code Catégorie level 3'),
+            customer_l3_code=normalized_l3_code,
             customer_l3_description=record.get(
                 self._find_column(temp_df, ['Description Customer L3', 'level 3']) or 'Description Customer L3_Nom du Catégorie level 3'),
             telecom_type=record.get(
@@ -701,7 +707,20 @@ class ParkDataProcessor:
                 self._find_column(temp_df, ['Contact number', 'contact']) or 'Contact number_Numéro de contact')
         )
 
+        # Detect anomalies based on business rules
+        is_anomaly, anomaly_reason = self._detect_anomaly(park_record)
+        park_record.is_anomaly = is_anomaly
+        park_record.anomaly_reason = anomaly_reason
+
         return (park_record, is_2b)
+
+    def _detect_anomaly(self, park_record) -> Tuple[bool, Optional[str]]:
+        """Detect anomalies (shared rules)."""
+        return detect_anomaly_fields(
+            customer_l3_code=park_record.customer_l3_code,
+            telecom_type=park_record.telecom_type,
+            offer_name=park_record.offer_name,
+        )
 
     def _safe_date(self, value) -> Optional[date]:
         """Safely convert value to date"""

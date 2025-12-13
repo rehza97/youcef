@@ -279,6 +279,9 @@ def get_parks(
         # User has no DOT access, return empty result
         return []
 
+    # Exclude anomalies from results
+    query = query.filter(Park.is_anomaly.is_(False))
+
     # Apply other filters
     if customer_code:
         query = query.filter(Park.customer_code.contains(customer_code))
@@ -350,6 +353,9 @@ async def get_saved_park_data(
     if offer_type:
         query = query.filter(Park.offer_type == offer_type)
 
+    # Exclude anomalies from results
+    query = query.filter(Park.is_anomaly.is_(False))
+
     # Get total count
     total = query.count()
 
@@ -393,9 +399,12 @@ async def get_park_data_stats(
             "offer_types": []
         }
 
+    # Filter out anomalies from stats
+    query = query.filter(Park.is_anomaly.is_(False))
+
     total_records = query.count()
 
-    # Get unique values for filters (within accessible DOTs)
+    # Get unique values for filters (within accessible DOTs, excluding anomalies)
     subscriber_statuses = query.filter(Park.subscriber_status.isnot(
         None)).with_entities(Park.subscriber_status).distinct().all()
     telecom_types = query.filter(Park.telecom_type.isnot(
@@ -657,24 +666,26 @@ async def clear_all_park_data(
 
 @router.get("/analytics/overview")
 def get_overview_analytics(db: Session = Depends(get_db)):
-    """Get overview analytics for Parc Corporate NGBSS"""
+    """Get overview analytics for Parc Corporate NGBSS (excluding anomalies)"""
 
-    # Total counts
-    total_parks = db.query(Park).count()
+    # Total counts (excluding anomalies)
+    total_parks = db.query(Park).filter(Park.is_anomaly.is_(False)).count()
     total_dots = db.query(DOT).count()
 
-    # Active vs Inactive
+    # Active vs Inactive (excluding anomalies)
     active_count = db.query(Park).filter(
-        Park.subscriber_status == "Active"
+        Park.subscriber_status == "Active",
+        Park.is_anomaly.is_(False)
     ).count()
 
     inactive_count = total_parks - active_count
 
-    # Recent activity (last 30 days)
+    # Recent activity (last 30 days, excluding anomalies)
     from datetime import timedelta
     thirty_days_ago = datetime.utcnow() - timedelta(days=30)
     recent_count = db.query(Park).filter(
-        Park.created_at >= thirty_days_ago
+        Park.created_at >= thirty_days_ago,
+        Park.is_anomaly.is_(False)
     ).count()
 
     return {
@@ -691,22 +702,22 @@ def get_overview_analytics(db: Session = Depends(get_db)):
 def get_analytics_by_dot(db: Session = Depends(get_db)):
     """Get analytics grouped by DOT"""
 
-    # Get DOT statistics with park counts
+    # Get DOT statistics with park counts (excluding anomalies)
     dot_stats = db.query(
         DOT.name,
         DOT.id,
         func.count(Park.id).label('park_count'),
         func.count(func.distinct(Park.customer_code)).label('unique_customers')
-    ).outerjoin(Park, DOT.id == Park.dot_id)\
+    ).outerjoin(Park, and_(DOT.id == Park.dot_id, Park.is_anomaly.is_(False)))\
      .group_by(DOT.id, DOT.name)\
      .all()
 
-    # Get subscriber status by DOT
+    # Get subscriber status by DOT (excluding anomalies)
     status_by_dot = db.query(
         DOT.name,
         Park.subscriber_status,
         func.count(Park.id).label('count')
-    ).join(Park, DOT.id == Park.dot_id)\
+    ).join(Park, and_(DOT.id == Park.dot_id, Park.is_anomaly.is_(False)))\
      .group_by(DOT.name, Park.subscriber_status)\
      .all()
 
@@ -742,11 +753,14 @@ def get_analytics_by_telecom_type(db: Session = Depends(get_db)):
         Park.telecom_type,
         func.count(Park.id).label('count'),
         func.count(func.distinct(Park.customer_code)).label('unique_customers')
-    ).filter(Park.telecom_type.isnot(None))\
+    ).filter(
+        Park.telecom_type.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies
+    )\
      .group_by(Park.telecom_type)\
      .all()
 
-    # Get offer types by telecom type
+    # Get offer types by telecom type (excluding anomalies)
     offer_by_telecom = db.query(
         Park.telecom_type,
         Park.offer_type,
@@ -754,7 +768,8 @@ def get_analytics_by_telecom_type(db: Session = Depends(get_db)):
     ).filter(
         and_(
             Park.telecom_type.isnot(None),
-            Park.offer_type.isnot(None)
+            Park.offer_type.isnot(None),
+            Park.is_anomaly.is_(False)  # Exclude anomalies
         )
     ).group_by(Park.telecom_type, Park.offer_type)\
      .all()
@@ -791,11 +806,14 @@ def get_analytics_by_customer_l2(db: Session = Depends(get_db)):
         Park.customer_l2_description,
         func.count(Park.id).label('count'),
         func.count(func.distinct(Park.customer_code)).label('unique_customers')
-    ).filter(Park.customer_l2_code.isnot(None))\
+    ).filter(
+        Park.customer_l2_code.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies
+    )\
      .group_by(Park.customer_l2_code, Park.customer_l2_description)\
      .all()
 
-    # Get L3 breakdown by L2
+    # Get L3 breakdown by L2 (excluding anomalies)
     l3_by_l2 = db.query(
         Park.customer_l2_code,
         Park.customer_l3_code,
@@ -804,7 +822,8 @@ def get_analytics_by_customer_l2(db: Session = Depends(get_db)):
     ).filter(
         and_(
             Park.customer_l2_code.isnot(None),
-            Park.customer_l3_code.isnot(None)
+            Park.customer_l3_code.isnot(None),
+            Park.is_anomaly.is_(False)  # Exclude anomalies
         )
     ).group_by(Park.customer_l2_code, Park.customer_l3_code, Park.customer_l3_description)\
      .all()
@@ -843,11 +862,14 @@ def get_analytics_by_customer_l3(db: Session = Depends(get_db)):
         Park.customer_l3_description,
         func.count(Park.id).label('count'),
         func.count(func.distinct(Park.customer_code)).label('unique_customers')
-    ).filter(Park.customer_l3_code.isnot(None))\
+    ).filter(
+        Park.customer_l3_code.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies
+    )\
      .group_by(Park.customer_l3_code, Park.customer_l3_description)\
      .all()
 
-    # Get subscriber status by L3
+    # Get subscriber status by L3 (excluding anomalies)
     status_by_l3 = db.query(
         Park.customer_l3_code,
         Park.subscriber_status,
@@ -855,7 +877,8 @@ def get_analytics_by_customer_l3(db: Session = Depends(get_db)):
     ).filter(
         and_(
             Park.customer_l3_code.isnot(None),
-            Park.subscriber_status.isnot(None)
+            Park.subscriber_status.isnot(None),
+            Park.is_anomaly.is_(False)  # Exclude anomalies
         )
     ).group_by(Park.customer_l3_code, Park.subscriber_status)\
      .all()
@@ -888,18 +911,26 @@ def get_analytics_by_customer_l3(db: Session = Depends(get_db)):
 def get_filter_options(db: Session = Depends(get_db)):
     """Get available filter options for the frontend"""
 
-    # Get unique values for each filter
+    # Get unique values for each filter (excluding anomalies)
     dots = db.query(DOT.name, DOT.id).all()
     actel_codes = db.query(Park.actel_code).filter(
-        Park.actel_code.isnot(None)).distinct().all()
+        Park.actel_code.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies from filter options
+    ).distinct().all()
     subscriber_statuses = db.query(Park.subscriber_status).filter(
-        Park.subscriber_status.isnot(None)).distinct().all()
+        Park.subscriber_status.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies from filter options
+    ).distinct().all()
     telecom_types = db.query(Park.telecom_type).filter(
-        Park.telecom_type.isnot(None)).distinct().all()
+        Park.telecom_type.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies from filter options
+    ).distinct().all()
 
-    # Get offer names with case-insensitive deduplication
+    # Get offer names with case-insensitive deduplication (excluding anomalies)
     offer_names_raw = db.query(Park.offer_name).filter(
-        Park.offer_name.isnot(None)).distinct().all()
+        Park.offer_name.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies from filter options
+    ).distinct().all()
 
     # Deduplicate by case-insensitive comparison, keeping the most common capitalization
     offer_name_map = {}
@@ -913,9 +944,13 @@ def get_filter_options(db: Session = Depends(get_db)):
     offer_names = [(name,) for name in sorted(offer_name_map.values())]
 
     customer_l2_codes = db.query(Park.customer_l2_code, Park.customer_l2_description).filter(
-        Park.customer_l2_code.isnot(None)).distinct().all()
+        Park.customer_l2_code.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies from filter options
+    ).distinct().all()
     customer_l3_codes = db.query(Park.customer_l3_code, Park.customer_l3_description).filter(
-        Park.customer_l3_code.isnot(None)).distinct().all()
+        Park.customer_l3_code.isnot(None),
+        Park.is_anomaly.is_(False)  # Exclude anomalies from filter options
+    ).distinct().all()
 
     return {
         "dots": [{"id": dot.id, "name": dot.name} for dot in dots],
@@ -953,6 +988,9 @@ def get_filtered_parks(
     """Get filtered Park records with advanced filtering"""
 
     query = db.query(Park)
+
+    # Exclude anomalies from filtered results
+    query = query.filter(Park.is_anomaly.is_(False))
 
     # Apply filters
     if dot_ids:

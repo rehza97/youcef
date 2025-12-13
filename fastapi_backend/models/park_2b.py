@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Numeric, Date
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Numeric, Date, Boolean
 from sqlalchemy.orm import relationship
 from database.connection import Base
 
@@ -83,9 +83,13 @@ class Park2B(Base):
     imsi = Column(String(100), nullable=True, index=True)
     contact_number = Column(String(100), nullable=True)
 
+    # Anomaly flags
+    is_anomaly = Column(Boolean, default=False, index=True, nullable=False)
+    anomaly_reason = Column(Text, nullable=True)
+
     # Metadata
     created_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=True)
 
     def __repr__(self):
-        return f"<Park2B(id={self.id}, customer_code='{self.customer_code}', service_number='{self.service_number}')>"
+        return f"<Park2B(id={self.id}, customer_code='{self.customer_code}', service_number='{self.service_number}', is_anomaly={self.is_anomaly})>"

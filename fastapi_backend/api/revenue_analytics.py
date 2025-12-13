@@ -540,13 +540,32 @@ async def get_revenue_preview_data(
             query = query.filter(RevenueJournal.is_anomaly == bool_val)
         
         # Handle date filters (can accept list of date strings)
+        # Convert YYYY-MM format to YYYY-MM-DD for PostgreSQL DATE columns
         if start_date:
+            # If format is YYYY-MM, add -01 to make it YYYY-MM-01
+            if len(start_date) == 7:  # YYYY-MM format
+                start_date = f"{start_date}-01"
             query = query.filter(RevenueJournal.date_gl >= start_date)
         if end_date:
+            # If format is YYYY-MM, calculate last day of month
+            if len(end_date) == 7:  # YYYY-MM format
+                year, month = map(int, end_date.split('-'))
+                from calendar import monthrange
+                last_day = monthrange(year, month)[1]
+                end_date = f"{end_date}-{last_day:02d}"
             query = query.filter(RevenueJournal.date_gl <= end_date)
         if start_date_fact:
+            # If format is YYYY-MM, add -01 to make it YYYY-MM-01
+            if len(start_date_fact) == 7:  # YYYY-MM format
+                start_date_fact = f"{start_date_fact}-01"
             query = query.filter(RevenueJournal.date_fact >= start_date_fact)
         if end_date_fact:
+            # If format is YYYY-MM, calculate last day of month
+            if len(end_date_fact) == 7:  # YYYY-MM format
+                year, month = map(int, end_date_fact.split('-'))
+                from calendar import monthrange
+                last_day = monthrange(year, month)[1]
+                end_date_fact = f"{end_date_fact}-{last_day:02d}"
             query = query.filter(RevenueJournal.date_fact <= end_date_fact)
         
         # Handle numeric range filters
@@ -1017,8 +1036,8 @@ async def get_revenue_by_org(
                     record_count=0
                 ))
 
-        # Sort by achievement rate descending (DOTs with no revenue will be at the bottom)
-        response.sort(key=lambda x: x.achievement_rate or 0, reverse=True)
+        # Sort by total_revenue descending (highest CA first)
+        response.sort(key=lambda x: x.total_revenue or 0, reverse=True)
 
         return response
 
@@ -2367,18 +2386,57 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
         if export_params.get("cpt_comptable"):
             cpt_comptables = export_params["cpt_comptable"].split(",") if isinstance(export_params["cpt_comptable"], str) else export_params["cpt_comptable"]
             query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptables))
+        # Date filters - convert YYYY-MM format to YYYY-MM-DD for PostgreSQL DATE columns
         if export_params.get("start_date"):
-            query = query.filter(RevenueJournal.date_gl >= export_params["start_date"])
+            start_date = export_params["start_date"]
+            # If format is YYYY-MM, add -01 to make it YYYY-MM-01
+            if len(start_date) == 7:  # YYYY-MM format
+                start_date = f"{start_date}-01"
+            query = query.filter(RevenueJournal.date_gl >= start_date)
         if export_params.get("end_date"):
-            query = query.filter(RevenueJournal.date_gl <= export_params["end_date"])
+            end_date = export_params["end_date"]
+            # If format is YYYY-MM, calculate last day of month
+            if len(end_date) == 7:  # YYYY-MM format
+                year, month = map(int, end_date.split('-'))
+                from calendar import monthrange
+                last_day = monthrange(year, month)[1]
+                end_date = f"{end_date}-{last_day:02d}"
+            query = query.filter(RevenueJournal.date_gl <= end_date)
         if export_params.get("start_date_fact"):
-            query = query.filter(RevenueJournal.date_fact >= export_params["start_date_fact"])
+            start_date_fact = export_params["start_date_fact"]
+            # If format is YYYY-MM, add -01 to make it YYYY-MM-01
+            if len(start_date_fact) == 7:  # YYYY-MM format
+                start_date_fact = f"{start_date_fact}-01"
+            query = query.filter(RevenueJournal.date_fact >= start_date_fact)
         if export_params.get("end_date_fact"):
-            query = query.filter(RevenueJournal.date_fact <= export_params["end_date_fact"])
+            end_date_fact = export_params["end_date_fact"]
+            # If format is YYYY-MM, calculate last day of month
+            if len(end_date_fact) == 7:  # YYYY-MM format
+                year, month = map(int, end_date_fact.split('-'))
+                from calendar import monthrange
+                last_day = monthrange(year, month)[1]
+                end_date_fact = f"{end_date_fact}-{last_day:02d}"
+            query = query.filter(RevenueJournal.date_fact <= end_date_fact)
         if export_params.get("taux_ca_min") is not None:
             query = query.filter(RevenueJournal.taux_realisation_ca >= export_params["taux_ca_min"])
         if export_params.get("taux_ca_max") is not None:
             query = query.filter(RevenueJournal.taux_realisation_ca <= export_params["taux_ca_max"])
+
+        # Search filter
+        if export_params.get("search"):
+            search_term = f"%{export_params['search']}%"
+            query = query.filter(
+                or_(
+                    RevenueJournal.org_name.ilike(search_term),
+                    RevenueJournal.n_fact.ilike(search_term),
+                    RevenueJournal.client.ilike(search_term),
+                    RevenueJournal.n_client.ilike(search_term),
+                    RevenueJournal.cpt_comptable.ilike(search_term),
+                    RevenueJournal.description_ligne_de_produit.ilike(search_term),
+                    RevenueJournal.obj_fact.ilike(search_term),
+                    RevenueJournal.reference.ilike(search_term)
+                )
+            )
 
         # Progress: Query built
         asyncio.run(processing_ws_manager.send_task_update(task_id, {
@@ -2394,15 +2452,30 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
         if export_type == "both":
             normal_data = query.filter(RevenueJournal.is_anomaly.is_(False)).all()
             anomaly_data = db.query(RevenueAnomaly)
-            
-            # Apply same filters to anomalies
+
+            # Apply filters to anomalies (only columns that exist in RevenueAnomaly model)
             if export_params.get("org_name"):
                 org_names = export_params["org_name"].split(",") if isinstance(export_params["org_name"], str) else export_params["org_name"]
                 anomaly_data = anomaly_data.filter(RevenueAnomaly.org_name.in_(org_names))
             if export_params.get("cpt_comptable"):
                 cpt_comptables = export_params["cpt_comptable"].split(",") if isinstance(export_params["cpt_comptable"], str) else export_params["cpt_comptable"]
                 anomaly_data = anomaly_data.filter(RevenueAnomaly.cpt_comptable.in_(cpt_comptables))
-            
+
+            # Search filter for anomalies
+            if export_params.get("search"):
+                search_term = f"%{export_params['search']}%"
+                anomaly_data = anomaly_data.filter(
+                    or_(
+                        RevenueAnomaly.org_name.ilike(search_term),
+                        RevenueAnomaly.n_fact.ilike(search_term),
+                        RevenueAnomaly.cpt_comptable.ilike(search_term),
+                        RevenueAnomaly.description_ligne_de_produit.ilike(search_term)
+                    )
+                )
+
+            # Note: RevenueAnomaly model doesn't have date_gl, date_fact, or typ_fact columns
+            # Those values are stored in the original_data JSON field
+
             anomaly_data = anomaly_data.all()
 
             if len(normal_data) == 0 and len(anomaly_data) == 0:
@@ -2584,7 +2657,32 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
         else:
             # Single file export
             if export_type == "anomalies":
-                data = db.query(RevenueAnomaly).all()
+                anomaly_query = db.query(RevenueAnomaly)
+
+                # Apply filters to anomalies (only columns that exist in RevenueAnomaly model)
+                if export_params.get("org_name"):
+                    org_names = export_params["org_name"].split(",") if isinstance(export_params["org_name"], str) else export_params["org_name"]
+                    anomaly_query = anomaly_query.filter(RevenueAnomaly.org_name.in_(org_names))
+                if export_params.get("cpt_comptable"):
+                    cpt_comptables = export_params["cpt_comptable"].split(",") if isinstance(export_params["cpt_comptable"], str) else export_params["cpt_comptable"]
+                    anomaly_query = anomaly_query.filter(RevenueAnomaly.cpt_comptable.in_(cpt_comptables))
+
+                # Search filter
+                if export_params.get("search"):
+                    search_term = f"%{export_params['search']}%"
+                    anomaly_query = anomaly_query.filter(
+                        or_(
+                            RevenueAnomaly.org_name.ilike(search_term),
+                            RevenueAnomaly.n_fact.ilike(search_term),
+                            RevenueAnomaly.cpt_comptable.ilike(search_term),
+                            RevenueAnomaly.description_ligne_de_produit.ilike(search_term)
+                        )
+                    )
+
+                # Note: RevenueAnomaly model doesn't have date_gl, date_fact, or typ_fact columns
+                # Those values are stored in the original_data JSON field
+
+                data = anomaly_query.all()
                 records = []
                 for item in data:
                     # Start with original row data if available (all 31 columns)
@@ -2757,12 +2855,13 @@ async def export_revenue_data_async(
     org_name: Optional[str] = Query(None),
     typ_fact: Optional[str] = Query(None),
     cpt_comptable: Optional[str] = Query(None),
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    start_date_fact: Optional[str] = None,
-    end_date_fact: Optional[str] = None,
-    taux_ca_min: Optional[float] = None,
-    taux_ca_max: Optional[float] = None,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    start_date_fact: Optional[str] = Query(None),
+    end_date_fact: Optional[str] = Query(None),
+    taux_ca_min: Optional[float] = Query(None),
+    taux_ca_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -2777,25 +2876,26 @@ async def export_revenue_data_async(
         typ_fact = None
     if cpt_comptable == "":
         cpt_comptable = None
-    
-    logger.info(f"🔍 [BACKEND /export-async] Received params: org_name={org_name}, typ_fact={typ_fact}, cpt_comptable={cpt_comptable}, format={format}, export_type={export_type}")
+
+    logger.info(f"🔍 [BACKEND /export-async] Received params: org_name={org_name}, typ_fact={typ_fact}, cpt_comptable={cpt_comptable}, start_date={start_date}, end_date={end_date}, start_date_fact={start_date_fact}, end_date_fact={end_date_fact}, search={search}, format={format}, export_type={export_type}")
 
     # Generate unique task ID
     task_id = str(uuid.uuid4())
 
-    # Store export parameters
+    # Store export parameters (dates are already strings from Query params)
     export_params = {
         "format": format,
         "export_type": export_type,
         "org_name": org_name,
         "typ_fact": typ_fact,
         "cpt_comptable": cpt_comptable,
-        "start_date": start_date.isoformat() if start_date else None,
-        "end_date": end_date.isoformat() if end_date else None,
-        "start_date_fact": start_date_fact.isoformat() if start_date_fact else None,
-        "end_date_fact": end_date_fact.isoformat() if end_date_fact else None,
+        "start_date": start_date,
+        "end_date": end_date,
+        "start_date_fact": start_date_fact,
+        "end_date_fact": end_date_fact,
         "taux_ca_min": taux_ca_min,
         "taux_ca_max": taux_ca_max,
+        "search": search,
         "user_id": current_user.id
     }
 

@@ -14,6 +14,7 @@ import hashlib
 from models.park import Park
 from models.dot import DOT
 from services.dot_service import DOTService
+from services.park_anomaly_rules import apply_default_anomaly_exclusion
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +82,11 @@ class KPICacheService:
             }
         else:
             # ✅ OPTIMIZED: Use indexed queries
-            base_query = db.query(Park).filter(
-                Park.dot_id.in_(accessible_dots))
+            # Filter out anomalies from visualizations (with safety-net rules)
+            base_query = apply_default_anomaly_exclusion(
+                db.query(Park).filter(Park.dot_id.in_(accessible_dots)),
+                Park
+            )
 
             # Total active subscribers (uses idx_parks_subscriber_status)
             total_active = base_query.filter(
@@ -131,13 +135,16 @@ class KPICacheService:
             result = {"distribution": [], "total": 0}
         else:
             # ✅ OPTIMIZED: Single query with GROUP BY (uses idx_parks_telecom_type)
-            distribution = db.query(
+            # Filter out anomalies from visualizations (with safety-net rules)
+            distribution_query = db.query(
                 Park.telecom_type,
                 func.count(Park.id).label('count')
             ).filter(
                 Park.dot_id.in_(accessible_dots),
                 Park.telecom_type.isnot(None)
-            ).group_by(Park.telecom_type).order_by(func.count(Park.id).desc()).all()
+            )
+            distribution_query = apply_default_anomaly_exclusion(distribution_query, Park)
+            distribution = distribution_query.group_by(Park.telecom_type).order_by(func.count(Park.id).desc()).all()
 
             total_count = sum([item.count for item in distribution])
 
@@ -177,13 +184,16 @@ class KPICacheService:
             result = {"distribution": [], "total": 0}
         else:
             # ✅ OPTIMIZED: Single query with GROUP BY (uses idx_parks_subscriber_status)
-            distribution = db.query(
+            # Filter out anomalies from visualizations (with safety-net rules)
+            distribution_query = db.query(
                 Park.subscriber_status,
                 func.count(Park.id).label('count')
             ).filter(
                 Park.dot_id.in_(accessible_dots),
                 Park.subscriber_status.isnot(None)
-            ).group_by(Park.subscriber_status).order_by(func.count(Park.id).desc()).all()
+            )
+            distribution_query = apply_default_anomaly_exclusion(distribution_query, Park)
+            distribution = distribution_query.group_by(Park.subscriber_status).order_by(func.count(Park.id).desc()).all()
 
             total_count = sum([item.count for item in distribution])
 
@@ -222,14 +232,17 @@ class KPICacheService:
             result = {"distribution": [], "total": 0}
         else:
             # ✅ OPTIMIZED: Single query with GROUP BY (uses idx_parks_customer_l2)
-            distribution = db.query(
+            # Filter out anomalies from visualizations (with safety-net rules)
+            distribution_query = db.query(
                 Park.customer_l2_code,
                 Park.customer_l2_description,
                 func.count(Park.id).label('count')
             ).filter(
                 Park.dot_id.in_(accessible_dots),
                 Park.customer_l2_code.isnot(None)
-            ).group_by(Park.customer_l2_code, Park.customer_l2_description).order_by(func.count(Park.id).desc()).all()
+            )
+            distribution_query = apply_default_anomaly_exclusion(distribution_query, Park)
+            distribution = distribution_query.group_by(Park.customer_l2_code, Park.customer_l2_description).order_by(func.count(Park.id).desc()).all()
 
             total_count = sum([item.count for item in distribution])
 
@@ -269,14 +282,17 @@ class KPICacheService:
             result = {"distribution": [], "total": 0}
         else:
             # ✅ OPTIMIZED: Single query with GROUP BY (uses idx_parks_customer_l3)
-            distribution = db.query(
+            # Filter out anomalies from visualizations (with safety-net rules)
+            distribution_query = db.query(
                 Park.customer_l3_code,
                 Park.customer_l3_description,
                 func.count(Park.id).label('count')
             ).filter(
                 Park.dot_id.in_(accessible_dots),
                 Park.customer_l3_code.isnot(None)
-            ).group_by(Park.customer_l3_code, Park.customer_l3_description).order_by(func.count(Park.id).desc()).all()
+            )
+            distribution_query = apply_default_anomaly_exclusion(distribution_query, Park)
+            distribution = distribution_query.group_by(Park.customer_l3_code, Park.customer_l3_description).order_by(func.count(Park.id).desc()).all()
 
             total_count = sum([item.count for item in distribution])
 
