@@ -457,8 +457,9 @@ class EncaissementARDotETL(BaseETLProcessor):
             duplicate_count = duplicates_mask.sum()
 
             if duplicate_count > 0:
-                # Set amounts to 0.00 for duplicates (including encaissement - critical for collection tracking)
-                amount_columns = ['montant_ht', 'montant_taxe', 'montant_ttc', 'chiffre_aff_exe', 'encaissement']
+                # Set amounts to 0.00 for duplicates (per business rules)
+                # NOTE: Encaissement is NOT zeroed out - only Montant Ht, Montant Taxe, Montant Ttc, Chiffre Aff Exe
+                amount_columns = ['montant_ht', 'montant_taxe', 'montant_ttc', 'chiffre_aff_exe']
                 for col in amount_columns:
                     if col in transformed_df.columns:
                         transformed_df.loc[duplicates_mask, col] = 0.00
@@ -466,10 +467,11 @@ class EncaissementARDotETL(BaseETLProcessor):
                 # Mark duplicates for tracking
                 transformed_df['is_duplicate'] = duplicates_mask
 
-                logger.info(f"🔍 Found {duplicate_count} duplicate entries (set all amounts to 0.00)")
-                logger.info(f"   ✅ Encaissement amounts zeroed out for duplicates to prevent double-counting")
+                logger.info(f"🔍 Found {duplicate_count} duplicate entries (set amounts to 0.00)")
+                logger.info(f"   ✅ Duplicate amounts zeroed: Montant Ht, Montant Taxe, Montant Ttc, Chiffre Aff Exe")
+                logger.info(f"   ℹ️  Encaissement values preserved for duplicates (as per business rules)")
                 step.add_warning(f"Found {duplicate_count} duplicate entries based on composite key")
-                step.add_warning(f"Encaissement amounts zeroed out for all duplicate entries")
+                step.add_warning(f"Amounts zeroed for duplicates (Encaissement preserved)")
 
             # RULE 7: Calculate Taux d'encaissement
             if 'montant_ttc' in transformed_df.columns and 'encaissement' in transformed_df.columns:

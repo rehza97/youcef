@@ -1516,19 +1516,56 @@ async def get_revenue_filters(
         typ_fact_list = [row.typ_fact for row in typ_fact_result]
 
         # Get Cpt Comptable with descriptions
+        # Get codes that exist in BOTH RevenueJournal AND AccountDescription (intersection)
         from models.revenue import AccountDescription
-        cpt_comptable_result = db.query(
-            AccountDescription.cpt_comptable,
-            AccountDescription.description_cpt_comptable
-        ).order_by(AccountDescription.cpt_comptable).all()
-
-        cpt_comptable_list = [
-            {
-                "code": row.cpt_comptable,
-                "description": row.description_cpt_comptable or "Sans description"
-            }
-            for row in cpt_comptable_result
-        ]
+        
+        if accessible_dot_ids:
+            # Get distinct codes from RevenueJournal (with DOT permissions)
+            revenue_codes_query = db.query(
+                RevenueJournal.cpt_comptable
+            ).distinct().filter(
+                RevenueJournal.cpt_comptable.isnot(None),
+                RevenueJournal.dot_id.in_(accessible_dot_ids)
+            )
+            revenue_codes = {row.cpt_comptable for row in revenue_codes_query.all() if row.cpt_comptable}
+            
+            # Get distinct codes from AccountDescription
+            account_desc_codes_query = db.query(
+                AccountDescription.cpt_comptable
+            ).distinct()
+            account_desc_codes = {row.cpt_comptable for row in account_desc_codes_query.all() if row.cpt_comptable}
+            
+            # Find intersection: codes that exist in BOTH tables
+            common_codes = sorted(revenue_codes.intersection(account_desc_codes))
+            
+            # Get descriptions for the common codes
+            if common_codes:
+                descriptions_query = db.query(
+                    AccountDescription.cpt_comptable,
+                    AccountDescription.description_cpt_comptable
+                ).filter(
+                    AccountDescription.cpt_comptable.in_(common_codes)
+                ).all()
+                
+                # Create a mapping of code to description
+                desc_map = {
+                    row.cpt_comptable: row.description_cpt_comptable 
+                    for row in descriptions_query
+                }
+                
+                # Build the list with codes that exist in both tables
+                cpt_comptable_list = [
+                    {
+                        "code": code,
+                        "description": desc_map.get(code) or "Sans description"
+                    }
+                    for code in common_codes
+                ]
+            else:
+                cpt_comptable_list = []
+        else:
+            # User has no access, return empty list
+            cpt_comptable_list = []
 
         # Predefined achievement rate ranges for UI filter buckets
         achievement_rate_ranges = [

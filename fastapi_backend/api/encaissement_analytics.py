@@ -814,8 +814,10 @@ async def get_by_encaisse_rate(
         # Get all records
         records = query.all()
 
-        # Define rate buckets
+        # Define rate buckets (including negative rates for edge cases)
+        # Negative rates can occur when encaissement is negative but montant_ttc is positive
         buckets = {
+            "Negative": {"min": -999999, "max": 0, "count": 0, "montant_ttc": 0, "encaissement": 0},
             "0-25%": {"min": 0, "max": 25, "count": 0, "montant_ttc": 0, "encaissement": 0},
             "25-50%": {"min": 25, "max": 50, "count": 0, "montant_ttc": 0, "encaissement": 0},
             "50-75%": {"min": 50, "max": 75, "count": 0, "montant_ttc": 0, "encaissement": 0},

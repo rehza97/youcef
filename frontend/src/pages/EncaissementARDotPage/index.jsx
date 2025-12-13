@@ -620,9 +620,18 @@ const EncaissementARDotPage = () => {
         Encaissement: item.total_encaissement || 0,
       }))
       .sort((a, b) => {
-        // Sort by taux range (0-25%, 25-50%, etc.)
-        const aMin = parseInt(a.range.split("-")[0] || "0");
-        const bMin = parseInt(b.range.split("-")[0] || "0");
+        // Sort by taux range (Negative, 0-25%, 25-50%, etc.)
+        // Handle special cases: "Negative" should come first, "100%+" should come last
+        const getRangeValue = (range) => {
+          if (range === "Negative") return -1;
+          if (range === "100%+") return 100;
+          // Extract first number from range (e.g., "0-25%" -> 0, "25-50%" -> 25)
+          const match = range.match(/^(\d+)/);
+          return match ? parseInt(match[1]) : 999999;
+        };
+
+        const aMin = getRangeValue(a.range);
+        const bMin = getRangeValue(b.range);
         return aMin - bMin;
       });
   }, [byTauxEncaissement]);
