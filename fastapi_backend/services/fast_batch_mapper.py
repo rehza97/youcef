@@ -4,6 +4,7 @@ Maps DataFrames directly without row-by-row iteration
 """
 
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from typing import Dict, Any
 import logging
@@ -176,6 +177,50 @@ class FastBatchMapper:
             # Add timestamps
             result['created_at'] = datetime.utcnow()
             result['updated_at'] = datetime.utcnow()
+
+            # ------------------------------------------------------------------
+            # Anomaly detection (vectorized)
+            #
+            # Business rules:
+            # - customer_l3_code in {5, 57} (handle "5.0"/"57.0")
+            # - telecom_type in {WIFI, WIMAX, X25}
+            # - offer_name contains "moohtarif" (case-insensitive)
+            # - offer_name contains "solutions" + ("hebergements" or "hébergements")
+            # ------------------------------------------------------------------
+            l3_raw = result['customer_l3_code'].fillna('').astype(str).str.strip()
+            l3_norm = l3_raw.str.replace(r'\.0$', '', regex=True)
+
+            telecom_norm = result['telecom_type'].fillna('').astype(str).str.strip().str.upper()
+            offer_norm = result['offer_name'].fillna('').astype(str).str.strip()
+            offer_lower = offer_norm.str.lower()
+
+            l3_mask = l3_norm.isin(['5', '57'])
+            telecom_mask = telecom_norm.isin(['WIFI', 'WIMAX', 'X25'])
+            moohtarif_mask = offer_lower.str.contains('moohtarif', na=False)
+            solutions_mask = offer_lower.str.contains('solutions', na=False) & (
+                offer_lower.str.contains('hebergements', na=False) | offer_lower.str.contains('hébergements', na=False)
+            )
+
+            is_anomaly = l3_mask | telecom_mask | moohtarif_mask | solutions_mask
+            result['is_anomaly'] = is_anomaly.fillna(False)
+
+            # Build anomaly reason (vectorized string concatenation)
+            reason = pd.Series([''] * len(result), index=result.index, dtype='object')
+
+            def _append(mask: pd.Series, part: pd.Series) -> None:
+                nonlocal reason
+                r = reason.to_numpy(dtype=object)
+                p = part.to_numpy(dtype=object)
+                m = mask.to_numpy(dtype=bool)
+                sep = np.where(r == '', '', '; ')
+                reason = pd.Series(np.where(m, r + sep + p, r), index=result.index, dtype='object')
+
+            _append(l3_mask, 'Code Customer L3: ' + l3_norm)
+            _append(telecom_mask, 'Telecom Type: ' + telecom_norm)
+            _append(moohtarif_mask, pd.Series(['Offer name contains: Moohtarif'] * len(result), index=result.index))
+            _append(solutions_mask, pd.Series(['Offer name contains: Solutions Hebergements'] * len(result), index=result.index))
+
+            result['anomaly_reason'] = reason.replace('', None)
 
             # Replace empty strings with None for proper NULL handling
             result = result.replace({'None': None, '': None, 'nan': None})

@@ -119,6 +119,7 @@ def map_prk_record_to_park_dict(record: dict, file_upload_id: int = None) -> dic
     """Map a PRK record to Park dictionary with robust header matching."""
     from datetime import datetime
     import pandas as pd
+    from services.park_anomaly_rules import detect_anomaly_fields, normalize_customer_l3_code
 
     def _norm(s):
         if s is None:
@@ -187,6 +188,12 @@ def map_prk_record_to_park_dict(record: dict, file_upload_id: int = None) -> dic
         "extraction_date": _d(_get(["extraction date", "extraction"])),
         "dot_name": _s(_get(["dot"])),  # Extract DOT name from file
         "actel_code": _s(_get(["actel code", "actel"])),
+        "customer_l1_code": _s(_get(["code customer l1", "customer l1"])),
+        "customer_l1_description": _s(_get(["description customer l1", "customer l1 description"])),
+        "customer_l2_code": _s(_get(["code customer l2", "customer l2"])),
+        "customer_l2_description": _s(_get(["description customer l2", "customer l2 description"])),
+        "customer_l3_code": normalize_customer_l3_code(_get(["code customer l3", "customer l3"])),
+        "customer_l3_description": _s(_get(["description customer l3", "customer l3 description"])),
         "telecom_type": _s(_get(["telecom type", "service", "produit"])),
         "offer_type": _s(_get(["offer type", "offre"])),
         "offer_name": _s(_get(["offer name", "offre"])),
@@ -223,6 +230,15 @@ def map_prk_record_to_park_dict(record: dict, file_upload_id: int = None) -> dic
         "contact_number": _s(_get(["contact number", "numéro de contact"])),
         "created_at": datetime.utcnow(),
     }
+
+    # Persist anomaly flags (fallback/legacy path)
+    is_anomaly, anomaly_reason = detect_anomaly_fields(
+        customer_l3_code=park_dict.get("customer_l3_code"),
+        telecom_type=park_dict.get("telecom_type"),
+        offer_name=park_dict.get("offer_name"),
+    )
+    park_dict["is_anomaly"] = is_anomaly
+    park_dict["anomaly_reason"] = anomaly_reason
 
     return park_dict
 

@@ -269,24 +269,31 @@ class ParkDataProcessor:
         return df
 
     def _filter_customer_l3(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Remove rows with Code Customer L3 = 5 or 57"""
-        logger.info("Filtering out Code Customer L3 = 5 or 57")
+        """Mark rows with Code Customer L3 = 5 or 57 as anomalies (keep in data)."""
+        logger.info("Processing Code Customer L3 anomalies (5 / 57) - keeping in data")
 
-        original_count = len(df)
-
-        # Remove rows where Code Customer L3 is 5 or 57
+        # Identify rows where Code Customer L3 is 5 or 57 (handle numeric + string)
         l3_column = self._find_column(df, ['Code Customer L3', 'level 3'])
 
         if l3_column:
-            df = df[~df[l3_column].isin([5, 57, '5', '57'])]
+            l3_series = df[l3_column]
+            l3_mask = l3_series.isin([5, 57, '5', '57', 5.0, 57.0])
+
+            anomaly_count = int(l3_mask.sum())
+            if anomaly_count > 0:
+                logger.info(
+                    f"Marked {anomaly_count} rows as anomalies due to Code Customer L3 (5/57) (keeping in data)"
+                )
+
+                # Add lightweight anomaly entries (avoid heavy per-row processing)
+                self.anomalies.append({
+                    "type": "Anomalie Parc NGBSS",
+                    "description": "Code Customer L3: 5/57",
+                    "count": anomaly_count,
+                })
         else:
             logger.warning(
-                "No Code Customer L3 column found, skipping L3 filter")
-
-        filtered_count = original_count - len(df)
-        if filtered_count > 0:
-            logger.info(
-                f"Filtered out {filtered_count} rows with Code Customer L3 = 5 or 57")
+                "No Code Customer L3 column found, skipping L3 anomaly detection")
 
         return df
 

@@ -1,5 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, Numeric, Date, Boolean
 from sqlalchemy.orm import relationship
+import sqlalchemy as sa
 from database.connection import Base
 
 
@@ -84,7 +85,7 @@ class Park(Base):
     contact_number = Column(String(100), nullable=True)
 
     # Anomaly flags
-    is_anomaly = Column(Boolean, default=False, index=True, nullable=False)
+    is_anomaly = Column(Boolean, default=False, server_default=sa.text("false"), index=True, nullable=False)
     anomaly_reason = Column(Text, nullable=True)
 
     # Metadata

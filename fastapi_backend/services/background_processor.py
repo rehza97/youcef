@@ -1223,7 +1223,10 @@ class BackgroundProcessor:
                 'department_name', 'state', 'area', 'town', 'grid', 'street', 'street_number',
                 'building_no', 'unit', 'floor', 'house_no', 'additional_address_info', 'customer_full_name',
                 'province', 'district', 'city', 'postal_code', 'expiry_date', 'iccid', 'imsi',
-                'contact_number', 'created_at', 'updated_at'
+                'contact_number',
+                # Anomaly flags (persisted; default exclusion happens at query layer)
+                'is_anomaly', 'anomaly_reason',
+                'created_at', 'updated_at'
             ]
 
             # Keep only columns that exist in both DataFrame and valid columns list
@@ -1237,6 +1240,12 @@ class BackgroundProcessor:
                 df['created_at'] = datetime.utcnow()
             if 'updated_at' not in df.columns:
                 df['updated_at'] = datetime.utcnow()
+            if 'is_anomaly' not in df.columns:
+                df['is_anomaly'] = False
+            else:
+                df['is_anomaly'] = df['is_anomaly'].fillna(False).astype(bool)
+            if 'anomaly_reason' not in df.columns:
+                df['anomaly_reason'] = None
 
             # ✅ STEP 6: Split dataframe based on customer_l1_code and bulk insert
             # Separate 2B records from regular records

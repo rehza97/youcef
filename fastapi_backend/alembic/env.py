@@ -1,13 +1,29 @@
-from models.user_block import UserBlock
-from models.message import Message, MessageReaction
-from models.conversation import Conversation, ConversationParticipant
-from models.notification import Notification, NotificationPreference
-from models.permission import Permission
-from models.role import Role, UserRole, RolePermission
+# Import all models to ensure they're registered with SQLAlchemy for migrations
+# Core RBAC models
 from models.user import User
-from models.file_upload import FileUpload
+from models.role import Role, UserRole, RolePermission
+from models.permission import Permission
+from models.user_block import UserBlock
+
+# Messaging models
+from models.notification import Notification, NotificationPreference
+from models.conversation import Conversation, ConversationParticipant
+from models.message import Message, MessageReaction, MessageReadReceipt
+
+# File management
+from models.file_upload import FileUpload, FilePreview
+
+# Business/ETL models
 from models.dot import DOT
-from models.park import Park
+from models.park import Park, ParkAnomaly
+from models.park_2b import Park2B
+from models.revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
+from models.revenue_pivot import RevenuePivotCache, RevenuePivotMetadata
+from models.encaissement import EncaissementARDot, EncaissementAnomaly, EncaissementAggregateView
+from models.creance import CreancePeriodiqueDot, CreanceAggregateView
+from models.user_module_dot import UserModuleDOT
+from models.module_dot_config import ModuleDOTConfig
+
 from database.connection import Base
 import os
 import sys

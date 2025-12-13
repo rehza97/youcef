@@ -118,3 +118,4 @@ def apply_anomaly_only(query, model):
         return query.filter(or_(model.is_anomaly.is_(True), pred))
     return query.filter(pred)
 
+

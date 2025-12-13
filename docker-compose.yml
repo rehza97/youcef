@@ -35,7 +35,7 @@ services:
     environment:
       # Auto-update settings
       AUTO_GIT_UPDATE: "false" # Set to "true" to enable auto-update from git
-      GIT_BRANCH: "fastapi_v1"  # Branch to use for auto-updates (default: fastapi_v1)
+      GIT_BRANCH: "fastapi_v1" # Branch to use for auto-updates (default: fastapi_v1)
 
       # Database connection
       DATABASE_URL: postgresql://postgres:123456789@postgres:5432/youcef_db
@@ -88,7 +88,7 @@ services:
     volumes:
       # Mount code for hot-reload (comment out for production)
       - ./frontend:/app:ro
-      - /app/node_modules # Prevent overwriting node_modules
+      - frontend_node_modules:/app/node_modules # Prevent overwriting node_modules
     depends_on:
       - backend
     healthcheck:
@@ -105,6 +105,8 @@ volumes:
   postgres_data:
     driver: local
   uploads_data:
+    driver: local
+  frontend_node_modules:
     driver: local
 
 # Network

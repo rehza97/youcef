@@ -93,3 +93,4 @@ def downgrade():
     op.drop_index('ix_parks_is_anomaly', table_name='parks')
     op.drop_column('parks', 'anomaly_reason')
     op.drop_column('parks', 'is_anomaly')
+

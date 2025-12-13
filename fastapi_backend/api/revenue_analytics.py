@@ -707,11 +707,17 @@ async def get_revenue_column_values(
     Get unique values for a specific column in revenue_journal table.
     Used for populating dropdown filters.
     Supports ALL columns in the revenue_journal table.
+    Respects DOT permissions - only returns values from accessible DOTs.
     """
     PermissionService.require_permission(
         current_user, db, "can_view_analytics")
     
     try:
+        # Apply DOT-based permission filtering
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        
         # Map ALL column names to actual model attributes
         column_map = {
             "id": RevenueJournal.id,
@@ -764,10 +770,22 @@ async def get_revenue_column_values(
                 detail=f"Column '{column}' not found. Available columns: {list(column_map.keys())}"
             )
         
-        # Get unique values
-        values = db.query(column_map[column]) \
-            .filter(column_map[column].isnot(None)) \
-            .distinct() \
+        # Get unique values (with DOT permissions)
+        query = db.query(column_map[column]) \
+            .filter(column_map[column].isnot(None))
+        
+        # Apply DOT permissions if user has access
+        if accessible_dot_ids:
+            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+        else:
+            # User has no access, return empty
+            return {
+                "column": column,
+                "values": [],
+                "count": 0
+            }
+        
+        values = query.distinct() \
             .order_by(column_map[column].asc()) \
             .limit(limit) \
             .all()
@@ -1535,53 +1553,40 @@ async def get_revenue_filters(
         typ_fact_list = [row.typ_fact for row in typ_fact_result]
 
         # Get Cpt Comptable with descriptions
-        # Get codes that exist in BOTH RevenueJournal AND AccountDescription (intersection)
+        # Return ALL codes from RevenueJournal (with descriptions when available from AccountDescription)
         from models.revenue import AccountDescription
         
         if accessible_dot_ids:
-            # Get distinct codes from RevenueJournal (with DOT permissions)
+            # Get ALL distinct codes from RevenueJournal (with DOT permissions)
             revenue_codes_query = db.query(
                 RevenueJournal.cpt_comptable
             ).distinct().filter(
                 RevenueJournal.cpt_comptable.isnot(None),
                 RevenueJournal.dot_id.in_(accessible_dot_ids)
             )
-            revenue_codes = {row.cpt_comptable for row in revenue_codes_query.all() if row.cpt_comptable}
+            revenue_codes = sorted([row.cpt_comptable for row in revenue_codes_query.all() if row.cpt_comptable])
             
-            # Get distinct codes from AccountDescription
-            account_desc_codes_query = db.query(
-                AccountDescription.cpt_comptable
-            ).distinct()
-            account_desc_codes = {row.cpt_comptable for row in account_desc_codes_query.all() if row.cpt_comptable}
+            # Get ALL descriptions from AccountDescription (to match with revenue codes)
+            descriptions_query = db.query(
+                AccountDescription.cpt_comptable,
+                AccountDescription.description_cpt_comptable
+            ).all()
             
-            # Find intersection: codes that exist in BOTH tables
-            common_codes = sorted(revenue_codes.intersection(account_desc_codes))
+            # Create a mapping of code to description
+            desc_map = {
+                row.cpt_comptable: row.description_cpt_comptable 
+                for row in descriptions_query
+                if row.cpt_comptable
+            }
             
-            # Get descriptions for the common codes
-            if common_codes:
-                descriptions_query = db.query(
-                    AccountDescription.cpt_comptable,
-                    AccountDescription.description_cpt_comptable
-                ).filter(
-                    AccountDescription.cpt_comptable.in_(common_codes)
-                ).all()
-                
-                # Create a mapping of code to description
-                desc_map = {
-                    row.cpt_comptable: row.description_cpt_comptable 
-                    for row in descriptions_query
+            # Build the list with ALL codes from RevenueJournal (with descriptions when available)
+            cpt_comptable_list = [
+                {
+                    "code": code,
+                    "description": desc_map.get(code) or "Sans description"
                 }
-                
-                # Build the list with codes that exist in both tables
-                cpt_comptable_list = [
-                    {
-                        "code": code,
-                        "description": desc_map.get(code) or "Sans description"
-                    }
-                    for code in common_codes
-                ]
-            else:
-                cpt_comptable_list = []
+                for code in revenue_codes
+            ]
         else:
             # User has no access, return empty list
             cpt_comptable_list = []
