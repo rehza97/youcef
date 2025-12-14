@@ -1237,8 +1237,8 @@ const EncaissementARDotPage = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {/* Primary Filters */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {/* Primary Filters - First Row: Année, DOT, Type Fact, Recherche */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label>Année</Label>
                   <Select
@@ -1290,6 +1290,35 @@ const EncaissementARDotPage = () => {
                 </div>
 
                 <div>
+                  <Label>Type Fact</Label>
+                  <MultiSelect
+                    options={filterOptions.typ_fact.map((name) => ({
+                      label: name,
+                      value: name,
+                    }))}
+                    selected={filters.typ_fact}
+                    onChange={(values) =>
+                      setFilters((f) => ({ ...f, typ_fact: values }))
+                    }
+                    placeholder="Tous les types"
+                  />
+                </div>
+
+                <div>
+                  <Label>Recherche Globale</Label>
+                  <Input
+                    placeholder="Recherche dans tous les champs..."
+                    value={filters.search}
+                    onChange={(e) =>
+                      setFilters((f) => ({ ...f, search: e.target.value }))
+                    }
+                  />
+                </div>
+              </div>
+
+              {/* Secondary Filters - Second Row: Date filters */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
                   <Label>Date Fact - Début</Label>
                   <Input
                     type="month"
@@ -1314,21 +1343,6 @@ const EncaissementARDotPage = () => {
                         date_fact_end: e.target.value,
                       }))
                     }
-                  />
-                </div>
-
-                <div>
-                  <Label>Type Fact</Label>
-                  <MultiSelect
-                    options={filterOptions.typ_fact.map((name) => ({
-                      label: name,
-                      value: name,
-                    }))}
-                    selected={filters.typ_fact}
-                    onChange={(values) =>
-                      setFilters((f) => ({ ...f, typ_fact: values }))
-                    }
-                    placeholder="Tous les types"
                   />
                 </div>
 
@@ -1359,18 +1373,6 @@ const EncaissementARDotPage = () => {
                     }
                   />
                 </div>
-              </div>
-
-              {/* Search */}
-              <div>
-                <Label>Recherche Globale</Label>
-                <Input
-                  placeholder="Recherche dans tous les champs..."
-                  value={filters.search}
-                  onChange={(e) =>
-                    setFilters((f) => ({ ...f, search: e.target.value }))
-                  }
-                />
               </div>
 
               {/* Active Filters Summary */}
