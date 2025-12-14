@@ -707,15 +707,23 @@ const EncaissementARDotPage = () => {
    * CHART 3: DOT et Taux d'encaissement
    * Shows encaissement rate by DOT, sorted from highest to lowest taux (same as BY Taux C.A)
    * Shows all DOTs, including those with zero encaissement
+   * Taux is calculated as Encaissement / Montant TTC * 100 for each DOT
    */
   const tauxEncaissementChartData = useMemo(() => {
     return byOrganisation
-      .map((item) => ({
-        organisation: item.organisation || "Inconnu",
-        "Montant TTC": item.total_montant_ttc || 0,
-        Encaissement: item.total_encaissement || 0,
-        taux: item.taux_encaissement_moyen || 0, // Taux d'encaissement - main chart value
-      }))
+      .map((item) => {
+        const montantTTC = item.total_montant_ttc || 0;
+        const encaissement = item.total_encaissement || 0;
+        // Calculate taux as Encaissement / Montant TTC * 100 for each DOT
+        const taux = montantTTC > 0 ? (encaissement / montantTTC) * 100 : 0;
+
+        return {
+          organisation: item.organisation || "Inconnu",
+          "Montant TTC": montantTTC,
+          Encaissement: encaissement,
+          taux: taux, // Taux d'encaissement calculated as Encaissement / Montant TTC * 100
+        };
+      })
       .sort((a, b) => b.taux - a.taux) // Sort by taux d'encaissement from high to low
       .map((item, index) => ({
         ...item,

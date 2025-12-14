@@ -608,12 +608,17 @@ async def get_by_organisation(
             total_encaissement = float(row.total_encaissement or 0)
             remaining = total_ttc - total_encaissement
 
+            # Calculate taux as Encaissement / Montant TTC * 100 for each DOT
+            taux_encaissement = 0.0
+            if total_ttc > 0:
+                taux_encaissement = (total_encaissement / total_ttc) * 100
+
             response.append(EncaissementByOrgResponse(
                 organisation=row.organisation or "Unknown",
                 nombre_factures=int(row.nombre_factures),
                 total_montant_ttc=total_ttc,
                 total_encaissement=total_encaissement,
-                taux_encaissement_moyen=float(row.taux_moyen or 0),
+                taux_encaissement_moyen=round(taux_encaissement, 2),
                 total_montant_restant=remaining
             ))
 
