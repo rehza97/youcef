@@ -119,3 +119,4 @@ def apply_anomaly_only(query, model):
     return query.filter(pred)
 
 
+

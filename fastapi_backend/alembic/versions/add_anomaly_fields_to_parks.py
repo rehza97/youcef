@@ -94,3 +94,4 @@ def downgrade():
     op.drop_column('parks', 'anomaly_reason')
     op.drop_column('parks', 'is_anomaly')
 
+

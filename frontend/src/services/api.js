@@ -887,6 +887,17 @@ export const getEncaissementOverview = (filters = {}) => {
   }
   if (filters.search) params.append("search", filters.search);
   if (filters.year) params.append("year", filters.year);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/overview${queryString ? `?${queryString}` : ""}`
@@ -923,6 +934,17 @@ export const getEncaissementByOrganisation = (filters = {}) => {
   if (filters.sort_by) params.append("sort_by", filters.sort_by);
   if (filters.order) params.append("order", filters.order);
   if (filters.limit) params.append("limit", filters.limit);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/by-organisation${queryString ? `?${queryString}` : ""}`
@@ -956,6 +978,17 @@ export const getEncaissementByDate = (filters = {}) => {
   }
   if (filters.search) params.append("search", filters.search);
   if (filters.year) params.append("year", filters.year);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/by-date${queryString ? `?${queryString}` : ""}`
@@ -989,9 +1022,108 @@ export const getEncaissementByEncaisseRate = (filters = {}) => {
   }
   if (filters.search) params.append("search", filters.search);
   if (filters.year) params.append("year", filters.year);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
   const queryString = params.toString();
   return api.get(
     `/api/encaissement/by-encaisse-rate${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getEncaissementByTypFact = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/by-typ-fact${queryString ? `?${queryString}` : ""}`
+  );
+};
+
+export const getEncaissementByDateRglt = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/by-date-rglt${queryString ? `?${queryString}` : ""}`
   );
 };
 

@@ -33,6 +33,9 @@ import {
   Calendar,
   Percent,
   Search,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -40,6 +43,8 @@ import {
   getEncaissementByOrganisation,
   getEncaissementByDate,
   getEncaissementByEncaisseRate,
+  getEncaissementByTypFact,
+  getEncaissementByDateRglt,
   getEncaissementFilters,
   getEncaissementRecords,
   exportEncaissementRecords,
@@ -320,6 +325,29 @@ const COLORS = {
   secondary: "#E2734A", // Orange
   success: "#5CB85C", // Vert
   danger: "#D9534F", // Rouge
+  warning: "#FFC107", // Yellow
+};
+
+/**
+ * Get color based on encaissement rate ranges
+ * < 20%: Red (danger)
+ * 20.01% to 49.99%: Yellow (warning)
+ * 50% to 74.99%: Orange (secondary)
+ * 75% to 99%: Blue (primary)
+ * >= 100%: Green (success)
+ */
+const getColorByEncaissementRate = (taux) => {
+  if (taux >= 100) {
+    return COLORS.success; // Green for >= 100%
+  } else if (taux >= 75) {
+    return COLORS.primary; // Blue for 75% to 99%
+  } else if (taux >= 50) {
+    return COLORS.secondary; // Orange for 50% to 74.99%
+  } else if (taux >= 20.01) {
+    return COLORS.warning; // Yellow for 20.01% to 49.99%
+  } else {
+    return COLORS.danger; // Red for < 20%
+  }
 };
 
 // Sub-components
@@ -371,16 +399,18 @@ const EncaissementARDotPage = () => {
   const [exporting, setExporting] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
+  const [monthSortOrder, setMonthSortOrder] = useState("desc"); // "asc" or "desc"
 
   // Filter state
   const [filters, setFilters] = useState({
     organisation: [], // DOT names (multi-select)
     date_fact_start: "", // Date Fact start (month)
     date_fact_end: "", // Date Fact end (month)
-    taux_encaissement_min: "", // Taux encaissement minimum
-    taux_encaissement_max: "", // Taux encaissement maximum
     search: "", // Global search
     year: "", // Year filter
+    typ_fact: [], // Type Fact filter (multi-select)
+    date_rglt_start: "", // Date Règlement start (month)
+    date_rglt_end: "", // Date Règlement end (month)
   });
 
   // Available filter options
@@ -388,6 +418,7 @@ const EncaissementARDotPage = () => {
     organisations: [],
     months: [],
     taux_ranges: [],
+    typ_fact: [], // Type Fact options
   });
 
   // Data state
@@ -442,6 +473,8 @@ const EncaissementARDotPage = () => {
   const [byOrganisation, setByOrganisation] = useState([]);
   const [byDateFact, setByDateFact] = useState([]);
   const [byTauxEncaissement, setByTauxEncaissement] = useState([]);
+  const [byTypFact, setByTypFact] = useState([]);
+  const [byDateRglt, setByDateRglt] = useState([]);
 
   // Preview data state
   const [previewData, setPreviewData] = useState([]);
@@ -474,12 +507,25 @@ const EncaissementARDotPage = () => {
       const filterParams = {
         organisation:
           filters.organisation.length > 0 ? filters.organisation : undefined,
-        date_fact_start: filters.date_fact_start || undefined,
-        date_fact_end: filters.date_fact_end || undefined,
-        taux_encaissement_min: filters.taux_encaissement_min || undefined,
-        taux_encaissement_max: filters.taux_encaissement_max || undefined,
+        date_fact_start:
+          filters.date_fact_start && filters.date_fact_start.trim() !== ""
+            ? filters.date_fact_start
+            : undefined,
+        date_fact_end:
+          filters.date_fact_end && filters.date_fact_end.trim() !== ""
+            ? filters.date_fact_end
+            : undefined,
         search: filters.search || undefined,
         year: yearToUse || undefined,
+        typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
+        date_rglt_start:
+          filters.date_rglt_start && filters.date_rglt_start.trim() !== ""
+            ? filters.date_rglt_start
+            : undefined,
+        date_rglt_end:
+          filters.date_rglt_end && filters.date_rglt_end.trim() !== ""
+            ? filters.date_rglt_end
+            : undefined,
       };
 
       // Remove undefined values
@@ -494,14 +540,23 @@ const EncaissementARDotPage = () => {
       delete overviewParamsForYears.year; // Remove year to get all available years
 
       // Fetch both overviews: one without year (for dropdown) and one with year (for display)
-      const [ovResForYears, ovResFiltered, orgRes, dateRes, tauxRes] =
-        await Promise.all([
-          getEncaissementOverview(overviewParamsForYears), // Get all years for dropdown
-          getEncaissementOverview(filterParams), // Get filtered overview for display
-          getEncaissementByOrganisation(filterParams),
-          getEncaissementByDate(filterParams),
-          getEncaissementByEncaisseRate(filterParams),
-        ]);
+      const [
+        ovResForYears,
+        ovResFiltered,
+        orgRes,
+        dateRes,
+        tauxRes,
+        typFactRes,
+        dateRgltRes,
+      ] = await Promise.all([
+        getEncaissementOverview(overviewParamsForYears), // Get all years for dropdown
+        getEncaissementOverview(filterParams), // Get filtered overview for display
+        getEncaissementByOrganisation(filterParams),
+        getEncaissementByDate(filterParams),
+        getEncaissementByEncaisseRate(filterParams),
+        getEncaissementByTypFact(filterParams),
+        getEncaissementByDateRglt(filterParams),
+      ]);
 
       // Use the overview with all years for the dropdown
       if (ovResForYears.data && ovResForYears.data.yearly_data) {
@@ -528,6 +583,8 @@ const EncaissementARDotPage = () => {
       setByOrganisation(orgRes.data || []);
       setByDateFact(dateRes.data || []);
       setByTauxEncaissement(tauxRes.data || []);
+      setByTypFact(typFactRes.data || []);
+      setByDateRglt(dateRgltRes.data || []);
 
       if (showRefreshing) {
         toast.success("Données actualisées");
@@ -558,6 +615,7 @@ const EncaissementARDotPage = () => {
           { label: "75-100%", min: 75, max: 100 },
           { label: "100%+", min: 100, max: 999999 },
         ],
+        typ_fact: res.data.types_facture || res.data.typ_fact || [],
       });
     } catch (error) {
       console.error("Error fetching filters:", error);
@@ -575,6 +633,8 @@ const EncaissementARDotPage = () => {
 
   /**
    * CHART 1: Montant TTC & Encaissement par Organisation
+   * Sorted by Encaissement amount (highest to lowest) - same as BY C.A visualization
+   * Shows all DOTs (no limit)
    */
   const organisationChartData = useMemo(() => {
     return byOrganisation
@@ -584,8 +644,7 @@ const EncaissementARDotPage = () => {
         Encaissement: item.total_encaissement || 0,
         "Taux (%)": item.taux_encaissement_moyen || 0,
       }))
-      .sort((a, b) => b["Taux (%)"] - a["Taux (%)"])
-      .slice(0, 30);
+      .sort((a, b) => b.Encaissement - a.Encaissement); // Sort by Encaissement amount (highest to lowest)
   }, [byOrganisation]);
 
   /**
@@ -610,31 +669,57 @@ const EncaissementARDotPage = () => {
 
   /**
    * CHART 3: DOT et Taux d'encaissement
+   * Shows encaissement rate by DOT, sorted from highest to lowest taux (same as BY Taux C.A)
    */
   const tauxEncaissementChartData = useMemo(() => {
-    return byTauxEncaissement
+    return byOrganisation
       .map((item) => ({
-        range: item.taux_range || item.range || "Inconnu",
-        count: item.count || 0,
+        organisation: item.organisation || "Inconnu",
         "Montant TTC": item.total_montant_ttc || 0,
         Encaissement: item.total_encaissement || 0,
+        taux: item.taux_encaissement_moyen || 0, // Taux d'encaissement - main chart value
       }))
-      .sort((a, b) => {
-        // Sort by taux range (Negative, 0-25%, 25-50%, etc.)
-        // Handle special cases: "Negative" should come first, "100%+" should come last
-        const getRangeValue = (range) => {
-          if (range === "Negative") return -1;
-          if (range === "100%+") return 100;
-          // Extract first number from range (e.g., "0-25%" -> 0, "25-50%" -> 25)
-          const match = range.match(/^(\d+)/);
-          return match ? parseInt(match[1]) : 999999;
-        };
+      .filter((item) => item.Encaissement > 0) // Only show DOTs with encaissement
+      .sort((a, b) => b.taux - a.taux) // Sort by taux d'encaissement from high to low
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1, // Add ranking number (1-based)
+        label: `${index + 1}. ${item.organisation}`, // Label with rank number
+      }));
+  }, [byOrganisation]);
 
-        const aMin = getRangeValue(a.range);
-        const bMin = getRangeValue(b.range);
-        return aMin - bMin;
-      });
-  }, [byTauxEncaissement]);
+  /**
+   * CHART 4: Encaissement par Type Fact
+   */
+  const typFactChartData = useMemo(() => {
+    return byTypFact
+      .map((item) => ({
+        typ_fact: item.typ_fact || "Inconnu",
+        "Montant TTC": item.total_montant_ttc || 0,
+        Encaissement: item.total_encaissement || 0,
+        "Taux (%)": item.taux_encaissement_moyen || 0,
+      }))
+      .sort((a, b) => b["Montant TTC"] - a["Montant TTC"]);
+  }, [byTypFact]);
+
+  /**
+   * CHART 5: Encaissement par Date Règlement
+   */
+  const dateRgltChartData = useMemo(() => {
+    if (!byDateRglt || !Array.isArray(byDateRglt) || byDateRglt.length === 0) {
+      return [];
+    }
+
+    return byDateRglt
+      .filter((item) => item != null)
+      .map((item) => ({
+        date_rglt: item.date_rglt || "Inconnu",
+        "Montant TTC": item.total_montant_ttc || 0,
+        Encaissement: item.total_encaissement || 0,
+        "Taux (%)": item.taux_encaissement_moyen || 0,
+      }))
+      .sort((a, b) => a.date_rglt.localeCompare(b.date_rglt));
+  }, [byDateRglt]);
 
   /**
    * CHART 4: Pie Chart - Encaissement par Mois (3D style)
@@ -659,11 +744,17 @@ const EncaissementARDotPage = () => {
           name: item.mois || item.date_fact || "Inconnu",
           value: value,
           percentage: parseFloat(percentage),
+          sortKey: item.mois || item.date_fact || "0000-00", // For sorting by date
         };
       })
       .filter((item) => item.value > 0) // Only show months with encaissement
-      .sort((a, b) => b.value - a.value); // Sort by value descending
-  }, [byDateFact]);
+      .sort((a, b) => {
+        // Sort by date (month) based on sort order
+        return monthSortOrder === "desc"
+          ? b.sortKey.localeCompare(a.sortKey)
+          : a.sortKey.localeCompare(b.sortKey);
+      });
+  }, [byDateFact, monthSortOrder]);
 
   // Extended color palette for pie chart
   const PIE_COLORS = [
@@ -752,10 +843,11 @@ const EncaissementARDotPage = () => {
       organisation: [],
       date_fact_start: "",
       date_fact_end: "",
-      taux_encaissement_min: "",
-      taux_encaissement_max: "",
       search: "",
       year: "",
+      typ_fact: [],
+      date_rglt_start: "",
+      date_rglt_end: "",
     });
     toast.success("Filtres réinitialisés");
   };
@@ -1000,14 +1092,14 @@ const EncaissementARDotPage = () => {
       </Card>
 
       {/* Secondary Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <Card className="border-2">
           <CardContent className="pt-6 pb-6">
             <div className="space-y-2">
               <div className="text-sm font-medium text-gray-600">
                 Montant TTC
               </div>
-              <div className="text-3xl font-bold text-gray-900">
+              <div className="text-xl font-bold text-gray-900">
                 {formatCurrency(displayOverview.total_montant_ttc || 0)}
               </div>
             </div>
@@ -1020,7 +1112,7 @@ const EncaissementARDotPage = () => {
               <div className="text-sm font-medium text-gray-600">
                 Encaissement
               </div>
-              <div className="text-3xl font-bold text-gray-900">
+              <div className="text-xl font-bold text-gray-900">
                 {formatCurrency(displayOverview.total_encaissement || 0)}
               </div>
             </div>
@@ -1033,8 +1125,35 @@ const EncaissementARDotPage = () => {
               <div className="text-sm font-medium text-gray-600">
                 Taux d'encaissement
               </div>
-              <div className="text-3xl font-bold text-gray-900">
+              <div className="text-xl font-bold text-gray-900">
                 {formatPercent(displayOverview.taux_encaissement || 0)}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">Créance</div>
+              <div className="text-xl font-bold text-gray-900">
+                {formatCurrency(
+                  (displayOverview.total_montant_ttc || 0) -
+                    (displayOverview.total_encaissement || 0)
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-2">
+          <CardContent className="pt-6 pb-6">
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-gray-600">
+                Taux de créance
+              </div>
+              <div className="text-xl font-bold text-gray-900">
+                {formatPercent(100 - (displayOverview.taux_encaissement || 0))}
               </div>
             </div>
           </CardContent>
@@ -1061,7 +1180,7 @@ const EncaissementARDotPage = () => {
           <CardContent>
             <div className="space-y-4">
               {/* Primary Filters */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                 <div>
                   <Label>Année</Label>
                   <Select
@@ -1113,7 +1232,7 @@ const EncaissementARDotPage = () => {
                 </div>
 
                 <div>
-                  <Label>Mois (Date Fact) - Début</Label>
+                  <Label>Date Fact - Début</Label>
                   <Input
                     type="month"
                     value={filters.date_fact_start}
@@ -1127,7 +1246,7 @@ const EncaissementARDotPage = () => {
                 </div>
 
                 <div>
-                  <Label>Mois (Date Fact) - Fin</Label>
+                  <Label>Date Fact - Fin</Label>
                   <Input
                     type="month"
                     value={filters.date_fact_end}
@@ -1141,31 +1260,46 @@ const EncaissementARDotPage = () => {
                 </div>
 
                 <div>
-                  <Label>Taux d'encaissement (%)</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      type="number"
-                      placeholder="Min"
-                      value={filters.taux_encaissement_min}
-                      onChange={(e) =>
-                        setFilters((f) => ({
-                          ...f,
-                          taux_encaissement_min: e.target.value,
-                        }))
-                      }
-                    />
-                    <Input
-                      type="number"
-                      placeholder="Max"
-                      value={filters.taux_encaissement_max}
-                      onChange={(e) =>
-                        setFilters((f) => ({
-                          ...f,
-                          taux_encaissement_max: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
+                  <Label>Type Fact</Label>
+                  <MultiSelect
+                    options={filterOptions.typ_fact.map((name) => ({
+                      label: name,
+                      value: name,
+                    }))}
+                    selected={filters.typ_fact}
+                    onChange={(values) =>
+                      setFilters((f) => ({ ...f, typ_fact: values }))
+                    }
+                    placeholder="Tous les types"
+                  />
+                </div>
+
+                <div>
+                  <Label>Date Règlement - Début</Label>
+                  <Input
+                    type="month"
+                    value={filters.date_rglt_start}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        date_rglt_start: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+
+                <div>
+                  <Label>Date Règlement - Fin</Label>
+                  <Input
+                    type="month"
+                    value={filters.date_rglt_end}
+                    onChange={(e) =>
+                      setFilters((f) => ({
+                        ...f,
+                        date_rglt_end: e.target.value,
+                      }))
+                    }
+                  />
                 </div>
               </div>
 
@@ -1201,8 +1335,9 @@ const EncaissementARDotPage = () => {
                           organisation: "DOT",
                           date_fact_start: "Date Fact Début",
                           date_fact_end: "Date Fact Fin",
-                          taux_encaissement_min: "Taux Min",
-                          taux_encaissement_max: "Taux Max",
+                          typ_fact: "Type Fact",
+                          date_rglt_start: "Date Règlement Début",
+                          date_rglt_end: "Date Règlement Fin",
                           search: "Recherche",
                         };
 
@@ -1243,13 +1378,15 @@ const EncaissementARDotPage = () => {
       <div className="flex flex-wrap gap-2 border-b pb-2">
         {[
           { id: "overview", label: "OVERVIEW", icon: BarChart3 },
-          { id: "organisation", label: "BY Organisation", icon: Building },
+          { id: "organisation", label: "BY Encaissement", icon: Building },
           { id: "date-fact", label: "BY Date Fact", icon: Calendar },
           {
             id: "taux-encaissement",
             label: "BY Taux d'encaissement",
             icon: Percent,
           },
+          { id: "typ-fact", label: "BY Type Fact", icon: FileText },
+          { id: "date-rglt", label: "BY Date règlement", icon: Calendar },
           { id: "preview", label: "PREVIEW DATA", icon: FileText },
         ].map((tab) => (
           <Button
@@ -1331,7 +1468,30 @@ const EncaissementARDotPage = () => {
             {/* Pie Chart - Secteur 3D (encaissement / mois) */}
             <Card>
               <CardHeader>
-                <CardTitle>Secteur 3D (Encaissement / Mois)</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Secteur 3D (Encaissement / Mois)</CardTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setMonthSortOrder(
+                        monthSortOrder === "desc" ? "asc" : "desc"
+                      )
+                    }
+                    className="flex items-center gap-2"
+                  >
+                    {monthSortOrder === "desc" ? (
+                      <ArrowDown className="h-4 w-4" />
+                    ) : (
+                      <ArrowUp className="h-4 w-4" />
+                    )}
+                    <span className="text-xs">
+                      {monthSortOrder === "desc"
+                        ? "Plus récent"
+                        : "Plus ancien"}
+                    </span>
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {pieChartData.length > 0 ? (
@@ -1392,61 +1552,121 @@ const EncaissementARDotPage = () => {
                 Encaissement par Organisation (Relation 1: DOT et Taux
                 d'encaissement)
               </CardTitle>
+              {/* Color Legend for Encaissement Rate */}
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4 pt-4 border-t">
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.danger }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    &lt; 20%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.warning }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    20% - 50%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.secondary }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    50% - 75%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.primary }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    75% - 99%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.success }}
+                  />
+                  <span className="text-xs text-muted-foreground">≥ 100%</span>
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="w-full px-0">
               {organisationChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={700}>
-                  <ComposedChart
-                    data={organisationChartData}
-                    layout="vertical"
-                    margin={{ left: 120, right: 60 }}
+                <div className="w-full" style={{ width: "100%", minWidth: 0 }}>
+                  <ResponsiveContainer
+                    width="100%"
+                    height={Math.max(
+                      400,
+                      Math.min(800, organisationChartData.length * 20)
+                    )}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
-                    <XAxis
-                      type="number"
-                      tickFormatter={(value) =>
-                        new Intl.NumberFormat("fr-FR", {
-                          notation: "compact",
-                        }).format(value)
-                      }
-                      style={{ fontSize: "12px" }}
-                    />
-                    <YAxis
-                      dataKey="organisation"
-                      type="category"
-                      width={110}
-                      tick={{ fontSize: 11 }}
-                    />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend
-                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
-                    />
-                    <Bar
-                      dataKey="Montant TTC"
-                      fill={COLORS.primary}
-                      radius={[0, 4, 4, 0]}
-                    />
-                    <Bar
-                      dataKey="Encaissement"
-                      fill={COLORS.success}
-                      radius={[0, 4, 4, 0]}
-                    />
-                    <Line
-                      dataKey="Taux (%)"
-                      stroke={COLORS.secondary}
-                      strokeWidth={3}
-                      dot={{ r: 4 }}
-                      yAxisId="right"
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      domain={[0, 100]}
-                      tickFormatter={(value) => `${value}%`}
-                      style={{ fontSize: "12px" }}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
+                    <ComposedChart
+                      data={organisationChartData}
+                      margin={{ left: 20, right: 80, top: 10, bottom: 140 }}
+                      style={{ width: "100%", minWidth: 0 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                      <XAxis
+                        dataKey="organisation"
+                        angle={-45}
+                        textAnchor="end"
+                        height={140}
+                        tick={{ fontSize: 11 }}
+                        interval={0}
+                      />
+                      <YAxis
+                        type="number"
+                        tickFormatter={(value) =>
+                          new Intl.NumberFormat("fr-FR", {
+                            notation: "compact",
+                            maximumFractionDigits: 1,
+                          }).format(value)
+                        }
+                        style={{ fontSize: "12px" }}
+                      />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend
+                        wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                      />
+                      <Bar
+                        dataKey="Montant TTC"
+                        fill={COLORS.primary}
+                        radius={[4, 4, 0, 0]}
+                      />
+                      <Bar dataKey="Encaissement" radius={[4, 4, 0, 0]}>
+                        {organisationChartData.map((entry, index) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={getColorByEncaissementRate(entry["Taux (%)"])}
+                          />
+                        ))}
+                      </Bar>
+                      <Line
+                        dataKey="Taux (%)"
+                        stroke={COLORS.secondary}
+                        strokeWidth={3}
+                        dot={{ r: 4 }}
+                        yAxisId="right"
+                      />
+                      <YAxis
+                        yAxisId="right"
+                        orientation="right"
+                        domain={[0, 100]}
+                        tickFormatter={(value) => `${value}%`}
+                        style={{ fontSize: "12px" }}
+                      />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
               ) : (
                 <EmptyState message="Aucune donnée Organisation disponible" />
               )}
@@ -1528,26 +1748,152 @@ const EncaissementARDotPage = () => {
         {activeTab === "taux-encaissement" && (
           <Card>
             <CardHeader>
-              <CardTitle>Distribution par Taux d'encaissement</CardTitle>
+              <CardTitle>DOT et Taux de Réalisation Encaissement</CardTitle>
+              {/* Color Legend for Encaissement Rate */}
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4 pt-4 border-t">
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.danger }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    &lt; 20%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.warning }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    20% - 50%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.secondary }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    50% - 75%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.primary }}
+                  />
+                  <span className="text-xs text-muted-foreground">≥ 75%</span>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {tauxEncaissementChartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={450}>
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(
+                    400,
+                    Math.min(800, tauxEncaissementChartData.length * 20)
+                  )}
+                >
                   <BarChart
                     data={tauxEncaissementChartData}
-                    margin={{ bottom: 20 }}
+                    margin={{ left: 20, right: 20, top: 10, bottom: 140 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
-                      dataKey="range"
-                      angle={0}
-                      textAnchor="middle"
-                      style={{ fontSize: "12px" }}
+                      dataKey="label"
+                      angle={-45}
+                      textAnchor="end"
+                      height={140}
+                      tick={{ fontSize: 11 }}
+                      interval={0}
                     />
                     <YAxis
+                      type="number"
+                      tickFormatter={(value) => `${value.toFixed(0)}%`}
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-white p-3 border rounded shadow-lg">
+                              <p className="font-semibold">
+                                {data.organisation}
+                              </p>
+                              <p className="text-sm">
+                                Taux: {formatPercent(data.taux)}
+                              </p>
+                              <p className="text-sm">
+                                Encaissement:{" "}
+                                {formatCurrency(data.Encaissement)}
+                              </p>
+                              <p className="text-sm">
+                                Montant TTC:{" "}
+                                {formatCurrency(data["Montant TTC"])}
+                              </p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="taux" radius={[4, 4, 0, 0]}>
+                      {tauxEncaissementChartData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={getColorByEncaissementRate(entry.taux)}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Taux disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "typ-fact" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                Encaissement par Type Fact (Relation: Type Fact et Taux
+                d'encaissement)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {typFactChartData.length > 0 ? (
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(
+                    400,
+                    Math.min(800, typFactChartData.length * 20)
+                  )}
+                >
+                  <ComposedChart
+                    data={typFactChartData}
+                    margin={{ left: 20, right: 80, top: 10, bottom: 140 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="typ_fact"
+                      angle={-45}
+                      textAnchor="end"
+                      height={140}
+                      tick={{ fontSize: 11 }}
+                      interval={0}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      type="number"
                       tickFormatter={(value) =>
                         new Intl.NumberFormat("fr-FR", {
                           notation: "compact",
+                          maximumFractionDigits: 1,
                         }).format(value)
                       }
                       style={{ fontSize: "12px" }}
@@ -1560,16 +1906,110 @@ const EncaissementARDotPage = () => {
                       dataKey="Montant TTC"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
+                      yAxisId="left"
+                    />
+                    <Bar
+                      dataKey="Encaissement"
+                      radius={[4, 4, 0, 0]}
+                      yAxisId="left"
+                    >
+                      {typFactChartData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={getColorByEncaissementRate(entry["Taux (%)"])}
+                        />
+                      ))}
+                    </Bar>
+                    <Line
+                      dataKey="Taux (%)"
+                      stroke={COLORS.secondary}
+                      strokeWidth={3}
+                      dot={{ r: 4 }}
+                      yAxisId="right"
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tickFormatter={(value) => `${value}%`}
+                      style={{ fontSize: "12px" }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Type Fact disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === "date-rglt" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                Encaissement par Date Règlement (Relation: Mois et Taux
+                d'encaissement)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {dateRgltChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={450}>
+                  <ComposedChart
+                    data={dateRgltChartData}
+                    margin={{ bottom: 20, right: 60 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="date_rglt"
+                      angle={0}
+                      textAnchor="middle"
+                      style={{ fontSize: "12px" }}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                          maximumFractionDigits: 1,
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip content={<CustomTooltip />} />
+                    <Legend
+                      wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
+                    />
+                    <Bar
+                      dataKey="Montant TTC"
+                      fill={COLORS.primary}
+                      radius={[4, 4, 0, 0]}
+                      yAxisId="left"
                     />
                     <Bar
                       dataKey="Encaissement"
                       fill={COLORS.success}
                       radius={[4, 4, 0, 0]}
+                      yAxisId="left"
                     />
-                  </BarChart>
+                    <Line
+                      dataKey="Taux (%)"
+                      stroke={COLORS.secondary}
+                      strokeWidth={3}
+                      dot={{ r: 4 }}
+                      yAxisId="right"
+                      type="monotone"
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 100]}
+                      tickFormatter={(value) => `${value}%`}
+                      style={{ fontSize: "12px" }}
+                    />
+                  </ComposedChart>
                 </ResponsiveContainer>
               ) : (
-                <EmptyState message="Aucune donnée Taux disponible" />
+                <EmptyState message="Aucune donnée Date Règlement disponible" />
               )}
             </CardContent>
           </Card>

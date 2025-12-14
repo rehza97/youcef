@@ -55,3 +55,4 @@ def downgrade() -> None:
         nullable=False,
         server_default=None,
     )
+

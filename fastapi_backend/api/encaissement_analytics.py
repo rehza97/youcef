@@ -35,7 +35,10 @@ def apply_encaissement_filters(
     taux_encaissement_min: Optional[float] = None,
     taux_encaissement_max: Optional[float] = None,
     search: Optional[str] = None,
-    year: Optional[str] = None
+    year: Optional[str] = None,
+    typ_fact: Optional[List[str]] = None,
+    date_rglt_start: Optional[str] = None,
+    date_rglt_end: Optional[str] = None
 ):
     """
     Apply common filters to encaissement query
@@ -117,6 +120,39 @@ def apply_encaissement_filters(
             )
         except (ValueError, TypeError) as e:
             logger.warning(f"Invalid year format: {year}, error: {e}")
+    
+    # Filter by typ_fact
+    if typ_fact:
+        query = query.filter(EncaissementARDot.typ_fact.in_(typ_fact))
+    
+    # Filter by date_rglt range (handle month strings like "2024-01")
+    if date_rglt_start:
+        try:
+            # Try parsing as month string first (YYYY-MM)
+            if len(date_rglt_start) == 7 and date_rglt_start[4] == '-':
+                start_date = datetime.strptime(date_rglt_start, "%Y-%m").date()
+            else:
+                # Try parsing as full date
+                start_date = datetime.strptime(date_rglt_start, "%Y-%m-%d").date()
+            query = query.filter(EncaissementARDot.date_rglt >= start_date)
+        except ValueError:
+            logger.warning(f"Invalid date_rglt_start format: {date_rglt_start}")
+    
+    if date_rglt_end:
+        try:
+            # Try parsing as month string first (YYYY-MM)
+            if len(date_rglt_end) == 7 and date_rglt_end[4] == '-':
+                # For month strings, use last day of month
+                from calendar import monthrange
+                year, month = map(int, date_rglt_end.split('-'))
+                last_day = monthrange(year, month)[1]
+                end_date = datetime(year, month, last_day).date()
+            else:
+                # Try parsing as full date
+                end_date = datetime.strptime(date_rglt_end, "%Y-%m-%d").date()
+            query = query.filter(EncaissementARDot.date_rglt <= end_date)
+        except ValueError:
+            logger.warning(f"Invalid date_rglt_end format: {date_rglt_end}")
     
     return query
 
@@ -215,6 +251,26 @@ class EncaissementByRateResponse(BaseModel):
     total_encaissement: float
 
 
+class EncaissementByTypFactResponse(BaseModel):
+    """Response schema for Type Fact aggregations"""
+    typ_fact: str
+    nombre_factures: int
+    total_montant_ttc: float
+    total_encaissement: float
+    taux_encaissement_moyen: Optional[float]
+    total_montant_restant: float
+
+
+class EncaissementByDateRgltResponse(BaseModel):
+    """Response schema for Date Règlement aggregations"""
+    date_rglt: str  # YYYY-MM format
+    nombre_factures: int
+    total_montant_ttc: float
+    total_encaissement: float
+    taux_encaissement_moyen: Optional[float]
+    total_montant_restant: float
+
+
 # ============================================================================
 # Overview Endpoint
 # ============================================================================
@@ -229,7 +285,10 @@ async def get_overview(
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
     search: Optional[str] = Query(None),
-    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    date_rglt_start: Optional[str] = Query(None, description="Date Règlement start as YYYY-MM or YYYY-MM-DD"),
+    date_rglt_end: Optional[str] = Query(None, description="Date Règlement end as YYYY-MM or YYYY-MM-DD")
 ):
     """
     Get overview analytics for encaissement data
@@ -269,7 +328,10 @@ async def get_overview(
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
             search=search,
-            year=year
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
         )
 
         # Extract unique users from creer_par field
@@ -472,7 +534,10 @@ async def get_by_organisation(
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
     search: Optional[str] = Query(None),
-    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    date_rglt_start: Optional[str] = Query(None, description="Date Règlement start as YYYY-MM or YYYY-MM-DD"),
+    date_rglt_end: Optional[str] = Query(None, description="Date Règlement end as YYYY-MM or YYYY-MM-DD")
 ):
     """
     Get encaissement data grouped by organization
@@ -515,7 +580,10 @@ async def get_by_organisation(
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
             search=search,
-            year=year
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
         )
 
         # Build aggregation query with filters applied
@@ -673,7 +741,10 @@ async def get_by_date(
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
     search: Optional[str] = Query(None),
-    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    date_rglt_start: Optional[str] = Query(None, description="Date Règlement start as YYYY-MM or YYYY-MM-DD"),
+    date_rglt_end: Optional[str] = Query(None, description="Date Règlement end as YYYY-MM or YYYY-MM-DD")
 ):
     """
     Get encaissement data grouped by date (month)
@@ -712,7 +783,10 @@ async def get_by_date(
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
             search=search,
-            year=year
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
         )
 
         # Group by month
@@ -769,7 +843,10 @@ async def get_by_encaisse_rate(
     taux_encaissement_min: Optional[float] = Query(None),
     taux_encaissement_max: Optional[float] = Query(None),
     search: Optional[str] = Query(None),
-    year: Optional[str] = Query(None, description="Filter by year (YYYY)")
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    date_rglt_start: Optional[str] = Query(None, description="Date Règlement start as YYYY-MM or YYYY-MM-DD"),
+    date_rglt_end: Optional[str] = Query(None, description="Date Règlement end as YYYY-MM or YYYY-MM-DD")
 ):
     """
     Get encaissement data grouped by collection rate buckets
@@ -808,7 +885,10 @@ async def get_by_encaisse_rate(
             taux_encaissement_min=taux_encaissement_min,
             taux_encaissement_max=taux_encaissement_max,
             search=search,
-            year=year
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
         )
 
         # Get all records
@@ -856,6 +936,229 @@ async def get_by_encaisse_rate(
     except Exception as e:
         logger.error(f"Error getting encaissement by rate: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve by rate: {str(e)}")
+
+
+# ============================================================================
+# By Type Fact Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/by-typ-fact", response_model=List[EncaissementByTypFactResponse])
+async def get_by_typ_fact(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisation: Optional[List[str]] = Query(None),
+    date_fact_start: Optional[str] = Query(None, description="Start date as YYYY-MM or YYYY-MM-DD"),
+    date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
+    taux_encaissement_min: Optional[float] = Query(None),
+    taux_encaissement_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    date_rglt_start: Optional[str] = Query(None, description="Date Règlement start as YYYY-MM or YYYY-MM-DD"),
+    date_rglt_end: Optional[str] = Query(None, description="Date Règlement end as YYYY-MM or YYYY-MM-DD")
+):
+    """
+    Get encaissement data grouped by Type Fact
+
+    Returns aggregations by invoice type with collection rates and outstanding amounts.
+
+    Parameters:
+    - organisation: Optional list of organizations to filter
+    - date_fact_start: Optional start date (YYYY-MM or YYYY-MM-DD)
+    - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
+    - taux_encaissement_min: Optional minimum collection rate
+    - taux_encaissement_max: Optional maximum collection rate
+    - search: Optional search term for client, n_fact, or organisation
+    - year: Optional year filter (YYYY)
+    - typ_fact: Optional list of Type Fact values to filter
+    - date_rglt_start: Optional Date Règlement start (YYYY-MM or YYYY-MM-DD)
+    - date_rglt_end: Optional Date Règlement end (YYYY-MM or YYYY-MM-DD)
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Apply common filters
+        query = apply_encaissement_filters(
+            query,
+            organisation=organisation,
+            date_fact_start=date_fact_start,
+            date_fact_end=date_fact_end,
+            taux_encaissement_min=taux_encaissement_min,
+            taux_encaissement_max=taux_encaissement_max,
+            search=search,
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
+        )
+
+        # Group by typ_fact
+        results = query.with_entities(
+            EncaissementARDot.typ_fact,
+            func.count(EncaissementARDot.id).label('nombre_factures'),
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement'),
+            func.avg(EncaissementARDot.taux_encaissement).label('taux_moyen')
+        ).filter(
+            EncaissementARDot.typ_fact.isnot(None)
+        ).group_by(
+            EncaissementARDot.typ_fact
+        ).order_by(
+            EncaissementARDot.typ_fact
+        ).all()
+
+        # Build response
+        response = []
+        for row in results:
+            total_ttc = float(row.total_montant_ttc or 0)
+            total_encaissement = float(row.total_encaissement or 0)
+            remaining = total_ttc - total_encaissement
+
+            response.append(EncaissementByTypFactResponse(
+                typ_fact=row.typ_fact or "Unknown",
+                nombre_factures=int(row.nombre_factures),
+                total_montant_ttc=total_ttc,
+                total_encaissement=total_encaissement,
+                taux_encaissement_moyen=float(row.taux_moyen or 0),
+                total_montant_restant=remaining
+            ))
+
+        logger.info(f"By typ_fact retrieved: {len(response)} types")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement by typ_fact: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by typ_fact: {str(e)}")
+
+
+# ============================================================================
+# By Date Règlement Endpoint
+# ============================================================================
+
+@encaissement_analytics_router.get("/by-date-rglt", response_model=List[EncaissementByDateRgltResponse])
+async def get_by_date_rglt(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    organisation: Optional[List[str]] = Query(None),
+    date_fact_start: Optional[str] = Query(None, description="Start date as YYYY-MM or YYYY-MM-DD"),
+    date_fact_end: Optional[str] = Query(None, description="End date as YYYY-MM or YYYY-MM-DD"),
+    taux_encaissement_min: Optional[float] = Query(None),
+    taux_encaissement_max: Optional[float] = Query(None),
+    search: Optional[str] = Query(None),
+    year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    date_rglt_start: Optional[str] = Query(None, description="Date Règlement start as YYYY-MM or YYYY-MM-DD"),
+    date_rglt_end: Optional[str] = Query(None, description="Date Règlement end as YYYY-MM or YYYY-MM-DD")
+):
+    """
+    Get encaissement data grouped by Date Règlement (month)
+
+    Returns monthly aggregations by payment date with collection rates and outstanding amounts.
+
+    Parameters:
+    - organisation: Optional list of organizations to filter
+    - date_fact_start: Optional start date (YYYY-MM or YYYY-MM-DD)
+    - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
+    - taux_encaissement_min: Optional minimum collection rate
+    - taux_encaissement_max: Optional maximum collection rate
+    - search: Optional search term for client, n_fact, or organisation
+    - year: Optional year filter (YYYY)
+    - typ_fact: Optional list of Type Fact values to filter
+    - date_rglt_start: Optional Date Règlement start (YYYY-MM or YYYY-MM-DD)
+    - date_rglt_end: Optional Date Règlement end (YYYY-MM or YYYY-MM-DD)
+
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    try:
+        # Build query
+        query = db.query(EncaissementARDot)
+
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_ENCAISSEMENT_AR_DOT
+        )
+        if accessible_dot_ids:
+            query = query.filter(EncaissementARDot.dot_id.in_(accessible_dot_ids))
+
+        # Apply common filters
+        query = apply_encaissement_filters(
+            query,
+            organisation=organisation,
+            date_fact_start=date_fact_start,
+            date_fact_end=date_fact_end,
+            taux_encaissement_min=taux_encaissement_min,
+            taux_encaissement_max=taux_encaissement_max,
+            search=search,
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
+        )
+
+        # Extract month from date_rglt and group by it
+        # Use database-agnostic approach: check database type
+        from core.config import settings
+        
+        # For PostgreSQL: use to_char, for SQLite: use strftime
+        if settings.DATABASE_URL.startswith("sqlite"):
+            # SQLite approach
+            mois_expr = func.strftime('%Y-%m', EncaissementARDot.date_rglt)
+        else:
+            # PostgreSQL approach
+            mois_expr = func.to_char(EncaissementARDot.date_rglt, 'YYYY-MM')
+        
+        results = query.with_entities(
+            mois_expr.label('mois'),
+            func.count(EncaissementARDot.id).label('nombre_factures'),
+            func.sum(EncaissementARDot.montant_ttc).label('total_montant_ttc'),
+            func.sum(EncaissementARDot.encaissement).label('total_encaissement'),
+            func.avg(EncaissementARDot.taux_encaissement).label('taux_moyen')
+        ).filter(
+            EncaissementARDot.date_rglt.isnot(None)
+        ).group_by(
+            mois_expr
+        ).order_by(
+            mois_expr
+        ).all()
+
+        # Build response
+        response = []
+        for row in results:
+            total_ttc = float(row.total_montant_ttc or 0)
+            total_encaissement = float(row.total_encaissement or 0)
+            remaining = total_ttc - total_encaissement
+
+            response.append(EncaissementByDateRgltResponse(
+                date_rglt=row.mois or "Unknown",
+                nombre_factures=int(row.nombre_factures),
+                total_montant_ttc=total_ttc,
+                total_encaissement=total_encaissement,
+                taux_encaissement_moyen=float(row.taux_moyen or 0),
+                total_montant_restant=remaining
+            ))
+
+        logger.info(f"By date_rglt retrieved: {len(response)} months")
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error getting encaissement by date_rglt: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve by date_rglt: {str(e)}")
 
 
 # ============================================================================
@@ -1284,34 +1587,35 @@ async def export_encaissement_data(
 
         df = pd.DataFrame(data)
 
-        # Apply French number formatting
-        def format_french_number(x):
-            """Format number with French convention: comma for decimal, space for thousands"""
-            if pd.isna(x) or x == "":
-                return ""
-            try:
-                # Format with 2 decimals
-                formatted = f"{float(x):,.2f}"
-                # Replace . with , for decimal
-                formatted = formatted.replace(",", "TEMP").replace(".", ",").replace("TEMP", " ")
-                return formatted
-            except:
-                return str(x)
-
-        # Format numeric columns (exclude ID as it's an integer)
+        # Numeric columns that should be formatted as numbers
         numeric_cols = ["Montant HT", "Montant Taxe", "Montant TTC", "Chiffre Aff Exe",
                        "Encaissement", "Taux Encaissement (%)", "Montant Restant"]
 
         # Export based on format
         if format == "xlsx":
-            # For Excel: Apply French number formatting
-            for col in numeric_cols:
-                if col in df.columns:
-                    df[col] = df[col].apply(format_french_number)
-            
+            # For Excel: Keep numbers as numbers, apply Excel number formatting
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name="Encaissement AR DOT")
+                
+                # Get the workbook and worksheet
+                workbook = writer.book
+                worksheet = writer.sheets["Encaissement AR DOT"]
+                
+                # Import openpyxl styles
+                from openpyxl.styles import NamedStyle
+                from openpyxl.styles.numbers import FORMAT_NUMBER_00
+                
+                # Apply number formatting to numeric columns
+                for col_idx, col_name in enumerate(df.columns, start=1):
+                    if col_name in numeric_cols:
+                        # Apply number format with 2 decimals and French locale (comma for decimal)
+                        # Use Excel's built-in number format
+                        for row_idx in range(2, len(df) + 2):  # Start from row 2 (row 1 is header)
+                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            if cell.value is not None and cell.value != "":
+                                # Set as number format with 2 decimals
+                                cell.number_format = '#,##0.00'  # Excel format: thousands separator, 2 decimals
             output.seek(0)
 
             filename = f"encaissement_ar_dot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -1321,10 +1625,17 @@ async def export_encaissement_data(
                 headers={"Content-Disposition": f"attachment; filename={filename}"}
             )
         else:  # CSV
-            # For CSV: Keep raw numbers (Excel will interpret them correctly)
-            # Don't apply French formatting to CSV - use raw numeric values
+            # For CSV: Keep raw numeric values as numbers (not strings)
+            # Use semicolon separator and period for decimal (standard CSV numeric format)
             output = io.StringIO()
-            df.to_csv(output, index=False, sep=";", encoding="utf-8-sig", decimal=",")
+            # Ensure numeric columns remain as numbers in CSV
+            for col in numeric_cols:
+                if col in df.columns:
+                    # Convert to numeric, handling any errors
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # Export CSV with semicolon separator and period for decimal (standard numeric format)
+            df.to_csv(output, index=False, sep=";", encoding="utf-8-sig", float_format='%.2f')
             output.seek(0)
 
             filename = f"encaissement_ar_dot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"

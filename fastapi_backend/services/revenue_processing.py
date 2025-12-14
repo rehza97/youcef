@@ -561,36 +561,33 @@ class RevenueDataProcessor:
         df = self._sort_by_org_type_invoice(df)
         logger.info(f"Sorted by Org Name, Type Fact, N Fact")
 
-        # 6. Clean numeric fields (MOVED UP - before anomaly detection)
-        df = self._clean_numeric_fields(df)
-        logger.info(f"Cleaned numeric fields")
-
-        # 7. Calculate TVA (MOVED UP - before anomaly detection)
-        df = self._calculate_tva(df)
-        logger.info(f"Calculated TVA column")
-
-        # 8. Calculate Chiffre Aff Exe Dzd TTC (MOVED UP - before anomaly detection)
-        df = self._calculate_ca_ttc(df)
-        logger.info(f"Calculated CA TTC column")
-
-        # 9. Skip individual achievement rate calculation (not meaningful for individual entries)
-        # Achievement rate should only be calculated at aggregate levels (by DOT, by Month, etc.)
-        # Individual invoice lines should not have achievement rates
-        # df = self._calculate_achievement_rate(df)  # REMOVED - meaningless for individual lines
-        logger.info(f"Skipped individual achievement rate calculation (will be calculated at aggregate level only)")
-
-        # 10. Detect anomalies (NOW CAPTURES ALL 35+ COLUMNS INCLUDING CALCULATED ONES)
-        # Si Cpt Comptable contenant la lettre A => marquer comme Anomalie
+        # 6. Si Cpt Comptable contenant la lettre A et Description ne commence pas par @
+        #    => mettre comme Anomalie
         df = self._detect_anomalies(df)
-        logger.info(f"Detected {len(self.anomalies)} anomalies with ALL columns including calculated fields")
+        logger.info(f"Detected {len(self.anomalies)} anomalies")
 
-        # 11. Filter out anomalies (remove rows with 'A' in Cpt Comptable)
+        # 7. Cpt Comptable : Supprimer toutes les lignes contenant la lettre A
         df = self._filter_cpt_comptable_with_a(df)
         logger.info(f"After Cpt Comptable filter: {len(df)} rows")
 
-        # 12. Keep most recent year
+        # 8. Date GL : Garder les lignes ayant l'année la plus récente
         df = self._keep_most_recent_year(df)
         logger.info(f"After keeping most recent year: {len(df)} rows")
+
+        # 9-13. Clean numeric fields (remove ".")
+        df = self._clean_numeric_fields(df)
+
+        # 14. Mettre le séparateur de millier avec deux chiffres après la virgule
+        # (This is for display/export, not for processing)
+
+        # 15. Ajouter une colonne TVA (=Mnt Ttc/Mnt Ht)
+        df = self._calculate_tva(df)
+
+        # 16. Ajouter une colonne Chiffre Aff Exe Dzd TTC (=Chiffre Aff Exe Dzd * TVA)
+        df = self._calculate_ca_ttc(df)
+
+        # 19. Ajouter une colonne Taux de réalisation C.A
+        df = self._calculate_achievement_rate(df)
 
         self.filtered_count = original_count - len(df)
         logger.info(
@@ -696,26 +693,13 @@ class RevenueDataProcessor:
             anomaly_reason = RevenueProcessingHelpers.detect_anomalies_in_row(
                 row, cpt_col, desc_col)
             if anomaly_reason:
-                # Store complete original row data with all columns
-                original_row_data = {}
-                for col in df.columns:
-                    value = row.get(col)
-                    # Convert pandas types to Python native types for JSON serialization
-                    if pd.isna(value):
-                        original_row_data[col] = None
-                    elif isinstance(value, pd.Timestamp):
-                        original_row_data[col] = value.strftime('%Y-%m-%d')
-                    elif isinstance(value, (int, float, complex)):
-                        # Convert numpy/pandas numeric types to Python float
-                        original_row_data[col] = float(value) if pd.notna(value) else None
-                    else:
-                        # Keep as-is for strings and other types
-                        original_row_data[col] = value
-                
                 self.anomalies.append({
                     "type": "Chiffre d'Affaires AR DOT",
+                    "org_name": row.get(self._find_column(df, ['Org Name', 'organisation']), 'N/A'),
+                    "n_fact": row.get(self._find_column(df, ['N Fact', 'invoice']), 'N/A'),
                     "reason": anomaly_reason,
-                    "original_row": original_row_data  # Store complete row with all columns
+                    "cpt_comptable": row.get(cpt_col, 'N/A'),
+                    "description": row.get(desc_col, 'N/A')
                 })
                 anomaly_rows.append(idx)
 
@@ -981,32 +965,20 @@ class RevenueDataProcessor:
             # File 2: Anomalie Chiffre d'Affaires AR DOT (anomalies)
             anomaly_file = f"{export_dir}Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}.xlsx"
             
-            # Create anomalies DataFrame with ALL original columns from the original file
+            # Create anomalies DataFrame from detected anomalies
             anomalies_data = []
             for anomaly in self.anomalies:
-                original_row = anomaly.get('original_row', {})
-                
-                # Start with all original row data
-                anomaly_record = original_row.copy()
-                
-                # Add anomaly-specific fields
-                anomaly_record['Type Anomalie'] = anomaly.get('type', 'Chiffre d\'Affaires AR DOT')
-                anomaly_record['Raison Anomalie'] = anomaly.get('reason', 'N/A')
-                anomaly_record['Date Detection'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-                anomalies_data.append(anomaly_record)
+                anomalies_data.append({
+                    'Type Anomalie': anomaly.get('type', 'Chiffre d\'Affaires AR DOT'),
+                    'DOT (Org Name)': anomaly.get('org_name', 'N/A'),
+                    'N Fact': anomaly.get('n_fact', 'N/A'),
+                    'Cpt Comptable': anomaly.get('cpt_comptable', 'N/A'),
+                    'Description': anomaly.get('description', 'N/A'),
+                    'Raison Anomalie': anomaly.get('reason', 'N/A'),
+                    'Date Detection': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                })
             
-            # Create DataFrame from anomalies
-            if anomalies_data:
-                df_anomalies = pd.DataFrame(anomalies_data)
-                # Ensure consistent column order: original columns first, then anomaly fields
-                original_cols = [col for col in df.columns if col not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']]
-                anomaly_cols = ['Type Anomalie', 'Raison Anomalie', 'Date Detection']
-                # Reorder columns: original columns first, then anomaly-specific columns
-                all_cols = original_cols + [col for col in anomaly_cols if col in df_anomalies.columns]
-                df_anomalies = df_anomalies[[col for col in all_cols if col in df_anomalies.columns]]
-            else:
-                df_anomalies = pd.DataFrame()
+            df_anomalies = pd.DataFrame(anomalies_data)
             
             # Save anomalies file
             with pd.ExcelWriter(anomaly_file, engine='openpyxl') as writer:
@@ -1039,27 +1011,16 @@ class RevenueDataProcessor:
     def _save_anomalies_to_database(self, anomalies_data: List[Dict], file_upload_id: int):
         """Save anomalies to RevenueAnomaly table"""
         try:
-            import json
             for anomaly_data in anomalies_data:
-                # Extract key fields from original row data
-                org_name_col = self._find_column(
-                    pd.DataFrame([anomaly_data]), ['Org Name', 'organisation'])
-                n_fact_col = self._find_column(
-                    pd.DataFrame([anomaly_data]), ['N Fact', 'invoice'])
-                cpt_col = self._find_column(
-                    pd.DataFrame([anomaly_data]), ['Cpt Comptable', 'compte comptable'])
-                desc_col = self._find_column(
-                    pd.DataFrame([anomaly_data]), ['Description (ligne de produit)', 'description ligne'])
-                
                 revenue_anomaly = RevenueAnomaly(
                     file_upload_id=file_upload_id,
-                    org_name=anomaly_data.get(org_name_col) if org_name_col else anomaly_data.get('Org Name'),
-                    n_fact=anomaly_data.get(n_fact_col) if n_fact_col else anomaly_data.get('N Fact'),
-                    cpt_comptable=anomaly_data.get(cpt_col) if cpt_col else anomaly_data.get('Cpt Comptable'),
-                    description_ligne_de_produit=anomaly_data.get(desc_col) if desc_col else anomaly_data.get('Description (ligne de produit)'),
-                    anomaly_type=anomaly_data.get('Type Anomalie', "Chiffre d'Affaires AR DOT"),
+                    org_name=anomaly_data.get('DOT (Org Name)'),
+                    n_fact=anomaly_data.get('N Fact'),
+                    cpt_comptable=anomaly_data.get('Cpt Comptable'),
+                    description_ligne_de_produit=anomaly_data.get('Description'),
+                    anomaly_type=anomaly_data.get('Type Anomalie'),
                     anomaly_reason=anomaly_data.get('Raison Anomalie'),
-                    original_data=json.dumps(anomaly_data, default=str, ensure_ascii=False)  # Store full data as JSON
+                    original_data=str(anomaly_data)  # Store full data as JSON string
                 )
                 self.db.add(revenue_anomaly)
             

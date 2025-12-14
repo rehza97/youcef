@@ -5,6 +5,7 @@ Handles multi-year data processing with automatic duplicate detection, KPI calcu
 
 Business Rules:
 1. Remove all AT_SIEGE entries
+1b. Remove all entries with 'REPRISE' in Source column
 2. Clean organization names (DOT_ removal, separator normalization)
 3. Convert N_FACT to numeric format
 4. Sort by Org Name, Typ Fact, N Fact
@@ -274,6 +275,17 @@ class EncaissementARDotETL(BaseETLProcessor):
                 if at_siege_count > 0:
                     logger.info(f"🗑️ Removed {at_siege_count} AT_SIEGE entries")
                     step.add_warning(f"Removed {at_siege_count} AT_SIEGE entries as per business rules")
+
+            # RULE 1b: Remove REPRISE entries from Source column
+            if 'source' in cleaned_df.columns:
+                reprise_mask = cleaned_df['source'].astype(str).str.contains('REPRISE', case=False, na=False)
+                reprise_count = reprise_mask.sum()
+
+                cleaned_df = cleaned_df[~reprise_mask].reset_index(drop=True)
+
+                if reprise_count > 0:
+                    logger.info(f"🗑️ Removed {reprise_count} REPRISE entries from Source column")
+                    step.add_warning(f"Removed {reprise_count} REPRISE entries as per business rules")
 
             # RULE 2: Clean organization names
             if 'organisation' in cleaned_df.columns:

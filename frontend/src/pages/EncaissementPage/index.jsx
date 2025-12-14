@@ -42,6 +42,16 @@ import {
   EnhancedMultiSeriesBarChart,
 } from "@/components/ui/charts";
 import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+import {
   Download,
   BarChart3,
   Building,
@@ -1725,15 +1735,52 @@ const EncaissementPage = () => {
             </CardHeader>
             <CardContent>
               {dotData.length > 0 ? (
-                <EnhancedMultiSeriesBarChart
-                  data={dotData.map((d) => ({
-                    label: d.dot_name,
-                    value: d.count,
-                  }))}
-                  height={550}
-                  showLegendBelow={true}
-                  showPercentages={true}
-                />
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(400, Math.min(800, dotData.length * 20))}
+                >
+                  <BarChart
+                    data={dotData.map((d) => ({
+                      label: d.dot_name,
+                      value: d.count,
+                    }))}
+                    margin={{ left: 20, right: 20, top: 10, bottom: 140 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="label"
+                      angle={-45}
+                      textAnchor="end"
+                      height={140}
+                      tick={{ fontSize: 11 }}
+                      interval={0}
+                    />
+                    <YAxis
+                      type="number"
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                          maximumFractionDigits: 1,
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip
+                      formatter={(value) => [
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                          maximumFractionDigits: 1,
+                        }).format(value),
+                        "Abonnés",
+                      ]}
+                    />
+                    <Bar dataKey="value" radius={[4, 4, 0, 0]} fill="#4A90E2">
+                      {dotData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill="#4A90E2" />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               ) : (
                 <EmptyState message="Aucune donnée DOT disponible" />
               )}

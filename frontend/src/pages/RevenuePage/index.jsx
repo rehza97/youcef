@@ -105,24 +105,26 @@ const COLORS = {
   secondary: "#E2734A", // Orange
   success: "#5CB85C", // Vert
   danger: "#D9534F", // Rouge
+  warning: "#FFC107", // Yellow
 };
 
 /**
  * Get color based on achievement rate ranges
- * 0% to 30%: Red (danger)
- * 30% to 70%: Orange (secondary)
- * 70% to 100%: Blue (primary)
- * >=100%: Green (success)
+ * < 20%: Red (danger)
+ * 20.01% to 49.99%: Yellow (warning)
+ * 50% to 74.99%: Orange (secondary)
+ * 75% to 99.99%: Blue (primary)
+ * >= 100%: Blue (primary)
  */
 const getColorByAchievementRate = (taux) => {
-  if (taux >= 100) {
-    return COLORS.success; // Green for >=100%
-  } else if (taux >= 70) {
-    return COLORS.primary; // Blue for 70% to 100%
-  } else if (taux >= 30) {
-    return COLORS.secondary; // Orange for 30% to 70%
+  if (taux >= 75) {
+    return COLORS.primary; // Blue for >= 75%
+  } else if (taux >= 50) {
+    return COLORS.secondary; // Orange for 50% to 74.99%
+  } else if (taux >= 20.01) {
+    return COLORS.warning; // Yellow for 20.01% to 49.99%
   } else {
-    return COLORS.danger; // Red for 0% to 30%
+    return COLORS.danger; // Red for < 20%
   }
 };
 
@@ -1731,29 +1733,38 @@ const RevenuePage = () => {
               {dotCAChartData.length > 0 ? (
                 <ResponsiveContainer
                   width="100%"
-                  height={Math.max(700, dotCAChartData.length * 25)}
+                  height={Math.max(
+                    400,
+                    Math.min(800, dotCAChartData.length * 20)
+                  )}
                 >
                   <BarChart
                     data={dotCAChartData}
-                    layout="vertical"
-                    margin={{ left: 140, right: 20, top: 10, bottom: 10 }}
+                    margin={{ left: 20, right: 20, top: 10, bottom: 140 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
-                      type="number"
-                      tickFormatter={(value) => formatNumber(value)}
-                      style={{ fontSize: "12px" }}
+                      dataKey="label"
+                      angle={-45}
+                      textAnchor="end"
+                      height={140}
+                      tick={{ fontSize: 11 }}
+                      interval={0}
                     />
                     <YAxis
-                      dataKey="label"
-                      type="category"
-                      width={130}
-                      tick={{ fontSize: 11 }}
+                      type="number"
+                      tickFormatter={(value) =>
+                        new Intl.NumberFormat("fr-FR", {
+                          notation: "compact",
+                          maximumFractionDigits: 1,
+                        }).format(value)
+                      }
+                      style={{ fontSize: "12px" }}
                     />
                     <Tooltip content={<CustomTooltipObjective />} />
                     <Bar
                       dataKey="total_revenue"
-                      radius={[0, 4, 4, 0]}
+                      radius={[4, 4, 0, 0]}
                       fill={COLORS.primary}
                     >
                       {dotCAChartData.map((entry, index) => (
@@ -1906,32 +1917,73 @@ const RevenuePage = () => {
           <Card>
             <CardHeader>
               <CardTitle>DOT et Taux de Réalisation C.A</CardTitle>
+              {/* Color Legend */}
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4 pt-4 border-t">
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.danger }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    &lt; 20%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.warning }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    20% - 50%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.secondary }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    50% - 75%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.primary }}
+                  />
+                  <span className="text-xs text-muted-foreground">≥ 75%</span>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {dotTauxChartData.length > 0 ? (
                 <ResponsiveContainer
                   width="100%"
-                  height={Math.max(700, dotTauxChartData.length * 25)}
+                  height={Math.max(
+                    400,
+                    Math.min(800, dotTauxChartData.length * 20)
+                  )}
                 >
                   <BarChart
                     data={dotTauxChartData}
-                    layout="vertical"
-                    margin={{ left: 140, right: 20, top: 10, bottom: 10 }}
+                    margin={{ left: 20, right: 20, top: 10, bottom: 140 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
+                      dataKey="label"
+                      angle={-45}
+                      textAnchor="end"
+                      height={140}
+                      tick={{ fontSize: 11 }}
+                      interval={0}
+                    />
+                    <YAxis
                       type="number"
                       tickFormatter={(value) => `${value.toFixed(0)}%`}
                       style={{ fontSize: "12px" }}
                     />
-                    <YAxis
-                      dataKey="label"
-                      type="category"
-                      width={130}
-                      tick={{ fontSize: 11 }}
-                    />
                     <Tooltip content={<CustomTooltipPercent />} />
-                    <Bar dataKey="taux" radius={[0, 4, 4, 0]}>
+                    <Bar dataKey="taux" radius={[4, 4, 0, 0]}>
                       {dotTauxChartData.map((entry, index) => (
                         <Cell
                           key={`cell-${index}`}
