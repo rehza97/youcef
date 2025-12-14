@@ -668,7 +668,12 @@ const EncaissementARDotPage = () => {
         Encaissement: item.total_encaissement || 0,
         "Taux (%)": item.taux_encaissement_moyen || 0,
       }))
-      .sort((a, b) => b.Encaissement - a.Encaissement); // Sort by Encaissement amount (highest to lowest)
+      .sort((a, b) => b.Encaissement - a.Encaissement) // Sort by Encaissement amount (highest to lowest)
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1, // Add ranking number (1-based)
+        label: `${index + 1}. ${item.organisation}`, // Label with rank number
+      }));
   }, [byOrganisation]);
 
   /**
@@ -1612,7 +1617,7 @@ const EncaissementARDotPage = () => {
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                       <XAxis
-                        dataKey="organisation"
+                        dataKey="label"
                         angle={-45}
                         textAnchor="end"
                         height={140}
