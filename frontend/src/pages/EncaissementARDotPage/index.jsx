@@ -1379,14 +1379,14 @@ const EncaissementARDotPage = () => {
         {[
           { id: "overview", label: "OVERVIEW", icon: BarChart3 },
           { id: "organisation", label: "BY Encaissement", icon: Building },
+          { id: "typ-fact", label: "BY Type Fact", icon: FileText },
           { id: "date-fact", label: "BY Date Fact", icon: Calendar },
+          { id: "date-rglt", label: "BY Date règlement", icon: Calendar },
           {
             id: "taux-encaissement",
             label: "BY Taux d'encaissement",
             icon: Percent,
           },
-          { id: "typ-fact", label: "BY Type Fact", icon: FileText },
-          { id: "date-rglt", label: "BY Date règlement", icon: Calendar },
           { id: "preview", label: "PREVIEW DATA", icon: FileText },
         ].map((tab) => (
           <Button
@@ -1783,7 +1783,16 @@ const EncaissementARDotPage = () => {
                     className="w-4 h-4 rounded"
                     style={{ backgroundColor: COLORS.primary }}
                   />
-                  <span className="text-xs text-muted-foreground">≥ 75%</span>
+                  <span className="text-xs text-muted-foreground">
+                    75% - 99.99%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.success }}
+                  />
+                  <span className="text-xs text-muted-foreground">≥ 100%</span>
                 </div>
               </div>
             </CardHeader>
