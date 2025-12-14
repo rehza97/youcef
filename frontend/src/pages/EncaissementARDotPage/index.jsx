@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  useRef,
+} from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +37,7 @@ import {
   Building,
   FileText,
   AlertCircle,
-  Calendar,
+  Calendar as CalendarIcon,
   Percent,
   Search,
   ArrowUpDown,
@@ -73,6 +79,12 @@ import {
   DropdownMenuCheckboxItem,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 
 // Excel-style Filter Component
 const ExcelFilter = ({
@@ -359,6 +371,100 @@ const EmptyState = ({ message = "Aucune donnée disponible" }) => (
   </div>
 );
 
+// Date Picker Component with Calendar (Full date: year-month-day)
+const DatePicker = ({ label, value, onChange }) => {
+  const [date, setDate] = useState(() => {
+    if (!value) return undefined;
+    // Parse YYYY-MM-DD or YYYY-MM format to Date object
+    if (value.includes("-")) {
+      const parts = value.split("-");
+      if (parts.length === 3) {
+        // YYYY-MM-DD format
+        return new Date(
+          parseInt(parts[0]),
+          parseInt(parts[1]) - 1,
+          parseInt(parts[2])
+        );
+      } else if (parts.length === 2) {
+        // YYYY-MM format (legacy, use first day of month)
+        return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
+      }
+    }
+    return undefined;
+  });
+  const [isOpen, setIsOpen] = useState(false);
+
+  const handleSelect = (selectedDate) => {
+    if (selectedDate) {
+      setDate(selectedDate);
+      // Format as YYYY-MM-DD
+      const year = selectedDate.getFullYear();
+      const month = String(selectedDate.getMonth() + 1).padStart(2, "0");
+      const day = String(selectedDate.getDate()).padStart(2, "0");
+      onChange(`${year}-${month}-${day}`);
+      setIsOpen(false);
+    }
+  };
+
+  const displayValue = value
+    ? (() => {
+        // Handle both YYYY-MM-DD and YYYY-MM formats
+        if (value.includes("-")) {
+          const parts = value.split("-");
+          if (parts.length === 3) {
+            // YYYY-MM-DD format
+            const dateObj = new Date(
+              parseInt(parts[0]),
+              parseInt(parts[1]) - 1,
+              parseInt(parts[2])
+            );
+            return dateObj.toLocaleDateString("fr-FR", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            });
+          } else if (parts.length === 2) {
+            // YYYY-MM format (legacy)
+            const dateObj = new Date(value + "-01");
+            return dateObj.toLocaleDateString("fr-FR", {
+              year: "numeric",
+              month: "long",
+            });
+          }
+        }
+        return value;
+      })()
+    : "Sélectionner une date";
+
+  return (
+    <div className="w-full">
+      <Label>{label}</Label>
+      <Popover open={isOpen} onOpenChange={setIsOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            className="w-full justify-start text-left font-normal"
+          >
+            <CalendarIcon className="mr-2 h-4 w-4" />
+            {displayValue}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={date}
+            onSelect={handleSelect}
+            captionLayout="dropdown"
+            fromYear={2020}
+            toYear={2030}
+            defaultMonth={date || new Date()}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
+};
+
 const LoadingSpinner = () => (
   <div className="flex items-center justify-center h-64">
     <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
@@ -557,6 +663,12 @@ const EncaissementARDotPage = () => {
         (key) => filterParams[key] === undefined && delete filterParams[key]
       );
 
+      // Log filter params sent to backend
+      console.log(
+        "🔍 [FRONTEND] Filter params sent to backend:",
+        JSON.stringify(filterParams, null, 2)
+      );
+
       // Load all data simultaneously
       // Fetch overview without year filter to get all available years for dropdown
       // This ensures the year dropdown always shows all years regardless of current filters
@@ -654,6 +766,7 @@ const EncaissementARDotPage = () => {
 
   // Note: Year filter change now triggers fetchData directly in onValueChange
   // This ensures immediate update without waiting for useEffect
+  // Other filters require clicking "Appliquer" button for better UX
 
   /**
    * CHART 1: Montant TTC & Encaissement par Organisation
@@ -831,34 +944,54 @@ const EncaissementARDotPage = () => {
   ];
 
   /**
-   * Export handler
+   * Export handler - applies all current filters
    */
   const handleExport = async (format = "xlsx") => {
     try {
       setExporting(true);
 
-      const exportParams = { ...filters, format };
+      // Build export params with all filters (same format as fetchData)
+      const exportParams = {
+        format,
+        organisation:
+          filters.organisation.length > 0 ? filters.organisation : undefined,
+        date_fact_start:
+          filters.date_fact_start && filters.date_fact_start.trim() !== ""
+            ? filters.date_fact_start
+            : undefined,
+        date_fact_end:
+          filters.date_fact_end && filters.date_fact_end.trim() !== ""
+            ? filters.date_fact_end
+            : undefined,
+        search:
+          filters.search && filters.search.trim() !== ""
+            ? filters.search
+            : undefined,
+        year:
+          filters.year && filters.year !== "" && filters.year !== "all"
+            ? filters.year
+            : undefined,
+        typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
+        date_rglt_start:
+          filters.date_rglt_start && filters.date_rglt_start.trim() !== ""
+            ? filters.date_rglt_start
+            : undefined,
+        date_rglt_end:
+          filters.date_rglt_end && filters.date_rglt_end.trim() !== ""
+            ? filters.date_rglt_end
+            : undefined,
+      };
 
-      // Keep organisation as array if it's an array (backend can handle it)
-      // Remove empty arrays
-      if (
-        Array.isArray(exportParams.organisation) &&
-        exportParams.organisation.length === 0
-      ) {
-        delete exportParams.organisation;
-      }
+      // Remove undefined values
+      Object.keys(exportParams).forEach(
+        (key) => exportParams[key] === undefined && delete exportParams[key]
+      );
 
-      // Remove empty strings and undefined values, but keep year if it's "all"
-      Object.keys(exportParams).forEach((key) => {
-        if (
-          exportParams[key] === undefined ||
-          exportParams[key] === "" ||
-          exportParams[key] === null ||
-          exportParams[key] === "all"
-        ) {
-          delete exportParams[key];
-        }
-      });
+      // Log filter params sent to backend for export
+      console.log(
+        "🔍 [FRONTEND EXPORT] Filter params sent to backend:",
+        JSON.stringify(exportParams, null, 2)
+      );
 
       console.log(
         "🚀 Starting encaissement export with filters:",
@@ -892,7 +1025,7 @@ const EncaissementARDotPage = () => {
   };
 
   const applyFilters = () => {
-    fetchData();
+    fetchData(true);
     toast.success("Filtres appliqués");
   };
 
@@ -1318,61 +1451,49 @@ const EncaissementARDotPage = () => {
 
               {/* Secondary Filters - Second Row: Date filters */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div>
-                  <Label>Date Fact - Début</Label>
-                  <Input
-                    type="month"
-                    value={filters.date_fact_start}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        date_fact_start: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
+                <DatePicker
+                  label="Date Fact - Début"
+                  value={filters.date_fact_start}
+                  onChange={(value) =>
+                    setFilters((f) => ({
+                      ...f,
+                      date_fact_start: value,
+                    }))
+                  }
+                />
 
-                <div>
-                  <Label>Date Fact - Fin</Label>
-                  <Input
-                    type="month"
-                    value={filters.date_fact_end}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        date_fact_end: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
+                <DatePicker
+                  label="Date Fact - Fin"
+                  value={filters.date_fact_end}
+                  onChange={(value) =>
+                    setFilters((f) => ({
+                      ...f,
+                      date_fact_end: value,
+                    }))
+                  }
+                />
 
-                <div>
-                  <Label>Date Règlement - Début</Label>
-                  <Input
-                    type="month"
-                    value={filters.date_rglt_start}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        date_rglt_start: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
+                <DatePicker
+                  label="Date Règlement - Début"
+                  value={filters.date_rglt_start}
+                  onChange={(value) =>
+                    setFilters((f) => ({
+                      ...f,
+                      date_rglt_start: value,
+                    }))
+                  }
+                />
 
-                <div>
-                  <Label>Date Règlement - Fin</Label>
-                  <Input
-                    type="month"
-                    value={filters.date_rglt_end}
-                    onChange={(e) =>
-                      setFilters((f) => ({
-                        ...f,
-                        date_rglt_end: e.target.value,
-                      }))
-                    }
-                  />
-                </div>
+                <DatePicker
+                  label="Date Règlement - Fin"
+                  value={filters.date_rglt_end}
+                  onChange={(value) =>
+                    setFilters((f) => ({
+                      ...f,
+                      date_rglt_end: value,
+                    }))
+                  }
+                />
               </div>
 
               {/* Active Filters Summary */}
@@ -1440,8 +1561,8 @@ const EncaissementARDotPage = () => {
           { id: "overview", label: "OVERVIEW", icon: BarChart3 },
           { id: "organisation", label: "BY Encaissement", icon: Building },
           { id: "typ-fact", label: "BY Type Fact", icon: FileText },
-          { id: "date-fact", label: "BY Date Fact", icon: Calendar },
-          { id: "date-rglt", label: "BY Date règlement", icon: Calendar },
+          { id: "date-fact", label: "BY Date Fact", icon: CalendarIcon },
+          { id: "date-rglt", label: "BY Date règlement", icon: CalendarIcon },
           {
             id: "taux-encaissement",
             label: "BY Taux d'encaissement",

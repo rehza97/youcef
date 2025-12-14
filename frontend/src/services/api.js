@@ -2055,6 +2055,23 @@ export const exportEncaissementRecords = (params = {}) => {
   // Year filter
   if (params.year) query.append("year", params.year);
 
+  // Type Fact filter
+  if (params.typ_fact) {
+    if (Array.isArray(params.typ_fact)) {
+      params.typ_fact.forEach((type) => query.append("typ_fact", type));
+    } else {
+      query.append("typ_fact", params.typ_fact);
+    }
+  }
+
+  // Date Règlement filters
+  if (params.date_rglt_start) {
+    query.append("date_rglt_start", params.date_rglt_start);
+  }
+  if (params.date_rglt_end) {
+    query.append("date_rglt_end", params.date_rglt_end);
+  }
+
   // Other filters
   if (params.include_duplicates !== undefined)
     query.append("include_duplicates", params.include_duplicates);

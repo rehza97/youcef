@@ -57,6 +57,21 @@ def apply_encaissement_filters(
     """
     from datetime import datetime
     
+    # Log received filters
+    logger.info(
+        f"🔍 [BACKEND] apply_encaissement_filters received filters: "
+        f"organisation={organisation}, "
+        f"date_fact_start={date_fact_start}, "
+        f"date_fact_end={date_fact_end}, "
+        f"search={search}, "
+        f"year={year} (type: {type(year)}), "
+        f"typ_fact={typ_fact}, "
+        f"date_rglt_start={date_rglt_start}, "
+        f"date_rglt_end={date_rglt_end}, "
+        f"taux_encaissement_min={taux_encaissement_min}, "
+        f"taux_encaissement_max={taux_encaissement_max}"
+    )
+    
     # Filter by organisation
     if organisation:
         query = query.filter(EncaissementARDot.organisation.in_(organisation))
@@ -108,16 +123,28 @@ def apply_encaissement_filters(
         )
     
     # Filter by year - extract year from date_fact or mois
-    if year and year != "all" and year.strip():
+    if year and year != "all":
         try:
-            year_int = int(year)
-            year_str = str(year_int)
-            query = query.filter(
-                or_(
-                    extract('year', EncaissementARDot.date_fact) == year_int,
-                    func.substring(EncaissementARDot.mois, 1, 4) == year_str
+            # Handle both string and int types
+            if isinstance(year, str):
+                year_str_clean = year.strip()
+                if year_str_clean:
+                    year_int = int(year_str_clean)
+                else:
+                    year_int = None
+            elif isinstance(year, (int, float)):
+                year_int = int(year)
+            else:
+                year_int = None
+            
+            if year_int:
+                year_str = str(year_int)
+                query = query.filter(
+                    or_(
+                        extract('year', EncaissementARDot.date_fact) == year_int,
+                        func.substring(EncaissementARDot.mois, 1, 4) == year_str
+                    )
                 )
-            )
         except (ValueError, TypeError) as e:
             logger.warning(f"Invalid year format: {year}, error: {e}")
     
@@ -302,11 +329,26 @@ async def get_overview(
     - date_fact_end: Optional end date (YYYY-MM or YYYY-MM-DD)
     - taux_encaissement_min: Optional minimum collection rate
     - taux_encaissement_max: Optional maximum collection rate
-    - search: Optional search term for client, n_fact, or organisation
+    - search: Optional search term
 
     Requires: can_view_analytics permission
     """
     PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    # Log received parameters
+    logger.info(
+        f"📥 [BACKEND /overview] Received request with params: "
+        f"organisation={organisation}, "
+        f"date_fact_start={date_fact_start}, "
+        f"date_fact_end={date_fact_end}, "
+        f"date_rglt_start={date_rglt_start}, "
+        f"date_rglt_end={date_rglt_end}, "
+        f"search={search}, "
+        f"year={year} (type: {type(year)}), "
+        f"typ_fact={typ_fact}, "
+        f"taux_min={taux_encaissement_min}, "
+        f"taux_max={taux_encaissement_max}"
+    )
 
     try:
         # Build query with module-specific DOT filtering
@@ -558,6 +600,22 @@ async def get_by_organisation(
     Requires: can_view_analytics permission
     """
     PermissionService.require_permission(current_user, db, "can_view_analytics")
+
+    # Log received parameters
+    logger.info(
+        f"📥 [BACKEND /by-organisation] Received request with params: "
+        f"organisation={organisation}, "
+        f"date_fact_start={date_fact_start}, "
+        f"date_fact_end={date_fact_end}, "
+        f"date_rglt_start={date_rglt_start}, "
+        f"date_rglt_end={date_rglt_end}, "
+        f"search={search}, "
+        f"year={year} (type: {type(year)}), "
+        f"typ_fact={typ_fact}, "
+        f"taux_min={taux_encaissement_min}, "
+        f"taux_max={taux_encaissement_max}, "
+        f"sort_by={sort_by}, order={order}"
+    )
 
     try:
         # Apply DOT filtering based on module-specific access
@@ -1471,6 +1529,9 @@ async def export_encaissement_data(
     date_fact_from: Optional[date] = Query(None, description="Filter by date from (legacy)"),
     date_fact_to: Optional[date] = Query(None, description="Filter by date to (legacy)"),
     mois: Optional[str] = Query(None, description="Filter by month(s) (comma-separated YYYY-MM)"),
+    # Date Règlement filters
+    date_rglt_start: Optional[str] = Query(None, description="Date règlement start (YYYY-MM or YYYY-MM-DD)"),
+    date_rglt_end: Optional[str] = Query(None, description="Date règlement end (YYYY-MM or YYYY-MM-DD)"),
     # Rate filters
     taux_encaissement_min: Optional[float] = Query(None, description="Minimum collection rate"),
     taux_encaissement_max: Optional[float] = Query(None, description="Maximum collection rate"),
@@ -1480,6 +1541,8 @@ async def export_encaissement_data(
     search: Optional[str] = Query(None, description="Search in client, n_fact, or organisation"),
     # Year filter
     year: Optional[str] = Query(None, description="Filter by year (YYYY)"),
+    # Type Fact filter
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by type facture(s)"),
     # Other filters
     include_duplicates: bool = Query(True, description="Include duplicate records"),
     include_anomalies: bool = Query(True, description="Include anomaly records"),
@@ -1528,7 +1591,23 @@ async def export_encaissement_data(
         taux_min_val = taux_encaissement_min if taux_encaissement_min is not None else taux_min
         taux_max_val = taux_encaissement_max if taux_encaissement_max is not None else taux_max
         
-        # Apply filters using helper function
+        # Log export filters received
+        logger.info(
+            f"📤 [BACKEND EXPORT] Received export request with filters: "
+            f"organisation={org_list}, "
+            f"date_fact_start={start_date}, "
+            f"date_fact_end={end_date}, "
+            f"date_rglt_start={date_rglt_start}, "
+            f"date_rglt_end={date_rglt_end}, "
+            f"search={search}, "
+            f"year={year} (type: {type(year)}), "
+            f"typ_fact={typ_fact}, "
+            f"taux_min={taux_min_val}, "
+            f"taux_max={taux_max_val}, "
+            f"format={format}"
+        )
+        
+        # Apply filters using helper function (includes all filters: organisation, dates, search, year, typ_fact, date_rglt)
         query = apply_encaissement_filters(
             query,
             organisation=org_list,
@@ -1537,7 +1616,10 @@ async def export_encaissement_data(
             taux_encaissement_min=taux_min_val,
             taux_encaissement_max=taux_max_val,
             search=search,
-            year=year
+            year=year,
+            typ_fact=typ_fact,
+            date_rglt_start=date_rglt_start,
+            date_rglt_end=date_rglt_end
         )
         
         # Apply mois filter if provided (separate from date range)
