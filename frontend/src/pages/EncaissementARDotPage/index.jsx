@@ -723,14 +723,21 @@ const EncaissementARDotPage = () => {
    * CHART 4: Encaissement par Type Fact
    */
   const typFactChartData = useMemo(() => {
-    return byTypFact
+    const data = byTypFact
       .map((item) => ({
         typ_fact: item.typ_fact || "Inconnu",
         "Montant TTC": item.total_montant_ttc || 0,
         Encaissement: item.total_encaissement || 0,
         "Taux (%)": item.taux_encaissement_moyen || 0,
       }))
-      .sort((a, b) => b["Montant TTC"] - a["Montant TTC"]);
+      .sort((a, b) => b.Encaissement - a.Encaissement);
+
+    // Calculate total for percentage
+    const total = data.reduce((sum, item) => sum + item.Encaissement, 0);
+    return data.map((item) => ({
+      ...item,
+      percentage: total > 0 ? (item.Encaissement / total) * 100 : 0,
+    }));
   }, [byTypFact]);
 
   /**
@@ -741,7 +748,7 @@ const EncaissementARDotPage = () => {
       return [];
     }
 
-    return byDateRglt
+    const data = byDateRglt
       .filter((item) => item != null)
       .map((item) => ({
         date_rglt: item.date_rglt || "Inconnu",
@@ -750,6 +757,13 @@ const EncaissementARDotPage = () => {
         "Taux (%)": item.taux_encaissement_moyen || 0,
       }))
       .sort((a, b) => a.date_rglt.localeCompare(b.date_rglt));
+
+    // Calculate total for percentage
+    const total = data.reduce((sum, item) => sum + item.Encaissement, 0);
+    return data.map((item) => ({
+      ...item,
+      percentage: total > 0 ? (item.Encaissement / total) * 100 : 0,
+    }));
   }, [byDateRglt]);
 
   /**
@@ -1805,40 +1819,28 @@ const EncaissementARDotPage = () => {
         {activeTab === "typ-fact" && (
           <Card>
             <CardHeader>
-              <CardTitle>
-                Encaissement par Type Fact (Relation: Type Fact et Taux
-                d'encaissement)
-              </CardTitle>
+              <CardTitle>Encaissement par Type Fact</CardTitle>
             </CardHeader>
             <CardContent>
               {typFactChartData.length > 0 ? (
-                <ResponsiveContainer
-                  width="100%"
-                  height={Math.max(
-                    400,
-                    Math.min(800, typFactChartData.length * 20)
-                  )}
-                >
-                  <ComposedChart
+                <ResponsiveContainer width="100%" height={450}>
+                  <BarChart
                     data={typFactChartData}
-                    margin={{ left: 20, right: 80, top: 10, bottom: 140 }}
+                    margin={{ bottom: 80, left: 20, top: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
                       dataKey="typ_fact"
                       angle={-45}
                       textAnchor="end"
-                      height={140}
-                      tick={{ fontSize: 11 }}
                       interval={0}
+                      style={{ fontSize: "10px" }}
+                      height={100}
                     />
                     <YAxis
-                      yAxisId="left"
-                      type="number"
                       tickFormatter={(value) =>
                         new Intl.NumberFormat("fr-FR", {
                           notation: "compact",
-                          maximumFractionDigits: 1,
                         }).format(value)
                       }
                       style={{ fontSize: "12px" }}
@@ -1848,38 +1850,13 @@ const EncaissementARDotPage = () => {
                       wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
                     />
                     <Bar
-                      dataKey="Montant TTC"
+                      dataKey="Encaissement"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
-                      yAxisId="left"
-                    />
-                    <Bar
-                      dataKey="Encaissement"
-                      radius={[4, 4, 0, 0]}
-                      yAxisId="left"
                     >
-                      {typFactChartData.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={getColorByEncaissementRate(entry["Taux (%)"])}
-                        />
-                      ))}
+                      <LabelList content={<CustomLabel />} />
                     </Bar>
-                    <Line
-                      dataKey="Taux (%)"
-                      stroke={COLORS.secondary}
-                      strokeWidth={3}
-                      dot={{ r: 4 }}
-                      yAxisId="right"
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      domain={[0, 100]}
-                      tickFormatter={(value) => `${value}%`}
-                      style={{ fontSize: "12px" }}
-                    />
-                  </ComposedChart>
+                  </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <EmptyState message="Aucune donnée Type Fact disponible" />
@@ -1891,17 +1868,14 @@ const EncaissementARDotPage = () => {
         {activeTab === "date-rglt" && (
           <Card>
             <CardHeader>
-              <CardTitle>
-                Encaissement par Date Règlement (Relation: Mois et Taux
-                d'encaissement)
-              </CardTitle>
+              <CardTitle>Encaissement par Date Règlement (Mois)</CardTitle>
             </CardHeader>
             <CardContent>
               {dateRgltChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <ComposedChart
+                  <BarChart
                     data={dateRgltChartData}
-                    margin={{ bottom: 20, right: 60 }}
+                    margin={{ bottom: 20, top: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
@@ -1911,11 +1885,9 @@ const EncaissementARDotPage = () => {
                       style={{ fontSize: "12px" }}
                     />
                     <YAxis
-                      yAxisId="left"
                       tickFormatter={(value) =>
                         new Intl.NumberFormat("fr-FR", {
                           notation: "compact",
-                          maximumFractionDigits: 1,
                         }).format(value)
                       }
                       style={{ fontSize: "12px" }}
@@ -1925,33 +1897,13 @@ const EncaissementARDotPage = () => {
                       wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
                     />
                     <Bar
-                      dataKey="Montant TTC"
+                      dataKey="Encaissement"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
-                      yAxisId="left"
-                    />
-                    <Bar
-                      dataKey="Encaissement"
-                      fill={COLORS.success}
-                      radius={[4, 4, 0, 0]}
-                      yAxisId="left"
-                    />
-                    <Line
-                      dataKey="Taux (%)"
-                      stroke={COLORS.secondary}
-                      strokeWidth={3}
-                      dot={{ r: 4 }}
-                      yAxisId="right"
-                      type="monotone"
-                    />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      domain={[0, 100]}
-                      tickFormatter={(value) => `${value}%`}
-                      style={{ fontSize: "12px" }}
-                    />
-                  </ComposedChart>
+                    >
+                      <LabelList content={<CustomLabel />} />
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <EmptyState message="Aucune donnée Date Règlement disponible" />
