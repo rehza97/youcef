@@ -20,6 +20,7 @@ import {
   PieChart,
   Pie,
   Cell,
+  LabelList,
 } from "recharts";
 import {
   Download,
@@ -369,25 +370,48 @@ const LoadingSpinner = () => (
  */
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload;
     return (
       <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
         <p className="font-bold text-gray-900 mb-2">{label}</p>
         {payload.map((entry, index) => (
-          <p
-            key={index}
-            style={{ color: entry.color }}
-            className="text-sm font-semibold"
-          >
-            {entry.name}:{" "}
-            {entry.name.includes("Taux")
-              ? formatPercent(entry.value)
-              : formatCurrency(entry.value)}
-          </p>
+          <div key={index}>
+            <p style={{ color: entry.color }} className="text-sm font-semibold">
+              {entry.name}:{" "}
+              {entry.name.includes("Taux")
+                ? formatPercent(entry.value)
+                : formatCurrency(entry.value)}
+            </p>
+            {data.percentage !== undefined && (
+              <p className="text-sm text-gray-600 mt-1">
+                Pourcentage: {formatPercent(data.percentage)}
+              </p>
+            )}
+          </div>
         ))}
       </div>
     );
   }
   return null;
+};
+
+// Custom label component to display percentage on bars
+const CustomLabel = (props) => {
+  const { x, y, width, payload } = props;
+  if (!payload || payload.percentage === undefined) return null;
+  if (width < 30) return null; // Don't show label if bar is too small
+  return (
+    <text
+      x={x + width / 2}
+      y={y - 5}
+      fill="#666"
+      textAnchor="middle"
+      fontSize={11}
+      fontWeight="500"
+    >
+      {formatPercent(payload.percentage)}
+    </text>
+  );
 };
 
 /**
@@ -656,7 +680,7 @@ const EncaissementARDotPage = () => {
       return [];
     }
 
-    return byDateFact
+    const data = byDateFact
       .filter((item) => item != null) // Filter out null/undefined items
       .map((item) => ({
         mois: item.mois || item.date_fact || "Inconnu",
@@ -665,11 +689,19 @@ const EncaissementARDotPage = () => {
         "Taux (%)": item.taux_encaissement_moyen || 0,
       }))
       .sort((a, b) => a.mois.localeCompare(b.mois));
+
+    // Calculate total for percentage
+    const total = data.reduce((sum, item) => sum + item.Encaissement, 0);
+    return data.map((item) => ({
+      ...item,
+      percentage: total > 0 ? (item.Encaissement / total) * 100 : 0,
+    }));
   }, [byDateFact]);
 
   /**
    * CHART 3: DOT et Taux d'encaissement
    * Shows encaissement rate by DOT, sorted from highest to lowest taux (same as BY Taux C.A)
+   * Shows all DOTs, including those with zero encaissement
    */
   const tauxEncaissementChartData = useMemo(() => {
     return byOrganisation
@@ -679,7 +711,6 @@ const EncaissementARDotPage = () => {
         Encaissement: item.total_encaissement || 0,
         taux: item.taux_encaissement_moyen || 0, // Taux d'encaissement - main chart value
       }))
-      .filter((item) => item.Encaissement > 0) // Only show DOTs with encaissement
       .sort((a, b) => b.taux - a.taux) // Sort by taux d'encaissement from high to low
       .map((item, index) => ({
         ...item,
@@ -1548,56 +1579,7 @@ const EncaissementARDotPage = () => {
         {activeTab === "organisation" && (
           <Card>
             <CardHeader>
-              <CardTitle>
-                Encaissement par Organisation (Relation 1: DOT et Taux
-                d'encaissement)
-              </CardTitle>
-              {/* Color Legend for Encaissement Rate */}
-              <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4 pt-4 border-t">
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: COLORS.danger }}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    &lt; 20%
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: COLORS.warning }}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    20% - 50%
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: COLORS.secondary }}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    50% - 75%
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: COLORS.primary }}
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    75% - 99%
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className="w-4 h-4 rounded"
-                    style={{ backgroundColor: COLORS.success }}
-                  />
-                  <span className="text-xs text-muted-foreground">≥ 100%</span>
-                </div>
-              </div>
+              <CardTitle>Encaissement par Organisation</CardTitle>
             </CardHeader>
             <CardContent className="w-full px-0">
               {organisationChartData.length > 0 ? (
@@ -1609,9 +1591,9 @@ const EncaissementARDotPage = () => {
                       Math.min(800, organisationChartData.length * 20)
                     )}
                   >
-                    <ComposedChart
+                    <BarChart
                       data={organisationChartData}
-                      margin={{ left: 20, right: 80, top: 10, bottom: 140 }}
+                      margin={{ left: 20, right: 20, top: 10, bottom: 140 }}
                       style={{ width: "100%", minWidth: 0 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
@@ -1638,33 +1620,11 @@ const EncaissementARDotPage = () => {
                         wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
                       />
                       <Bar
-                        dataKey="Montant TTC"
+                        dataKey="Encaissement"
                         fill={COLORS.primary}
                         radius={[4, 4, 0, 0]}
                       />
-                      <Bar dataKey="Encaissement" radius={[4, 4, 0, 0]}>
-                        {organisationChartData.map((entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={getColorByEncaissementRate(entry["Taux (%)"])}
-                          />
-                        ))}
-                      </Bar>
-                      <Line
-                        dataKey="Taux (%)"
-                        stroke={COLORS.secondary}
-                        strokeWidth={3}
-                        dot={{ r: 4 }}
-                        yAxisId="right"
-                      />
-                      <YAxis
-                        yAxisId="right"
-                        orientation="right"
-                        domain={[0, 100]}
-                        tickFormatter={(value) => `${value}%`}
-                        style={{ fontSize: "12px" }}
-                      />
-                    </ComposedChart>
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               ) : (
@@ -1677,17 +1637,14 @@ const EncaissementARDotPage = () => {
         {activeTab === "date-fact" && (
           <Card>
             <CardHeader>
-              <CardTitle>
-                Encaissement par Date Fact (Relation 2: Mois et Taux
-                d'encaissement)
-              </CardTitle>
+              <CardTitle>Encaissement par Date Fact (Mois)</CardTitle>
             </CardHeader>
             <CardContent>
               {dateFactChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <ComposedChart
+                  <BarChart
                     data={dateFactChartData}
-                    margin={{ bottom: 20, right: 60 }}
+                    margin={{ bottom: 20, top: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
@@ -1697,7 +1654,6 @@ const EncaissementARDotPage = () => {
                       style={{ fontSize: "12px" }}
                     />
                     <YAxis
-                      yAxisId="left"
                       tickFormatter={(value) =>
                         new Intl.NumberFormat("fr-FR", {
                           notation: "compact",
@@ -1705,38 +1661,18 @@ const EncaissementARDotPage = () => {
                       }
                       style={{ fontSize: "12px" }}
                     />
-                    <YAxis
-                      yAxisId="right"
-                      orientation="right"
-                      domain={[0, 100]}
-                      tickFormatter={(value) => `${value}%`}
-                      style={{ fontSize: "12px" }}
-                    />
                     <Tooltip content={<CustomTooltip />} />
                     <Legend
                       wrapperStyle={{ fontSize: "14px", paddingTop: "10px" }}
                     />
                     <Bar
-                      dataKey="Montant TTC"
+                      dataKey="Encaissement"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
-                      yAxisId="left"
-                    />
-                    <Bar
-                      dataKey="Encaissement"
-                      fill={COLORS.success}
-                      radius={[4, 4, 0, 0]}
-                      yAxisId="left"
-                    />
-                    <Line
-                      dataKey="Taux (%)"
-                      stroke={COLORS.secondary}
-                      strokeWidth={3}
-                      dot={{ r: 4 }}
-                      yAxisId="right"
-                      type="monotone"
-                    />
-                  </ComposedChart>
+                    >
+                      <LabelList content={<CustomLabel />} />
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               ) : (
                 <EmptyState message="Aucune donnée Date Fact disponible" />
