@@ -618,11 +618,11 @@ class RevenueDataProcessor:
         return df
 
     def _clean_org_name_separators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Replace – and _ with spaces in Org Name"""
+        """Replace -, – and _ with spaces in Org Name"""
         org_name_col = self._find_column(df, ['Org Name', 'organisation'])
         if org_name_col:
             df.loc[:, org_name_col] = df[org_name_col].astype(str).str.replace(
-                '–', ' ').str.replace('_', ' ').str.replace('  ', ' ').str.strip()
+                '-', ' ').str.replace('–', ' ').str.replace('_', ' ').str.replace('  ', ' ').str.strip()
         return df
 
     def _filter_reprise(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1078,16 +1078,20 @@ class RevenueDataProcessor:
             # Show original values
             logger.info(f"   First 5 original DOT names: {df[dot_col].head(5).tolist()}")
             
-            # Normalize: strip whitespace, normalize multiple spaces to single space
+            # Normalize: strip whitespace, normalize multiple spaces to single space, remove separators
             def normalize_dot_name(x):
                 if pd.isna(x):
                     return None
-                # Convert to string, strip, normalize spaces
+                # Convert to string, strip
                 name = str(x).strip()
-                # Replace multiple spaces/tabs with single space
+                # Remove DOT_ prefix
                 import re
+                name = re.sub(r'^DOT[_\s]+', '', name, flags=re.IGNORECASE)
+                # Replace -, – and _ with spaces
+                name = name.replace('-', ' ').replace('–', ' ').replace('_', ' ')
+                # Replace multiple spaces/tabs with single space
                 name = re.sub(r'\s+', ' ', name)
-                return name
+                return name.strip()
             
             df[dot_col] = df[dot_col].apply(normalize_dot_name)
             

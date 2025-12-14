@@ -474,6 +474,17 @@ def map_revenue_objective_record(record: dict, file_upload_id: int = None) -> di
         return default
 
     dot_name = safe_string(_get(["DOT", "dot name", "organisation"]))
+    
+    # Clean DOT name: remove separators (-, –, _) and DOT_ prefix
+    if dot_name:
+        import re
+        # Remove DOT_ prefix
+        dot_name = re.sub(r'^DOT[_\s]+', '', dot_name, flags=re.IGNORECASE)
+        # Replace -, – and _ with spaces
+        dot_name = dot_name.replace('-', ' ').replace('–', ' ').replace('_', ' ')
+        # Normalize whitespace
+        dot_name = re.sub(r'\s+', ' ', dot_name).strip()
+    
     objectif_ca = safe_float(_get(["Objectif C.A", "objectif", "objective", "target"]))
     
     # Log mapping for debugging

@@ -394,8 +394,8 @@ class RevenueProcessingHelpers:
         # Remove DOT_ prefix
         cleaned = re.sub(r'DOT[_\s]*', '', org_name, flags=re.IGNORECASE)
 
-        # Replace – and _ with spaces
-        cleaned = cleaned.replace('–', ' ').replace('_', ' ')
+        # Replace -, – and _ with spaces
+        cleaned = cleaned.replace('-', ' ').replace('–', ' ').replace('_', ' ')
 
         # Normalize whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned).strip().upper()
