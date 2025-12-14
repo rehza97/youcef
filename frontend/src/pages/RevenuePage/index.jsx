@@ -24,6 +24,7 @@ import {
   Legend,
   ResponsiveContainer,
   Cell,
+  LabelList,
 } from "recharts";
 import {
   getRevenueOverview,
@@ -114,11 +115,13 @@ const COLORS = {
  * 20.01% to 49.99%: Yellow (warning)
  * 50% to 74.99%: Orange (secondary)
  * 75% to 99.99%: Blue (primary)
- * >= 100%: Blue (primary)
+ * >= 100%: Green (success)
  */
 const getColorByAchievementRate = (taux) => {
-  if (taux >= 75) {
-    return COLORS.primary; // Blue for >= 75%
+  if (taux >= 100) {
+    return COLORS.success; // Green for >= 100%
+  } else if (taux >= 75) {
+    return COLORS.primary; // Blue for 75% to 99.99%
   } else if (taux >= 50) {
     return COLORS.secondary; // Orange for 50% to 74.99%
   } else if (taux >= 20.01) {
@@ -308,22 +311,45 @@ const LoadingSpinner = () => (
  */
 const CustomTooltip = ({ active, payload, label }) => {
   if (active && payload && payload.length) {
+    const data = payload[0].payload;
     return (
       <div className="bg-white p-4 border-2 border-gray-300 rounded-lg shadow-xl">
         <p className="font-bold text-gray-900 mb-2">{label}</p>
         {payload.map((entry, index) => (
-          <p
-            key={index}
-            style={{ color: entry.color }}
-            className="text-sm font-semibold"
-          >
-            {entry.name}: {formatNumber(entry.value)}
-          </p>
+          <div key={index}>
+            <p style={{ color: entry.color }} className="text-sm font-semibold">
+              {entry.name}: {formatNumber(entry.value)} DZD
+            </p>
+            {data.percentage !== undefined && (
+              <p className="text-sm text-gray-600 mt-1">
+                Pourcentage: {formatPercent(data.percentage)}
+              </p>
+            )}
+          </div>
         ))}
       </div>
     );
   }
   return null;
+};
+
+// Custom label component to display percentage on bars
+const CustomLabel = (props) => {
+  const { x, y, width, payload } = props;
+  if (!payload || payload.percentage === undefined) return null;
+  if (width < 30) return null; // Don't show label if bar is too small
+  return (
+    <text
+      x={x + width / 2}
+      y={y - 5}
+      fill="#666"
+      textAnchor="middle"
+      fontSize={11}
+      fontWeight="500"
+    >
+      {formatPercent(payload.percentage)}
+    </text>
+  );
 };
 
 const CustomTooltipPercent = ({ active, payload, label }) => {
@@ -835,10 +861,10 @@ const RevenuePage = () => {
   }, [overview.by_month, overview.by_month_objective]);
 
   /**
-   * CHART 2: Description Cpt Comptable
+   * CHART 2: Description Cpt Comptable with percentages
    */
   const accountChartData = useMemo(() => {
-    return byAccount
+    const data = byAccount
       .map((item) => ({
         compte: (item.description || item.cpt_comptable || "Inconnu").substring(
           0,
@@ -848,7 +874,41 @@ const RevenuePage = () => {
       }))
       .sort((a, b) => b.Total - a.Total)
       .slice(0, 20);
+
+    const total = data.reduce((sum, item) => sum + item.Total, 0);
+    return data.map((item) => ({
+      ...item,
+      percentage: total > 0 ? (item.Total / total) * 100 : 0,
+    }));
   }, [byAccount]);
+
+  /**
+   * CHART: BY Type Fact with percentages
+   */
+  const typeFactChartData = useMemo(() => {
+    const total = byTypeFact.reduce(
+      (sum, item) => sum + (item.total_revenue || 0),
+      0
+    );
+    return byTypeFact.map((item) => ({
+      ...item,
+      percentage: total > 0 ? ((item.total_revenue || 0) / total) * 100 : 0,
+    }));
+  }, [byTypeFact]);
+
+  /**
+   * CHART: BY Date GL with percentages
+   */
+  const monthChartData = useMemo(() => {
+    const total = byMonth.reduce(
+      (sum, item) => sum + (item.total_revenue || 0),
+      0
+    );
+    return byMonth.map((item) => ({
+      ...item,
+      percentage: total > 0 ? ((item.total_revenue || 0) / total) * 100 : 0,
+    }));
+  }, [byMonth]);
 
   /**
    * CHART: DOT et Chiffre d'affaires (CA)
@@ -1786,9 +1846,12 @@ const RevenuePage = () => {
               <CardTitle>Revenue par Type Fact</CardTitle>
             </CardHeader>
             <CardContent>
-              {byTypeFact.length > 0 ? (
+              {typeFactChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <BarChart data={byTypeFact} margin={{ bottom: 80, left: 20 }}>
+                  <BarChart
+                    data={typeFactChartData}
+                    margin={{ bottom: 80, left: 20, top: 20 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
                       dataKey="typ_fact"
@@ -1814,7 +1877,9 @@ const RevenuePage = () => {
                       dataKey="total_revenue"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
-                    />
+                    >
+                      <LabelList content={<CustomLabel />} />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1830,9 +1895,12 @@ const RevenuePage = () => {
               <CardTitle>Revenue par Date GL (Mois)</CardTitle>
             </CardHeader>
             <CardContent>
-              {byMonth.length > 0 ? (
+              {monthChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <BarChart data={byMonth} margin={{ bottom: 20 }}>
+                  <BarChart
+                    data={monthChartData}
+                    margin={{ bottom: 20, top: 20 }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
                       dataKey="month"
@@ -1856,7 +1924,9 @@ const RevenuePage = () => {
                       dataKey="total_revenue"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
-                    />
+                    >
+                      <LabelList content={<CustomLabel />} />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1876,7 +1946,7 @@ const RevenuePage = () => {
                 <ResponsiveContainer width="100%" height={450}>
                   <BarChart
                     data={accountChartData}
-                    margin={{ bottom: 80, left: 20 }}
+                    margin={{ bottom: 80, left: 20, top: 20 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
@@ -1903,7 +1973,9 @@ const RevenuePage = () => {
                       dataKey="Total"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
-                    />
+                    >
+                      <LabelList content={<CustomLabel />} />
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
@@ -1934,7 +2006,7 @@ const RevenuePage = () => {
                     style={{ backgroundColor: COLORS.warning }}
                   />
                   <span className="text-xs text-muted-foreground">
-                    20% - 50%
+                    20.01% - 49.99%
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -1943,7 +2015,7 @@ const RevenuePage = () => {
                     style={{ backgroundColor: COLORS.secondary }}
                   />
                   <span className="text-xs text-muted-foreground">
-                    50% - 75%
+                    50% - 74.99%
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -1951,7 +2023,16 @@ const RevenuePage = () => {
                     className="w-4 h-4 rounded"
                     style={{ backgroundColor: COLORS.primary }}
                   />
-                  <span className="text-xs text-muted-foreground">≥ 75%</span>
+                  <span className="text-xs text-muted-foreground">
+                    75% - 99.99%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.success }}
+                  />
+                  <span className="text-xs text-muted-foreground">≥ 100%</span>
                 </div>
               </div>
             </CardHeader>
