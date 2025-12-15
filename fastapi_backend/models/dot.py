@@ -32,6 +32,7 @@ class DOT(Base):
     users = relationship("User", back_populates="dot")
     revenue_journals = relationship("RevenueJournal", back_populates="dot")
     revenue_objectives = relationship("RevenueObjective", back_populates="dot")
+    revenue_dot_corporate = relationship("RevenueDOTCorporate", back_populates="dot")
     encaissement_ar_records = relationship("EncaissementARDot", back_populates="dot")
     encaissement_anomaly_records = relationship("EncaissementAnomaly", back_populates="dot")
     encaissement_aggregate_views = relationship("EncaissementAggregateView", back_populates="dot")

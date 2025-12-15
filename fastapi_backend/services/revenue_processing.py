@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, date
 import logging
 from sqlalchemy.orm import Session
-from models.revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
+from models.revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly, RevenueDOTCorporate
 from models.dot import DOT
 from services.dot_service import DOTService
 import re
@@ -394,6 +394,251 @@ class RevenueDataProcessor:
                 "error": str(e)
             }
 
+    def process_dot_corporate(self, file_path: str, file_upload_id: int = None) -> Dict[str, Any]:
+        """Process DOT Corporate revenue file with monthly data"""
+        try:
+            # Read file - Excel stores numbers as numbers, so pandas will parse them
+            # We'll handle the parsing in the parse_french_number function
+            from pathlib import Path
+            file_ext = Path(file_path).suffix.lower()
+            
+            if file_ext == '.csv':
+                df = pd.read_csv(file_path, dtype=str, low_memory=False)
+            elif file_ext in ['.xlsx', '.xls']:
+                # Read Excel normally - pandas will parse numbers
+                # We'll handle French format in the parser
+                df = pd.read_excel(file_path, engine='openpyxl' if file_ext == '.xlsx' else 'xlrd')
+            else:
+                df = self._read_file(file_path)
+            
+            logger.info(f"✅ Loaded {len(df)} rows from DOT Corporate file")
+            logger.info(f"📋 File columns: {list(df.columns)}")
+            
+            # Show first few rows for debugging
+            if len(df) > 0:
+                logger.info(f"📊 First 3 rows preview:")
+                for idx, row in df.head(3).iterrows():
+                    logger.info(f"   Row {idx}: {dict(row)}")
+
+            # Expected columns: DOT, Jan, fév, mars, Avril, Mai, Juin, Juillet, aout, Sept, Oct, Nov, Déc
+            # Find DOT column (first column)
+            dot_col = None
+            for col in df.columns:
+                col_lower = str(col).strip().lower()
+                if col_lower in ['dot', 'd.o.t', 'direction']:
+                    dot_col = col
+                    break
+            
+            if not dot_col:
+                # Use first column as DOT
+                dot_col = df.columns[0]
+                logger.info(f"⚠️ DOT column not found, using first column: '{dot_col}'")
+
+            # Map month columns (case-insensitive)
+            month_mapping = {
+                'jan': 'january',
+                'janvier': 'january',
+                'fév': 'february',
+                'février': 'february',
+                'fev': 'february',
+                'mars': 'march',
+                'avril': 'april',
+                'mai': 'may',
+                'juin': 'june',
+                'juillet': 'july',
+                'aout': 'august',
+                'août': 'august',
+                'sept': 'september',
+                'septembre': 'september',
+                'oct': 'october',
+                'octobre': 'october',
+                'nov': 'november',
+                'novembre': 'november',
+                'déc': 'december',
+                'décembre': 'december',
+                'dec': 'december'
+            }
+
+            # Find month columns
+            month_cols = {}
+            for col in df.columns:
+                col_lower = str(col).strip().lower()
+                for key, value in month_mapping.items():
+                    if key in col_lower:
+                        month_cols[value] = col
+                        break
+
+            logger.info(f"📅 Found month columns: {month_cols}")
+
+            # Process and save records
+            saved_count = 0
+            created_count = 0
+            updated_count = 0
+            skipped_count = 0
+
+            for idx, row in df.iterrows():
+                dot_name = str(row[dot_col]).strip() if pd.notna(row[dot_col]) else None
+                
+                if not dot_name or dot_name.lower() in ['nan', 'none', '']:
+                    logger.warning(f"⚠️ Row {idx}: Skipping record with no DOT name")
+                    skipped_count += 1
+                    continue
+
+                # Get or create DOT for Chiffre d'Affaires module
+                dot = self._get_or_create_dot(
+                    dot_name,
+                    f"DOT Corporate for {dot_name}"
+                )
+
+                # Helper function to parse French number format
+                def parse_french_number(value):
+                    """Parse French number format
+                    
+                    Handles two cases:
+                    1. French format string: '5.266.666,67' -> 5266666.67
+                    2. Already parsed float: 5266666.666666667 -> 5266666.67 (round to 2 decimals)
+                    """
+                    if pd.isna(value) or value == '':
+                        return None
+                    try:
+                        # If it's already a numeric type (float/int), pandas parsed it
+                        if isinstance(value, (int, float)):
+                            # Round to 2 decimal places and validate range
+                            result = round(float(value), 2)
+                            max_value = 9999999999999.99
+                            if abs(result) > max_value:
+                                logger.warning(f"⚠️ Value {result} exceeds NUMERIC(15,2) range, clamping to {max_value}")
+                                result = max_value if result > 0 else -max_value
+                            return result
+                        
+                        # Convert to string for parsing
+                        str_val = str(value).strip()
+                        if not str_val or str_val.lower() in ['nan', 'none', '']:
+                            return None
+                        
+                        # Check if it's French format (has comma as decimal separator)
+                        if ',' in str_val:
+                            # French format: dots = thousands, comma = decimal
+                            # Example: "5.266.666,67" -> remove dots -> "5266666,67" -> replace comma -> "5266666.67"
+                            str_val = str_val.replace('.', '').replace(',', '.')
+                        # If no comma, assume it's already in standard format (dots removed by pandas)
+                        # Just parse as float
+                        
+                        # Remove any remaining non-numeric characters except minus and dot
+                        import re
+                        str_val = re.sub(r'[^\d\.\-]', '', str_val)
+                        
+                        if not str_val:
+                            return None
+                        
+                        result = round(float(str_val), 2)
+                        
+                        # Validate result is within NUMERIC(15,2) range
+                        max_value = 9999999999999.99
+                        if abs(result) > max_value:
+                            logger.warning(f"⚠️ Value {result} exceeds NUMERIC(15,2) range, clamping to {max_value}")
+                            result = max_value if result > 0 else -max_value
+                        
+                        return result
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"⚠️ Failed to parse number '{value}': {e}")
+                        return None
+
+                # Extract monthly values
+                def get_month_value(month_name):
+                    col_name = month_cols.get(month_name)
+                    if col_name and col_name in row.index:
+                        return parse_french_number(row[col_name])
+                    return None
+
+                # Get current year for filtering
+                current_year = datetime.utcnow().year
+
+                record_data = {
+                    'file_upload_id': file_upload_id,
+                    'dot_id': dot.id,
+                    'dot_name': dot_name,
+                    'year': current_year,
+                    'january': get_month_value('january'),
+                    'february': get_month_value('february'),
+                    'march': get_month_value('march'),
+                    'april': get_month_value('april'),
+                    'may': get_month_value('may'),
+                    'june': get_month_value('june'),
+                    'july': get_month_value('july'),
+                    'august': get_month_value('august'),
+                    'september': get_month_value('september'),
+                    'october': get_month_value('october'),
+                    'november': get_month_value('november'),
+                    'december': get_month_value('december')
+                }
+
+                # Check if record exists (by dot_name, year, and file_upload_id)
+                # This allows multiple years of data for the same DOT
+                existing = self.db.query(RevenueDOTCorporate).filter(
+                    RevenueDOTCorporate.dot_name == dot_name,
+                    RevenueDOTCorporate.year == current_year,
+                    RevenueDOTCorporate.file_upload_id == file_upload_id
+                ).first()
+
+                if existing:
+                    # Update existing record
+                    for key, value in record_data.items():
+                        if key != 'created_at' and hasattr(existing, key):
+                            setattr(existing, key, value)
+                    existing.updated_at = datetime.utcnow()
+                    updated_count += 1
+                    logger.debug(f"📝 Updated DOT Corporate '{dot_name}'")
+                else:
+                    # Create new record
+                    revenue_dot = RevenueDOTCorporate(**record_data)
+                    self.db.add(revenue_dot)
+                    self.db.flush()
+                    created_count += 1
+                    logger.debug(f"➕ Created DOT Corporate '{dot_name}'")
+
+                saved_count += 1
+
+            # Commit transaction
+            try:
+                self.db.flush()
+                logger.info(f"🔄 Flushed session: {created_count} to create, {updated_count} to update")
+                
+                self.db.commit()
+                logger.info(f"✅ Transaction committed successfully")
+                
+                # Verify save
+                total_in_db = self.db.query(RevenueDOTCorporate).count()
+                logger.info(f"📊 Total DOT Corporate records in database after commit: {total_in_db}")
+                
+            except Exception as commit_error:
+                logger.error(f"❌ Error committing transaction: {commit_error}")
+                logger.exception(commit_error)
+                self.db.rollback()
+                raise
+
+            logger.info(f"✅ Saved {saved_count} DOT Corporate records: {created_count} created, {updated_count} updated, {skipped_count} skipped")
+
+            return {
+                "success": True,
+                "processed_rows": len(df),
+                "saved_count": saved_count,
+                "created_count": created_count,
+                "updated_count": updated_count,
+                "skipped_count": skipped_count
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing DOT Corporate file: {e}")
+            logger.exception(e)
+            self.db.rollback()
+            return {
+                "success": False,
+                "error": str(e),
+                "processed_rows": 0,
+                "saved_count": 0
+            }
+
     def _read_file(self, file_path: str) -> pd.DataFrame:
         """Read CSV or Excel file, with support for HTML files masquerading as .xls"""
         from pathlib import Path
@@ -402,6 +647,10 @@ class RevenueDataProcessor:
         if file_ext == '.csv':
             return pd.read_csv(file_path, low_memory=False)
         elif file_ext == '.xlsx':
+            # Read Excel file normally - pandas will parse numbers
+            # French format numbers (with commas) will be preserved as strings if Excel stored them as text
+            # If Excel stored them as numbers, pandas will convert them correctly
+            # We'll handle French format conversion in clean_numeric_fields via smart_parse_numeric
             return pd.read_excel(file_path, engine='openpyxl')
         elif file_ext == '.xls':
             # .xls files might be HTML masquerading as Excel

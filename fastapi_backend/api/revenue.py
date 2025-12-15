@@ -289,6 +289,72 @@ async def upload_account_descriptions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/upload/dot-corporate", response_model=FileUploadResponse)
+async def upload_dot_corporate(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload DOT Corporate revenue file with monthly data
+    Requires: can_upload_files permission
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_upload_files")
+
+    try:
+        # Save file
+        upload_dir = "uploads/revenue/dot_corporate"
+        os.makedirs(upload_dir, exist_ok=True)
+
+        file_path = os.path.join(
+            upload_dir, f"{datetime.utcnow().timestamp()}_{file.filename}")
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Create file upload record
+        file_upload = FileUpload(
+            filename=file.filename,
+            original_filename=file.filename,
+            file_path=file_path,
+            file_size=os.path.getsize(file_path),
+            file_type="dot_corporate",
+            mime_type=file.content_type,
+            uploaded_by=current_user.id,
+            detected_kpi_type="chiffre_affaires",
+            processing_status="processing"
+        )
+        db.add(file_upload)
+        db.commit()
+        db.refresh(file_upload)
+
+        # Process file
+        processor = RevenueDataProcessor(db)
+        result = processor.process_dot_corporate(
+            file_path, file_upload.id)
+
+        # Update status
+        file_upload.processing_status = "completed" if result.get(
+            "success") else "failed"
+        file_upload.is_processed = result.get("success", False)
+        if not result.get("success"):
+            file_upload.error_message = result.get("error")
+        db.commit()
+
+        return FileUploadResponse(
+            success=result.get("success", False),
+            message="DOT Corporate file processed successfully" if result.get(
+                "success") else f"Error: {result.get('error')}",
+            file_id=file_upload.id,
+            processed_rows=result.get("processed_rows", 0)
+        )
+
+    except Exception as e:
+        logger.error(f"Error uploading DOT Corporate file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/account-descriptions", response_model=List[AccountDescriptionResponse])
 async def list_account_descriptions(
     current_user: User = Depends(get_current_user),

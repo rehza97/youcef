@@ -386,9 +386,19 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
 
         return default
 
-    # Maximum value for NUMERIC(15, 2): 9,999,999,999,999.99
+    # Maximum value for NUMERIC(15, 2): 9,999,999,999,999.99 (13 digits before decimal, 2 after)
     MAX_NUMERIC_15_2 = 9999999999999.99
     MIN_NUMERIC_15_2 = -9999999999999.99
+    
+    # Maximum value for NUMERIC(15, 4): 99,999,999,999.9999 (11 digits before decimal, 4 after)
+    # This is used for qte (quantity) field
+    MAX_NUMERIC_15_4 = 99999999999.9999
+    MIN_NUMERIC_15_4 = -99999999999.9999
+    
+    # Maximum value for NUMERIC(15, 6): 999,999,999.999999 (9 digits before decimal, 6 after)
+    # This is used for taux_change (exchange rate) field
+    MAX_NUMERIC_15_6 = 999999999.999999
+    MIN_NUMERIC_15_6 = -999999999.999999
 
     return {
         "file_upload_id": file_upload_id,
@@ -415,9 +425,11 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
         "n_ligne": safe_string(_get(["N Ligne", "line number"])),
         "description_ligne_de_produit": safe_string(_get(["Description (ligne de produit)", "product line description", "description ligne"])),
         "uom": safe_string(_get(["Uom", "unit of measure", "unite"])),
-        "qte": safe_float(_get(["Qte", "quantity", "quantite"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        # qte uses NUMERIC(15, 4) in database, so it needs different validation
+        "qte": safe_float(_get(["Qte", "quantity", "quantite"]), max_value=MAX_NUMERIC_15_4, min_value=MIN_NUMERIC_15_4),
         "prix_uni": safe_float(_get(["Prix Uni", "unit price", "prix unitaire"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
-        "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux", "taux change", "taux_change", "tauxchange", "rate", "exchange"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
+        # taux_change uses NUMERIC(15, 6) in database, so it needs different validation
+        "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux", "taux change", "taux_change", "tauxchange", "rate", "exchange"]), max_value=MAX_NUMERIC_15_6, min_value=MIN_NUMERIC_15_6),
         "mnt_ht": safe_float(_get(["Mnt Ht", "montant ht", "amount excluding tax"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "tax": safe_string(_get(["Tax", "taxe"])),
         "mnt_tax": safe_float(_get(["Mnt Tax", "montant tax", "tax amount"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),

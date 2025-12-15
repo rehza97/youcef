@@ -8,7 +8,7 @@ from .notification import Notification
 from .file_upload import FileUpload
 from .dot import DOT
 from .park import Park
-from .revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
+from .revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly, RevenueDOTCorporate
 from .revenue_pivot import RevenuePivotCache, RevenuePivotMetadata
 from .user_module_dot import UserModuleDOT, MODULE_PARC_CORPORATE_NGBSS, MODULE_CHIFFRE_AFFAIRES, MODULE_ENCAISSEMENT_AR_DOT, MODULE_CREANCE_PERIODIQUE_DOT, ALL_MODULES
 from .module_dot_config import ModuleDOTConfig, AVAILABLE_MODULES
@@ -28,6 +28,7 @@ __all__ = [
     "AccountDescription",
     "RevenueObjective",
     "RevenueAnomaly",
+    "RevenueDOTCorporate",
     "RevenuePivotCache",
     "RevenuePivotMetadata",
     "UserModuleDOT",

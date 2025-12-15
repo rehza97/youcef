@@ -1380,6 +1380,19 @@ export const getRevenueOverview = (params = {}) => {
   return api.get(`/api/revenue/overview${qs ? `?${qs}` : ""}`);
 };
 
+export const getDotCorporateMonthly = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.dot_names) {
+    (Array.isArray(params.dot_names)
+      ? params.dot_names
+      : [params.dot_names]
+    ).forEach((v) => query.append("dot_names", v));
+  }
+  if (params.year) query.append("year", params.year);
+  const qs = query.toString();
+  return api.get(`/api/revenue/dot-corporate/monthly${qs ? `?${qs}` : ""}`);
+};
+
 export const listRevenueJournals = (params = {}) => {
   const query = new URLSearchParams();
   if (params.page) query.append("page", params.page);
@@ -1627,10 +1640,20 @@ export const startRevenueExport = (filters = {}, exportType = "both") => {
   params.append("export_type", exportType);
 
   // Only add filter params that have values
+  // Handle arrays (for column filters) and single values
   Object.keys(filterParams).forEach((key) => {
     const value = filterParams[key];
     if (value !== undefined && value !== null && value !== "") {
-      params.append(key, value);
+      if (Array.isArray(value)) {
+        // For arrays, append each value separately
+        value.forEach((v) => {
+          if (v !== undefined && v !== null && v !== "") {
+            params.append(key, v);
+          }
+        });
+      } else {
+        params.append(key, value);
+      }
     }
   });
 

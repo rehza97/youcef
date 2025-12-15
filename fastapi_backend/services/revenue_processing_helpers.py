@@ -118,14 +118,30 @@ class RevenueProcessingHelpers:
     def smart_parse_numeric(value: Any) -> Optional[float]:
         """
         Intelligently parse numeric values handling multiple formats:
-        - French format: 1.234.567,89 (dots=thousands, comma=decimal)
+        - French format: 1.234.567,89 or 1 234 567,89 (dots/spaces=thousands, comma=decimal)
         - Mixed dots: 1.234.567.89 (dots for both, last dot is decimal)
         - US format: 1,234,567.89 (commas=thousands, dot=decimal)
         - Standard: 1234567.89
+        - Already parsed floats: returns as-is
+        
+        CRITICAL: Always converts French format (comma as decimal) to standard format (dot as decimal)
+        Handles spaces as thousands separators: "6 496 318 295,77" -> 6496318295.77
         """
+        # Handle None and NaN first
         if value is None or pd.isna(value):
             return None
         
+        # If already a numeric type (float/int), return as-is (already parsed correctly)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            # Check if it's a pandas NaN
+            try:
+                if pd.isna(value):
+                    return None
+            except Exception:
+                pass
+            return float(value)
+        
+        # Convert to string for parsing
         text = str(value).strip()
         if not text or text.lower() in ['nan', 'none', 'null', '']:
             return None
@@ -136,10 +152,12 @@ class RevenueProcessingHelpers:
             text = text[1:]
         
         try:
-            # Case 1: Has comma - French format (dots=thousands, comma=decimal)
+            # Case 1: Has comma - French format (dots/spaces=thousands, comma=decimal)
+            # This is the most common case for French Excel files
+            # Examples: "1.234.567,89" or "1 234 567,89" or "6 496 318 295,77"
             if ',' in text:
-                # Remove all dots (thousands separators), replace comma with dot
-                cleaned = text.replace('.', '').replace(',', '.')
+                # Remove all dots and spaces (thousands separators), replace comma with dot
+                cleaned = text.replace('.', '').replace(' ', '').replace(',', '.')
                 result = float(cleaned)
                 return -result if is_negative else result
             
@@ -150,16 +168,22 @@ class RevenueProcessingHelpers:
                 # Check if last part after dot has 2 digits (likely decimals)
                 if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 2:
                     # Last dot is decimal separator
-                    # Remove all other dots (thousands separators) from integer part
-                    integer_part = parts[0].replace('.', '')
+                    # Remove all other dots and spaces (thousands separators) from integer part
+                    integer_part = parts[0].replace('.', '').replace(' ', '')
                     cleaned = integer_part + '.' + parts[1]
                     result = float(cleaned)
                     return -result if is_negative else result
                 else:
                     # All dots are thousands separators
-                    cleaned = text.replace('.', '')
+                    cleaned = text.replace('.', '').replace(' ', '')
                     result = float(cleaned)
                     return -result if is_negative else result
+            
+            # Case 2b: Has spaces but no dots or comma - remove spaces and parse
+            if ' ' in text:
+                cleaned = text.replace(' ', '')
+                result = float(cleaned)
+                return -result if is_negative else result
             
             # Case 3: No separators - just parse directly
             result = float(text)

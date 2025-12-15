@@ -191,3 +191,48 @@ class RevenueAnomaly(Base):
 
     def __repr__(self):
         return f"<RevenueAnomaly(id={self.id}, org_name='{self.org_name}', reason='{self.anomaly_reason}')>"
+
+
+class RevenueDOTCorporate(Base):
+    """
+    Revenue DOT Corporate - Monthly revenue data by DOT
+    Stores monthly revenue figures for each DOT from Excel files
+    """
+    __tablename__ = "objectifs_monthly_dot"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # File relationship
+    file_upload_id = Column(Integer, ForeignKey("file_uploads.id"), nullable=True, index=True)
+    file_upload = relationship("FileUpload", back_populates="revenue_dot_corporate")
+
+    # DOT relationship
+    dot_id = Column(Integer, ForeignKey("dots.id"), nullable=True, index=True)
+    dot = relationship("DOT", back_populates="revenue_dot_corporate")
+
+    # DOT name
+    dot_name = Column(String(200), nullable=False, index=True)
+
+    # Year for filtering
+    year = Column(Integer, nullable=False, default=lambda: datetime.utcnow().year, index=True)
+
+    # Monthly revenue values
+    january = Column(Numeric(15, 2), nullable=True)  # Jan
+    february = Column(Numeric(15, 2), nullable=True)  # fév
+    march = Column(Numeric(15, 2), nullable=True)  # mars
+    april = Column(Numeric(15, 2), nullable=True)  # Avril
+    may = Column(Numeric(15, 2), nullable=True)  # Mai
+    june = Column(Numeric(15, 2), nullable=True)  # Juin
+    july = Column(Numeric(15, 2), nullable=True)  # Juillet
+    august = Column(Numeric(15, 2), nullable=True)  # aout
+    september = Column(Numeric(15, 2), nullable=True)  # Sept
+    october = Column(Numeric(15, 2), nullable=True)  # Oct
+    november = Column(Numeric(15, 2), nullable=True)  # Nov
+    december = Column(Numeric(15, 2), nullable=True)  # Déc (total)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<RevenueDOTCorporate(id={self.id}, dot_name='{self.dot_name}', year={self.year}, total={self.december})>"

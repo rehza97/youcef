@@ -10,7 +10,7 @@ from sqlalchemy import func, and_, or_
 from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
-from models.revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly
+from models.revenue import RevenueJournal, AccountDescription, RevenueObjective, RevenueAnomaly, RevenueDOTCorporate
 from models import MODULE_CHIFFRE_AFFAIRES
 from services.permission_service import PermissionService
 from services.dot_service import DOTService
@@ -186,6 +186,14 @@ class RevenueByMonthResponse(BaseModel):
     achievement_rate: Optional[float]
     objective: Optional[float]
     record_count: int
+
+
+class DOTCorporateByMonthResponse(BaseModel):
+    """Response schema for DOT Corporate monthly revenue aggregations"""
+    month: str  # YYYY-MM format
+    total_revenue: float
+    objective: Optional[float]
+    dot_count: int  # Number of DOTs contributing to this month
 
 
 class RevenueByTypeFactResponse(BaseModel):
@@ -1253,6 +1261,133 @@ async def get_revenue_by_month(
     except Exception as e:
         logger.error(f"Error getting revenue by month: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to retrieve monthly revenue: {str(e)}")
+
+
+@router.get("/dot-corporate/by-month", response_model=List[DOTCorporateByMonthResponse])
+async def get_dot_corporate_by_month(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    dot_ids: Optional[List[int]] = Query(None, description="Filter by DOT IDs"),
+    dot_names: Optional[List[str]] = Query(None, description="Filter by DOT names"),
+    year: Optional[int] = Query(None, description="Filter by year (defaults to current year)"),
+):
+    """
+    Get DOT Corporate revenue data grouped by month
+    
+    Returns monthly aggregations from the revenue_dot_corporate table.
+    Aggregates the 12 monthly columns (january through december) into monthly totals.
+    
+    Parameters:
+    - dot_ids: Optional list of DOT IDs to filter by
+    - dot_names: Optional list of DOT names to filter by
+    - year: Optional year filter (defaults to current year if not provided)
+    
+    Response: List of monthly revenue summaries ordered by month (ascending)
+    
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+    
+    try:
+        # Build base query
+        query = db.query(RevenueDOTCorporate)
+        
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueDOTCorporate.dot_id.in_(accessible_dot_ids))
+        
+        # Apply DOT ID filter if provided
+        if dot_ids:
+            query = query.filter(RevenueDOTCorporate.dot_id.in_(dot_ids))
+        
+        # Apply DOT name filter if provided
+        if dot_names:
+            query = query.filter(RevenueDOTCorporate.dot_name.in_(dot_names))
+        
+        # Apply year filter (default to current year if not provided)
+        if year is None:
+            year = datetime.utcnow().year
+        query = query.filter(RevenueDOTCorporate.year == year)
+        
+        # Get all matching records
+        records = query.all()
+        
+        if not records:
+            logger.info(f"No DOT Corporate records found for year {year}")
+            return []
+        
+        # Aggregate monthly values
+        # Map month number to column name and month name
+        month_columns = {
+            1: ('january', 'Janvier'),
+            2: ('february', 'Février'),
+            3: ('march', 'Mars'),
+            4: ('april', 'Avril'),
+            5: ('may', 'Mai'),
+            6: ('june', 'Juin'),
+            7: ('july', 'Juillet'),
+            8: ('august', 'Août'),
+            9: ('september', 'Septembre'),
+            10: ('october', 'Octobre'),
+            11: ('november', 'Novembre'),
+            12: ('december', 'Décembre'),
+        }
+        
+        monthly_totals = {}
+        dot_counts = {}
+        
+        for record in records:
+            for month_num, (col_name, _) in month_columns.items():
+                month_key = f"{year}-{month_num:02d}"
+                
+                # Get the value from the record
+                value = getattr(record, col_name)
+                if value is not None:
+                    # Convert Decimal to float
+                    float_value = float(value)
+                    
+                    if month_key not in monthly_totals:
+                        monthly_totals[month_key] = 0.0
+                        dot_counts[month_key] = set()
+                    
+                    monthly_totals[month_key] += float_value
+                    dot_counts[month_key].add(record.dot_id or record.dot_name)
+        
+        # Get objectives for the year (if available)
+        # Try to get objectives from RevenueObjective table
+        objectives_query = db.query(RevenueObjective)
+        if accessible_dot_ids:
+            objectives_query = objectives_query.filter(RevenueObjective.dot_id.in_(accessible_dot_ids))
+        if dot_ids:
+            objectives_query = objectives_query.filter(RevenueObjective.dot_id.in_(dot_ids))
+        
+        all_objectives = objectives_query.all()
+        total_objective = sum(float(obj.objectif_ca or 0) for obj in all_objectives)
+        monthly_objective = total_objective / 12.0 if total_objective else None
+        
+        # Build response
+        response = []
+        for month_key in sorted(monthly_totals.keys()):
+            total_revenue = monthly_totals[month_key]
+            dot_count = len(dot_counts[month_key])
+            
+            response.append(DOTCorporateByMonthResponse(
+                month=month_key,
+                total_revenue=round(total_revenue, 2),
+                objective=round(monthly_objective, 2) if monthly_objective else None,
+                dot_count=dot_count
+            ))
+        
+        logger.info(f"Retrieved {len(response)} monthly DOT Corporate summaries for year {year}")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error getting DOT Corporate revenue by month: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve DOT Corporate monthly revenue: {str(e)}")
 
 
 @router.get("/by-type-fact", response_model=List[RevenueByTypeFactResponse])
@@ -2381,16 +2516,85 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
         else:
             raise Exception("No accessible data")
 
-        # Apply filters
+        # Apply all column filters - same logic as preview endpoint
+        # Handle integer ID columns
+        if export_params.get("id"):
+            try:
+                int_ids = [int(v) for v in export_params["id"] if v and str(v).isdigit()]
+                if int_ids:
+                    query = query.filter(RevenueJournal.id.in_(int_ids))
+            except (ValueError, TypeError):
+                pass
+        if export_params.get("file_upload_id"):
+            try:
+                int_ids = [int(v) for v in export_params["file_upload_id"] if v and str(v).isdigit()]
+                if int_ids:
+                    query = query.filter(RevenueJournal.file_upload_id.in_(int_ids))
+            except (ValueError, TypeError):
+                pass
+        if export_params.get("dot_id"):
+            try:
+                int_ids = [int(v) for v in export_params["dot_id"] if v and str(v).isdigit()]
+                if int_ids:
+                    query = query.filter(RevenueJournal.dot_id.in_(int_ids))
+            except (ValueError, TypeError):
+                pass
+        if export_params.get("account_description_id"):
+            try:
+                int_ids = [int(v) for v in export_params["account_description_id"] if v and str(v).isdigit()]
+                if int_ids:
+                    query = query.filter(RevenueJournal.account_description_id.in_(int_ids))
+            except (ValueError, TypeError):
+                pass
+        if export_params.get("revenue_objective_id"):
+            try:
+                int_ids = [int(v) for v in export_params["revenue_objective_id"] if v and str(v).isdigit()]
+                if int_ids:
+                    query = query.filter(RevenueJournal.revenue_objective_id.in_(int_ids))
+            except (ValueError, TypeError):
+                pass
+        
+        # Handle string columns
         if export_params.get("org_name"):
-            org_names = export_params["org_name"].split(",") if isinstance(export_params["org_name"], str) else export_params["org_name"]
-            query = query.filter(RevenueJournal.org_name.in_(org_names))
+            query = query.filter(RevenueJournal.org_name.in_(export_params["org_name"]))
+        if export_params.get("origine"):
+            query = query.filter(RevenueJournal.origine.in_(export_params["origine"]))
+        if export_params.get("n_fact"):
+            query = query.filter(RevenueJournal.n_fact.in_(export_params["n_fact"]))
         if export_params.get("typ_fact"):
-            typ_facts = export_params["typ_fact"].split(",") if isinstance(export_params["typ_fact"], str) else export_params["typ_fact"]
-            query = query.filter(RevenueJournal.typ_fact.in_(typ_facts))
+            query = query.filter(RevenueJournal.typ_fact.in_(export_params["typ_fact"]))
+        if export_params.get("n_client"):
+            query = query.filter(RevenueJournal.n_client.in_(export_params["n_client"]))
+        if export_params.get("client"):
+            query = query.filter(RevenueJournal.client.in_(export_params["client"]))
+        if export_params.get("delai_paie"):
+            query = query.filter(RevenueJournal.delai_paie.in_(export_params["delai_paie"]))
+        if export_params.get("devise"):
+            query = query.filter(RevenueJournal.devise.in_(export_params["devise"]))
         if export_params.get("cpt_comptable"):
-            cpt_comptables = export_params["cpt_comptable"].split(",") if isinstance(export_params["cpt_comptable"], str) else export_params["cpt_comptable"]
-            query = query.filter(RevenueJournal.cpt_comptable.in_(cpt_comptables))
+            query = query.filter(RevenueJournal.cpt_comptable.in_(export_params["cpt_comptable"]))
+        if export_params.get("periode_de_facturation"):
+            query = query.filter(RevenueJournal.periode_de_facturation.in_(export_params["periode_de_facturation"]))
+        if export_params.get("creer_par"):
+            query = query.filter(RevenueJournal.creer_par.in_(export_params["creer_par"]))
+        if export_params.get("uom"):
+            query = query.filter(RevenueJournal.uom.in_(export_params["uom"]))
+        if export_params.get("tax"):
+            query = query.filter(RevenueJournal.tax.in_(export_params["tax"]))
+        if export_params.get("n_ligne"):
+            query = query.filter(RevenueJournal.n_ligne.in_(export_params["n_ligne"]))
+        if export_params.get("memo_line_id"):
+            query = query.filter(RevenueJournal.memo_line_id.in_(export_params["memo_line_id"]))
+        if export_params.get("reference"):
+            query = query.filter(RevenueJournal.reference.in_(export_params["reference"]))
+        
+        # Handle boolean filters
+        if export_params.get("termine_flag") is not None:
+            bool_val = export_params["termine_flag"].lower() in ["true", "oui", "yes", "1"] if isinstance(export_params["termine_flag"], str) else bool(export_params["termine_flag"])
+            query = query.filter(RevenueJournal.termine_flag == bool_val)
+        if export_params.get("is_anomaly") is not None:
+            bool_val = export_params["is_anomaly"].lower() in ["true", "oui", "yes", "1"] if isinstance(export_params["is_anomaly"], str) else bool(export_params["is_anomaly"])
+            query = query.filter(RevenueJournal.is_anomaly == bool_val)
         # Date filters - convert YYYY-MM format to YYYY-MM-DD for PostgreSQL DATE columns
         if export_params.get("start_date"):
             start_date = export_params["start_date"]
@@ -2422,10 +2626,15 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                 last_day = monthrange(year, month)[1]
                 end_date_fact = f"{end_date_fact}-{last_day:02d}"
             query = query.filter(RevenueJournal.date_fact <= end_date_fact)
+        # Handle numeric range filters
         if export_params.get("taux_ca_min") is not None:
             query = query.filter(RevenueJournal.taux_realisation_ca >= export_params["taux_ca_min"])
         if export_params.get("taux_ca_max") is not None:
             query = query.filter(RevenueJournal.taux_realisation_ca <= export_params["taux_ca_max"])
+        if export_params.get("chiffre_aff_exe_dzd_min") is not None:
+            query = query.filter(RevenueJournal.chiffre_aff_exe_dzd >= export_params["chiffre_aff_exe_dzd_min"])
+        if export_params.get("chiffre_aff_exe_dzd_max") is not None:
+            query = query.filter(RevenueJournal.chiffre_aff_exe_dzd <= export_params["chiffre_aff_exe_dzd_max"])
 
         # Search filter
         if export_params.get("search"):
@@ -2857,15 +3066,42 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
 async def export_revenue_data_async(
     format: str = Query("xlsx", regex="^(xlsx|csv)$"),
     export_type: str = Query("both", regex="^(normal|anomalies|both)$", description="Export type: normal, anomalies, or both (returns ZIP with both files)"),
-    org_name: Optional[str] = Query(None),
-    typ_fact: Optional[str] = Query(None),
-    cpt_comptable: Optional[str] = Query(None),
+    # All column filters - same as preview endpoint
+    id: Optional[List[str]] = Query(None),
+    file_upload_id: Optional[List[str]] = Query(None),
+    dot_id: Optional[List[str]] = Query(None),
+    org_name: Optional[List[str]] = Query(None),
+    origine: Optional[List[str]] = Query(None),
+    n_fact: Optional[List[str]] = Query(None),
+    typ_fact: Optional[List[str]] = Query(None),
+    n_client: Optional[List[str]] = Query(None),
+    client: Optional[List[str]] = Query(None),
+    delai_paie: Optional[List[str]] = Query(None),
+    devise: Optional[List[str]] = Query(None),
+    cpt_comptable: Optional[List[str]] = Query(None),
+    periode_de_facturation: Optional[List[str]] = Query(None),
+    creer_par: Optional[List[str]] = Query(None),
+    uom: Optional[List[str]] = Query(None),
+    tax: Optional[List[str]] = Query(None),
+    n_ligne: Optional[List[str]] = Query(None),
+    memo_line_id: Optional[List[str]] = Query(None),
+    reference: Optional[List[str]] = Query(None),
+    account_description_id: Optional[List[str]] = Query(None),
+    revenue_objective_id: Optional[List[str]] = Query(None),
+    # Date filters
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     start_date_fact: Optional[str] = Query(None),
     end_date_fact: Optional[str] = Query(None),
+    # Numeric range filters
     taux_ca_min: Optional[float] = Query(None),
     taux_ca_max: Optional[float] = Query(None),
+    chiffre_aff_exe_dzd_min: Optional[float] = Query(None),
+    chiffre_aff_exe_dzd_max: Optional[float] = Query(None),
+    # Boolean filters
+    termine_flag: Optional[str] = Query(None),
+    is_anomaly: Optional[str] = Query(None),
+    # Search
     search: Optional[str] = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -2887,19 +3123,41 @@ async def export_revenue_data_async(
     # Generate unique task ID
     task_id = str(uuid.uuid4())
 
-    # Store export parameters (dates are already strings from Query params)
+    # Store export parameters - include all column filters
     export_params = {
         "format": format,
         "export_type": export_type,
+        "id": id,
+        "file_upload_id": file_upload_id,
+        "dot_id": dot_id,
         "org_name": org_name,
+        "origine": origine,
+        "n_fact": n_fact,
         "typ_fact": typ_fact,
+        "n_client": n_client,
+        "client": client,
+        "delai_paie": delai_paie,
+        "devise": devise,
         "cpt_comptable": cpt_comptable,
+        "periode_de_facturation": periode_de_facturation,
+        "creer_par": creer_par,
+        "uom": uom,
+        "tax": tax,
+        "n_ligne": n_ligne,
+        "memo_line_id": memo_line_id,
+        "reference": reference,
+        "account_description_id": account_description_id,
+        "revenue_objective_id": revenue_objective_id,
         "start_date": start_date,
         "end_date": end_date,
         "start_date_fact": start_date_fact,
         "end_date_fact": end_date_fact,
         "taux_ca_min": taux_ca_min,
         "taux_ca_max": taux_ca_max,
+        "chiffre_aff_exe_dzd_min": chiffre_aff_exe_dzd_min,
+        "chiffre_aff_exe_dzd_max": chiffre_aff_exe_dzd_max,
+        "termine_flag": termine_flag,
+        "is_anomaly": is_anomaly,
         "search": search,
         "user_id": current_user.id
     }
@@ -2974,3 +3232,110 @@ async def download_revenue_export_file(task_id: str):
         media_type=media_type,
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@router.get("/dot-corporate/monthly")
+async def get_dot_corporate_monthly(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    dot_names: Optional[List[str]] = Query(None, description="Filter by DOT names"),
+    year: Optional[int] = Query(None, description="Filter by year (defaults to current year)")
+):
+    """
+    Get monthly DOT Corporate objectives aggregated by month
+    Returns monthly values from objectifs_monthly_dot table
+    Supports filtering by DOT names and year
+    Requires: can_view_analytics permission
+    """
+    PermissionService.require_permission(
+        current_user, db, "can_view_analytics")
+
+    try:
+        from datetime import datetime
+        from calendar import monthrange
+        
+        # Default to current year if not specified
+        if year is None:
+            year = datetime.utcnow().year
+        
+        # Build query
+        query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == year
+        )
+        
+        # Apply DOT filtering based on module-specific access
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        if accessible_dot_ids:
+            query = query.filter(RevenueDOTCorporate.dot_id.in_(accessible_dot_ids))
+        
+        # Apply DOT name filter if provided
+        if dot_names:
+            query = query.filter(RevenueDOTCorporate.dot_name.in_(dot_names))
+        
+        # Get all records
+        records = query.all()
+        
+        # Aggregate monthly values across all DOTs
+        monthly_totals = {
+            'january': 0.0,
+            'february': 0.0,
+            'march': 0.0,
+            'april': 0.0,
+            'may': 0.0,
+            'june': 0.0,
+            'july': 0.0,
+            'august': 0.0,
+            'september': 0.0,
+            'october': 0.0,
+            'november': 0.0,
+            'december': 0.0,
+        }
+        
+        for record in records:
+            if record.january:
+                monthly_totals['january'] += float(record.january)
+            if record.february:
+                monthly_totals['february'] += float(record.february)
+            if record.march:
+                monthly_totals['march'] += float(record.march)
+            if record.april:
+                monthly_totals['april'] += float(record.april)
+            if record.may:
+                monthly_totals['may'] += float(record.may)
+            if record.june:
+                monthly_totals['june'] += float(record.june)
+            if record.july:
+                monthly_totals['july'] += float(record.july)
+            if record.august:
+                monthly_totals['august'] += float(record.august)
+            if record.september:
+                monthly_totals['september'] += float(record.september)
+            if record.october:
+                monthly_totals['october'] += float(record.october)
+            if record.november:
+                monthly_totals['november'] += float(record.november)
+            if record.december:
+                monthly_totals['december'] += float(record.december)
+        
+        # Convert to format expected by frontend: { "YYYY-MM": value }
+        # Frontend expects month keys in format "YYYY-MM"
+        by_month_objective = {}
+        month_names = ['january', 'february', 'march', 'april', 'may', 'june',
+                      'july', 'august', 'september', 'october', 'november', 'december']
+        
+        for idx, month_name in enumerate(month_names, start=1):
+            month_key = f"{year}-{idx:02d}"
+            by_month_objective[month_key] = monthly_totals[month_name]
+        
+        return {
+            "year": year,
+            "by_month": by_month_objective,
+            "total": sum(monthly_totals.values()),
+            "dot_count": len(set(r.dot_name for r in records))
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting DOT Corporate monthly objectives: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

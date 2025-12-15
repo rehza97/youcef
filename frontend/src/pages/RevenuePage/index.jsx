@@ -42,6 +42,7 @@ import {
   getRevenueObjectivesPreview,
   getAccountDescriptionsPreview,
   getRevenueColumnValues,
+  getDotCorporateMonthly,
 } from "../../services/api";
 import {
   Table,
@@ -168,7 +169,7 @@ const ExcelFilter = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [tempSelected, setTempSelected] = useState(selected);
 
-  // Initialize tempSelected when dropdown opens
+  // Initialize tempSelected when dropdown opens or selected prop changes
   useEffect(() => {
     if (open) {
       setTempSelected(selected);
@@ -176,28 +177,68 @@ const ExcelFilter = ({
         onFetchValues();
       }
     }
-  }, [open, selected, values.length, loading, onFetchValues]);
+  }, [open, selected]); // Removed onFetchValues and other deps to avoid unnecessary re-renders
 
-  const filteredValues = values.filter((val) =>
-    val.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Fetch values when dropdown opens if needed
+  useEffect(() => {
+    if (open && values.length === 0 && !loading) {
+      onFetchValues();
+    }
+  }, [open, values.length, loading]); // onFetchValues removed to prevent infinite loops
 
-  const handleToggle = (value) => {
-    setTempSelected((prev) =>
-      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+  const filteredValues = useMemo(() => {
+    return values.filter((val) =>
+      val.toLowerCase().includes(searchTerm.toLowerCase())
     );
+  }, [values, searchTerm]);
+
+  // Check if all filtered values are selected (for Select All button)
+  const allFilteredSelected = useMemo(() => {
+    return (
+      filteredValues.length > 0 &&
+      filteredValues.every((val) => tempSelected.includes(val))
+    );
+  }, [filteredValues, tempSelected]);
+
+  // Check for unsaved changes (memoized to avoid recalculating on every render)
+  const hasUnsavedChanges = useMemo(() => {
+    if (tempSelected.length !== selected.length) return true;
+    const tempSet = new Set(tempSelected);
+    return selected.some((val) => !tempSet.has(val));
+  }, [tempSelected, selected]);
+
+  const handleToggle = (value, checked) => {
+    if (checked) {
+      // Add value if checked
+      setTempSelected((prev) =>
+        prev.includes(value) ? prev : [...prev, value]
+      );
+    } else {
+      // Remove value if unchecked
+      setTempSelected((prev) => prev.filter((v) => v !== value));
+    }
   };
 
   const handleSelectAll = () => {
-    if (tempSelected.length === filteredValues.length) {
-      setTempSelected([]);
+    if (allFilteredSelected) {
+      // Deselect only filtered values, keep others that aren't in current filter
+      setTempSelected((prev) =>
+        prev.filter((val) => !filteredValues.includes(val))
+      );
     } else {
-      setTempSelected([...filteredValues]);
+      // Select all filtered values, preserve existing selections
+      setTempSelected((prev) => {
+        const newSet = new Set(prev);
+        filteredValues.forEach((val) => newSet.add(val));
+        return Array.from(newSet);
+      });
     }
   };
 
   const handleApply = () => {
-    onFilterChange(tempSelected);
+    if (hasUnsavedChanges) {
+      onFilterChange(tempSelected);
+    }
     setOpen(false);
     setSearchTerm("");
   };
@@ -209,10 +250,19 @@ const ExcelFilter = ({
     setSearchTerm("");
   };
 
+  const handleOpenChange = (newOpen) => {
+    if (!newOpen && open) {
+      // When closing without applying, reset tempSelected to current selected (discard unsaved changes)
+      setTempSelected(selected);
+      setSearchTerm("");
+    }
+    setOpen(newOpen);
+  };
+
   const hasFilter = selected.length > 0;
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           className={`flex items-center gap-1 px-1 py-0.5 rounded hover:bg-gray-100 ${
@@ -249,14 +299,17 @@ const ExcelFilter = ({
           <button
             onClick={handleSelectAll}
             className="text-xs text-blue-600 hover:text-blue-800"
+            disabled={filteredValues.length === 0}
           >
-            {tempSelected.length === filteredValues.length &&
-            filteredValues.length > 0
+            {allFilteredSelected && filteredValues.length > 0
               ? "Tout désélectionner"
               : "Tout sélectionner"}
           </button>
           <span className="text-xs text-muted-foreground">
             {tempSelected.length} sélectionné(s)
+            {hasUnsavedChanges && (
+              <span className="ml-1 text-orange-600 font-semibold">•</span>
+            )}
           </span>
         </div>
         <div className="overflow-y-auto flex-1 max-h-64">
@@ -273,8 +326,9 @@ const ExcelFilter = ({
               <DropdownMenuCheckboxItem
                 key={value}
                 checked={tempSelected.includes(value)}
-                onCheckedChange={() => handleToggle(value)}
+                onCheckedChange={(checked) => handleToggle(value, checked)}
                 className="text-sm"
+                onSelect={(e) => e.preventDefault()} // Prevent dropdown from closing on select
               >
                 {value}
               </DropdownMenuCheckboxItem>
@@ -282,7 +336,7 @@ const ExcelFilter = ({
           )}
         </div>
         <DropdownMenuSeparator />
-        <div className="p-2 flex gap-2 justify-end border-t">
+        <div className="p-2 flex gap-2 justify-end border-t bg-muted/50">
           <Button
             variant="outline"
             size="sm"
@@ -291,7 +345,12 @@ const ExcelFilter = ({
           >
             Effacer
           </Button>
-          <Button size="sm" onClick={handleApply} className="h-7 text-xs">
+          <Button
+            size="sm"
+            onClick={handleApply}
+            className="h-7 text-xs font-semibold"
+            disabled={!hasUnsavedChanges}
+          >
             OK
           </Button>
         </div>
@@ -660,6 +719,9 @@ const RevenuePage = () => {
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
 
+  // Global year filter
+  const [globalYear, setGlobalYear] = useState(new Date().getFullYear());
+
   // Filter state
   const [filters, setFilters] = useState({
     org_name: [], // DOT names (multi-select)
@@ -701,6 +763,18 @@ const RevenuePage = () => {
   const [byMonth, setByMonth] = useState([]);
   const [byTauxCA, setByTauxCA] = useState([]);
 
+  // DOT Corporate monthly objectives state
+  const [dotCorporateMonthly, setDotCorporateMonthly] = useState({
+    by_month: {},
+    year: new Date().getFullYear(),
+    total: 0,
+    dot_count: 0,
+  });
+  const [dotCorporateFilters, setDotCorporateFilters] = useState({
+    dot_names: [],
+    year: new Date().getFullYear(),
+  });
+
   // Preview data state
   const [previewData, setPreviewData] = useState([]);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -728,15 +802,20 @@ const RevenuePage = () => {
 
     try {
       // Build filter params for API calls
+      // Apply global year filter to date ranges if not already set
+      const yearStart = `${globalYear}-01`;
+      const yearEnd = `${globalYear}-12`;
+
       const filterParams = {
         org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
         typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
         cpt_comptable:
           filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
-        start_date: filters.date_gl_start || undefined,
-        end_date: filters.date_gl_end || undefined,
-        start_date_fact: filters.date_fact_start || undefined,
-        end_date_fact: filters.date_fact_end || undefined,
+        // Use global year filter for date ranges if not explicitly set
+        start_date: filters.date_gl_start || yearStart,
+        end_date: filters.date_gl_end || yearEnd,
+        start_date_fact: filters.date_fact_start || yearStart,
+        end_date_fact: filters.date_fact_end || yearEnd,
         taux_ca_min: filters.taux_ca_min || undefined,
         taux_ca_max: filters.taux_ca_max || undefined,
         search: filters.search || undefined,
@@ -764,7 +843,7 @@ const RevenuePage = () => {
         all_filters: filterParams,
       });
 
-      // Load all data simultaneously
+      // Load all data simultaneously (DOT Corporate is loaded separately via useEffect)
       const [ovRes, orgRes, accRes, typeFactRes, monthRes, tauxCARes] =
         await Promise.all([
           getRevenueOverview(filterParams),
@@ -826,6 +905,37 @@ const RevenuePage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Refetch data when global year changes
+  useEffect(() => {
+    fetchData();
+  }, [globalYear]);
+
+  // Refetch DOT Corporate data when filters change
+  useEffect(() => {
+    const fetchDotCorporate = async () => {
+      try {
+        const res = await getDotCorporateMonthly({
+          dot_names:
+            dotCorporateFilters.dot_names.length > 0
+              ? dotCorporateFilters.dot_names
+              : undefined,
+          year: globalYear, // Use global year filter
+        });
+        setDotCorporateMonthly(
+          res.data || {
+            by_month: {},
+            year: globalYear,
+            total: 0,
+            dot_count: 0,
+          }
+        );
+      } catch (error) {
+        console.error("Error fetching DOT Corporate monthly data:", error);
+      }
+    };
+    fetchDotCorporate();
+  }, [dotCorporateFilters.dot_names, globalYear]); // Include globalYear in dependencies
+
   /**
    * Calculate global achievement rate
    */
@@ -839,26 +949,105 @@ const RevenuePage = () => {
 
   /**
    * CHART 1: C.A vs Objectif par mois
+   * Uses DOT Corporate monthly objectives from objectifs_monthly_dot table
+   * Combines revenue data (overview.by_month) with monthly objectives (dotCorporateMonthly.by_month)
+   * Normalizes month keys to "YYYY-MM" format to ensure proper deduplication
    */
   const monthlyChartData = useMemo(() => {
-    const months = [
-      ...new Set([
-        ...Object.keys(overview.by_month || {}),
-        ...Object.keys(overview.by_month_objective || {}),
-      ]),
+    // Normalize month keys to "YYYY-MM" format
+    const normalizeMonthKey = (key) => {
+      if (!key) return null;
+
+      // If already in YYYY-MM format, return as is
+      if (/^\d{4}-\d{2}$/.test(key)) {
+        return key;
+      }
+
+      // Try to parse as date string (e.g., "2025-01-01 00:00:00" or Date object string)
+      try {
+        const date = new Date(key);
+        if (!isNaN(date.getTime())) {
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, "0");
+          return `${year}-${month}`;
+        }
+      } catch (e) {
+        // If parsing fails, try to extract YYYY-MM from string
+        const match = key.match(/(\d{4})-(\d{2})/);
+        if (match) {
+          return `${match[1]}-${match[2]}`;
+        }
+      }
+
+      return null;
+    };
+
+    // Normalize and collect all month keys from both sources
+    const normalizedRevenueMonths = Object.keys(overview.by_month || {})
+      .map(normalizeMonthKey)
+      .filter(Boolean);
+
+    const normalizedObjectiveMonths = Object.keys(
+      dotCorporateMonthly.by_month || {}
+    )
+      .map(normalizeMonthKey)
+      .filter(Boolean);
+
+    // Combine and deduplicate month keys, then sort
+    const allMonths = [
+      ...new Set([...normalizedRevenueMonths, ...normalizedObjectiveMonths]),
     ].sort();
 
-    return months.map((month) => {
-      const date = new Date(month + "-01");
+    // Create a map of normalized keys to original keys for data lookup
+    const revenueKeyMap = {};
+    Object.keys(overview.by_month || {}).forEach((key) => {
+      const normalized = normalizeMonthKey(key);
+      if (normalized) {
+        revenueKeyMap[normalized] = key;
+      }
+    });
+
+    const objectiveKeyMap = {};
+    Object.keys(dotCorporateMonthly.by_month || {}).forEach((key) => {
+      const normalized = normalizeMonthKey(key);
+      if (normalized) {
+        objectiveKeyMap[normalized] = key;
+      }
+    });
+
+    // Map to chart data format - one entry per month
+    const chartData = allMonths.map((normalizedKey) => {
+      // Parse normalized month key (format: "YYYY-MM")
+      const [year, monthNum] = normalizedKey.split("-");
+      const date = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
       const monthName = date.toLocaleString("fr-FR", { month: "short" });
+
+      // Get values using original keys
+      const revenueKey = revenueKeyMap[normalizedKey];
+      const objectiveKey = objectiveKeyMap[normalizedKey];
 
       return {
         mois: monthName,
-        "Somme de_Chiffre d'affaires": overview.by_month[month] || 0,
-        "Somme de_Objectif C.A": overview.by_month_objective[month] || 0,
+        monthKey: normalizedKey, // Use normalized key
+        "Somme de_Chiffre d'affaires": revenueKey
+          ? overview.by_month[revenueKey] || 0
+          : 0,
+        "Somme de_Objectif C.A": objectiveKey
+          ? dotCorporateMonthly.by_month[objectiveKey] || 0
+          : 0,
       };
     });
-  }, [overview.by_month, overview.by_month_objective]);
+
+    // Final deduplication by month name (shouldn't be needed, but safety check)
+    const seen = new Set();
+    return chartData.filter((item) => {
+      if (seen.has(item.mois)) {
+        return false;
+      }
+      seen.add(item.mois);
+      return true;
+    });
+  }, [overview.by_month, dotCorporateMonthly.by_month]);
 
   /**
    * CHART 2: Description Cpt Comptable with percentages
@@ -1071,6 +1260,84 @@ const RevenuePage = () => {
     }
   };
 
+  // Export preview data with current filters
+  const handlePreviewExport = async () => {
+    if (previewTableType !== "journal") {
+      toast.error("L'export est disponible uniquement pour la table Journal");
+      return;
+    }
+
+    try {
+      setExporting(true);
+
+      // Build filter params - same as preview data filters
+      const filterParams = {
+        ...columnFilters, // Include all column-specific filters
+        org_name:
+          filters.org_name.length > 0
+            ? filters.org_name
+            : columnFilters.org_name || undefined,
+        typ_fact:
+          filters.typ_fact.length > 0
+            ? filters.typ_fact
+            : columnFilters.typ_fact || undefined,
+        cpt_comptable:
+          filters.cpt_comptable.length > 0
+            ? filters.cpt_comptable
+            : columnFilters.cpt_comptable || undefined,
+        start_date: filters.date_gl_start || undefined,
+        end_date: filters.date_gl_end || undefined,
+        start_date_fact: filters.date_fact_start || undefined,
+        end_date_fact: filters.date_fact_end || undefined,
+        taux_ca_min:
+          filters.taux_ca_min || columnFilters.taux_ca_min || undefined,
+        taux_ca_max:
+          filters.taux_ca_max || columnFilters.taux_ca_max || undefined,
+        search: filters.search || undefined,
+      };
+
+      // Remove undefined values
+      Object.keys(filterParams).forEach((key) => {
+        if (
+          filterParams[key] === undefined ||
+          (Array.isArray(filterParams[key]) &&
+            filterParams[key].length === 0) ||
+          filterParams[key] === ""
+        ) {
+          delete filterParams[key];
+        }
+      });
+
+      console.log(
+        "🚀 [PREVIEW EXPORT] Starting export with preview filters:",
+        filterParams
+      );
+
+      // Start async export with "both" mode to get normal + anomalies
+      const response = await startRevenueExport(filterParams, "both");
+
+      const taskId = response.data.task_id;
+
+      // Open progress dialog
+      setExportProgress({
+        isOpen: true,
+        taskId,
+        status: "processing",
+        progress: 0,
+        message: "Démarrage de l'export...",
+        filename: null,
+        downloadUrl: null,
+      });
+
+      toast.info("Export démarré en arrière-plan");
+    } catch (err) {
+      console.error("❌ Preview Export failed:", err);
+      toast.error("Erreur lors du démarrage de l'export");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // WebSocket listener for export progress
   useEffect(() => {
     const handleExportUpdate = (message) => {
@@ -1219,7 +1486,16 @@ const RevenuePage = () => {
     } finally {
       setPreviewLoading(false);
     }
-  }, [activeTab, previewTableType, previewPage, previewPageSize, filters]);
+  }, [
+    activeTab,
+    previewTableType,
+    previewPage,
+    previewPageSize,
+    filters,
+    columnFilters,
+    orderBy,
+    orderDirection,
+  ]);
 
   // Fetch column values for a specific column
   const fetchColumnValues = useCallback(
@@ -1300,6 +1576,39 @@ const RevenuePage = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Chiffre d'Affaire DOT Corporate</h1>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Global Year Filter */}
+          <div className="flex items-center gap-2">
+            <Label
+              htmlFor="global-year-filter"
+              className="text-sm whitespace-nowrap"
+            >
+              Année:
+            </Label>
+            <Select
+              value={globalYear.toString()}
+              onValueChange={(value) => {
+                const year = parseInt(value);
+                setGlobalYear(year);
+                // Update DOT Corporate filters year as well
+                setDotCorporateFilters((prev) => ({ ...prev, year }));
+                // Data will be refetched automatically via useEffect
+              }}
+            >
+              <SelectTrigger id="global-year-filter" className="w-28">
+                <SelectValue placeholder="Année" />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 5 }, (_, i) => {
+                  const year = new Date().getFullYear() - i;
+                  return (
+                    <SelectItem key={year} value={year.toString()}>
+                      {year}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
           <Button
             variant="outline"
             onClick={() => setShowFilters((s) => !s)}
@@ -1745,13 +2054,18 @@ const RevenuePage = () => {
             <CardContent>
               {monthlyChartData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={450}>
-                  <BarChart data={monthlyChartData} margin={{ bottom: 20 }}>
+                  <BarChart
+                    data={monthlyChartData}
+                    margin={{ bottom: 20 }}
+                    barCategoryGap="20%"
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
                     <XAxis
                       dataKey="mois"
                       angle={0}
                       textAnchor="middle"
                       style={{ fontSize: "12px" }}
+                      interval={0}
                     />
                     <YAxis
                       tickFormatter={(value) =>
@@ -1769,11 +2083,13 @@ const RevenuePage = () => {
                       dataKey="Somme de_Chiffre d'affaires"
                       fill={COLORS.primary}
                       radius={[4, 4, 0, 0]}
+                      name="Chiffre d'affaires"
                     />
                     <Bar
                       dataKey="Somme de_Objectif C.A"
                       fill={COLORS.secondary}
                       radius={[4, 4, 0, 0]}
+                      name="Objectif C.A"
                     />
                   </BarChart>
                 </ResponsiveContainer>
@@ -2137,6 +2453,27 @@ const RevenuePage = () => {
                   <div className="text-sm text-muted-foreground">
                     {formatNumber(previewTotal)} enregistrement(s) total
                   </div>
+                  {previewTableType === "journal" && (
+                    <Button
+                      onClick={handlePreviewExport}
+                      disabled={exporting || previewLoading}
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                    >
+                      {exporting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Export...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-4 w-4" />
+                          Exporter
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardHeader>

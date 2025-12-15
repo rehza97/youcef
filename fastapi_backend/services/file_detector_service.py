@@ -22,6 +22,7 @@ class KPIFileType(Enum):
     ENCAISSEMENT_AR_DOT = "encaissement_ar_dot"  # NEW: Specialized Encaissement AR DOT module
     CREANCE_PERIODIQUE = "creance_periodique"
     CREANCE_PERIODIQUE_DOT = "creance_periodique_dot"  # NEW: Specialized Créance Périodique DOT module
+    DOT_CORPORATE = "dot_corporate"  # NEW: DOT Corporate monthly revenue data
     ANOMALIE = "anomalie"
     UNKNOWN = "unknown"
 
@@ -148,6 +149,25 @@ class FileDetectorService:
                 ],
                 'min_matches': 7,
                 'keywords': ['creance', 'créance', 'periodique', 'cust_lev', 'dot']
+            },
+            KPIFileType.DOT_CORPORATE: {
+                'required': [
+                    'dot', 'd.o.t', 'direction',
+                    'jan', 'janvier', 'janv',
+                    'fév', 'février', 'fev', 'feb',
+                    'mars', 'mar',
+                    'avril', 'avr',
+                    'mai', 'may',
+                    'juin', 'jun',
+                    'juillet', 'jul',
+                    'aout', 'août', 'aug',
+                    'sept', 'septembre', 'sep',
+                    'oct', 'octobre',
+                    'nov', 'novembre',
+                    'déc', 'décembre', 'dec', 'decembre'
+                ],
+                'min_matches': 8,  # DOT + at least 7 month columns (high confidence)
+                'keywords': ['dot', 'jan', 'fév', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'sept', 'oct', 'nov', 'déc', 'month', 'mois']
             },
             KPIFileType.ANOMALIE: {
                 'required': [
@@ -582,6 +602,7 @@ class FileDetectorService:
             KPIFileType.ENCAISSEMENT_AR_DOT: 'EncaissementARDotETL',  # NEW: Specialized module
             KPIFileType.CREANCE_PERIODIQUE: 'CreancePeriodique ETL',
             KPIFileType.CREANCE_PERIODIQUE_DOT: 'CreancePeriodiqueDotETL',  # NEW: Specialized module
+            KPIFileType.DOT_CORPORATE: 'DotCorporateETL',  # NEW: DOT Corporate monthly revenue
             KPIFileType.ANOMALIE: None,  # Anomalies are output, not processed
             KPIFileType.UNKNOWN: None
         }
@@ -665,6 +686,15 @@ class FileDetectorService:
                 'generates_anomalies': False,
                 'estimated_processing_time': 'medium',
                 'notes': 'Applies 10 business rules for filtering and cleaning. Filters: Residential/Startup PME TPE/VIP-AT (CUST_LEV1), Scolaires/Convention/KMS/PME (CUST_LEV2), ADSL/FTTX/PSTN/VOIP/X25/XDSL (PRODUIT). Generates 5 aggregate views for dashboard.'
+            },
+            KPIFileType.DOT_CORPORATE: {
+                'name': 'Chiffre d\'Affaire DOT Corporate',
+                'description': 'Monthly revenue data by DOT',
+                'required_columns': ['dot', 'jan', 'fév', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'sept', 'oct', 'nov', 'déc'],
+                'processor': 'DotCorporateETL',
+                'generates_anomalies': False,
+                'estimated_processing_time': 'fast',
+                'notes': 'Monthly revenue figures by DOT. Automatically sets current year for filtering.'
             },
             KPIFileType.ANOMALIE: {
                 'name': 'Anomalie',

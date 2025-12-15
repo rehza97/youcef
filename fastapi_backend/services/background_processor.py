@@ -168,6 +168,11 @@ class BackgroundProcessor:
                     "💳 Routing to Créance Périodique DOT processor (CREANCE_PERIODIQUE detected)")
                 self._process_creance_periodique_dot_file(
                     task_id, file_path, file_id)
+            elif file_type == KPIFileType.DOT_CORPORATE:
+                # DOT Corporate monthly revenue file
+                logger.info("📊 Routing to DOT Corporate processor")
+                self._process_dot_corporate_file(
+                    task_id, file_path, file_id)
             else:
                 # Unknown or unsupported file type
                 error_msg = f"Unsupported file type: {file_type.value}. File cannot be processed."
@@ -520,6 +525,80 @@ class BackgroundProcessor:
 
         except Exception as e:
             logger.error(f"Error processing account descriptions: {e}")
+            task = self.active_tasks[task_id]
+            task["status"] = ProcessingStatus.FAILED
+            task["errors"].append(str(e))
+            task["end_time"] = datetime.utcnow()
+            self._send_websocket_update(task_id, {
+                "status": "failed",
+                "progress": 0,
+                "message": f"Processing failed: {str(e)}",
+                "errors_count": len(task["errors"])
+            })
+
+    def _process_dot_corporate_file(self, task_id: str, file_path: str, file_id: str):
+        """Process DOT Corporate monthly revenue file"""
+        try:
+            task = self.active_tasks[task_id]
+            db = SessionLocal()
+
+            try:
+                processor = RevenueDataProcessor(db)
+                result = processor.process_dot_corporate(
+                    file_path, file_upload_id=int(file_id))
+
+                if result["success"]:
+                    task["status"] = ProcessingStatus.COMPLETED
+                    task["saved_rows"] = result["saved_count"]
+                    task["processed_rows"] = result["processed_rows"]
+                    task["progress"] = 100
+                    task["end_time"] = datetime.utcnow()
+
+                    self._send_websocket_update(task_id, {
+                        "status": "completed",
+                        "progress": 100,
+                        "message": f"Processed {result['saved_count']} DOT Corporate records successfully",
+                        "saved_count": result["saved_count"],
+                        "errors_count": 0,
+                        "statistics": {
+                            "total_rows": result["processed_rows"],
+                            "saved_rows": result["saved_count"],
+                            "created_count": result.get("created_count", 0),
+                            "updated_count": result.get("updated_count", 0)
+                        }
+                    })
+                else:
+                    task["status"] = ProcessingStatus.FAILED
+                    task["errors"].append(result.get("error", "Unknown error"))
+                    task["progress"] = 0
+                    task["end_time"] = datetime.utcnow()
+
+                    self._send_websocket_update(task_id, {
+                        "status": "failed",
+                        "progress": 0,
+                        "message": f"Processing failed: {result.get('error', 'Unknown error')}",
+                        "errors_count": 1
+                    })
+
+            except Exception as e:
+                logger.error(f"❌ Error processing DOT Corporate file: {e}")
+                logger.exception(e)
+                task["status"] = ProcessingStatus.FAILED
+                task["errors"].append(str(e))
+                task["end_time"] = datetime.utcnow()
+
+                self._send_websocket_update(task_id, {
+                    "status": "failed",
+                    "progress": 0,
+                    "message": f"Error: {str(e)}",
+                    "errors_count": len(task["errors"])
+                })
+
+            finally:
+                db.close()
+
+        except Exception as e:
+            logger.error(f"Error processing DOT Corporate file: {e}")
             task = self.active_tasks[task_id]
             task["status"] = ProcessingStatus.FAILED
             task["errors"].append(str(e))
