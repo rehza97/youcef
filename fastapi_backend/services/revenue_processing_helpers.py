@@ -97,20 +97,65 @@ class RevenueProcessingHelpers:
         # Convert to datetime with dayfirst=True for French date format (dd/mm/yyyy)
         df[date_col] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
 
-        # Extract year
+        # Extract year from the journal table data
         years = df[date_col].dt.year.dropna()
         if len(years) == 0:
+            logger.warning("⚠️ No valid years found in Date GL column")
             return df
 
+        # Log all years found in the journal table
+        unique_years = sorted(years.unique())
+        year_counts = years.value_counts().sort_index()
+        logger.info(f"📅 Years found in journal table: {unique_years}")
+        logger.info(f"📅 Year distribution: {dict(year_counts)}")
+        
+        # Determine most recent year from the journal table data
         most_recent_year = years.max()
-        logger.info(f"Keeping only year {most_recent_year}")
+        logger.info(f"📅 Keeping only year {most_recent_year} (most recent year found in journal table)")
 
         original = len(df)
-        df = df[df[date_col].dt.year == most_recent_year]
+        
+        # Calculate CA sum lost from year filter
+        ca_col = RevenueProcessingHelpers._find_column(df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+        if ca_col:
+            try:
+                year_mask = df[date_col].dt.year == most_recent_year
+                valid_date_mask = df[date_col].notna()
+                filtered_mask = ~(year_mask & valid_date_mask)
+                filtered_rows = df[filtered_mask]
+                ca_numeric = pd.to_numeric(filtered_rows[ca_col], errors='coerce')
+                filtered_ca_sum = ca_numeric.sum()
+                if not pd.isna(filtered_ca_sum) and filtered_ca_sum != 0:
+                    logger.info(f"   💰 CA Sum lost from year filter: {filtered_ca_sum:,.2f} DZD")
+            except Exception as e:
+                logger.debug(f"   Could not calculate CA sum lost from year filter: {e}")
+        
+        # Filter: keep only rows with most recent year AND valid date (not NaT)
+        year_mask = df[date_col].dt.year == most_recent_year
+        valid_date_mask = df[date_col].notna()
+        
+        # Log detailed breakdown before filtering
+        if len(unique_years) > 1:
+            logger.info(f"📅 Filtering breakdown:")
+            for year in unique_years:
+                year_rows = (df[date_col].dt.year == year).sum()
+                logger.info(f"   - Year {year}: {year_rows} rows")
+            invalid_rows = (~valid_date_mask).sum()
+            if invalid_rows > 0:
+                logger.info(f"   - Invalid dates: {invalid_rows} rows")
+        
+        df = df[year_mask & valid_date_mask]
         filtered = original - len(df)
+        
         if filtered > 0:
-            logger.info(
-                f"Filtered {filtered} rows from older years")
+            logger.info(f"Filtered {filtered} rows from older years or with invalid dates")
+            # Log count of invalid dates
+            invalid_dates = (~valid_date_mask).sum()
+            if invalid_dates > 0:
+                logger.warning(f"   ⚠️ Found {invalid_dates} rows with invalid dates that were filtered")
+            # Log how many rows kept for the most recent year
+            kept_rows = (year_mask & valid_date_mask).sum()
+            logger.info(f"   ✅ Kept {kept_rows} rows from year {most_recent_year}")
 
         return df
 

@@ -40,15 +40,12 @@ class RevenueDataProcessor:
         from models.dot import MODULE_CHIFFRE_AFFAIRES
 
         # Use DOTService to create module-specific DOT
+        # DOTService already logs when creating new DOTs, so we don't need to log here
         dot = DOTService.get_or_create_dot(
             db=self.db,
             name=name,
             description=description,
             module=MODULE_CHIFFRE_AFFAIRES
-        )
-        logger.info(
-            f"✅ DOT '{name}' → ID: {dot.id}, Module: '{MODULE_CHIFFRE_AFFAIRES}', "
-            f"DB Name: '{dot.name}'"
         )
         return dot
 
@@ -78,29 +75,7 @@ class RevenueDataProcessor:
             stats = self._generate_statistics(df_processed)
 
             # Save to database
-            # Log Taux Change column before converting to dict
-            taux_change_col = self._find_column(df_processed, ['Taux Change', 'taux change', 'taux_change', 'TauxChange', 'Exchange Rate'])
-            if taux_change_col:
-                logger.info(f"📊 Found 'Taux Change' column: '{taux_change_col}'")
-                non_null_count = df_processed[taux_change_col].notna().sum()
-                logger.info(f"📊 Taux Change non-null values in processed DataFrame: {non_null_count}/{len(df_processed)}")
-                if non_null_count > 0:
-                    sample_values = df_processed[df_processed[taux_change_col].notna()][taux_change_col].head(10).tolist()
-                    logger.info(f"📊 Sample Taux Change values from DataFrame: {sample_values}")
-                else:
-                    logger.warning(f"⚠️ All Taux Change values are NaN in processed DataFrame!")
-            else:
-                logger.warning(f"⚠️ 'Taux Change' column not found in processed DataFrame!")
-                logger.info(f"   Available columns: {list(df_processed.columns)}")
-            
             processed_data = df_processed.to_dict('records')
-            
-            # Log Taux Change values after converting to dict
-            if taux_change_col:
-                taux_in_dict = [r.get(taux_change_col) for r in processed_data[:100] if taux_change_col in r and r.get(taux_change_col) is not None and not pd.isna(r.get(taux_change_col))]
-                logger.info(f"📊 Taux Change values in dict (first 100 records): {len(taux_in_dict)} non-null values found")
-                if taux_in_dict:
-                    logger.info(f"📊 Sample Taux Change values from dict: {taux_in_dict[:10]}")
             
             save_result = self._save_journal_to_database(
                 processed_data, file_upload_id, progress_callback)
@@ -785,20 +760,53 @@ class RevenueDataProcessor:
         """Apply all processing rules to revenue journal data (in order)"""
         original_count = len(df)
         logger.info(f"Starting revenue journal processing with {original_count} rows")
+        
+        # Track Chiffre Aff Exe Dzd sum at each step for debugging
+        def log_ca_sum(df, step_name):
+            ca_col = self._find_column(df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+            if ca_col:
+                try:
+                    # Ensure numeric values before summing
+                    ca_numeric = pd.to_numeric(df[ca_col], errors='coerce')
+                    ca_sum = ca_numeric.sum()
+                    ca_non_null = ca_numeric.notna().sum()
+                    ca_null = ca_numeric.isna().sum()
+                    ca_zero = (ca_numeric == 0).sum() if ca_non_null > 0 else 0
+                    # Format sum safely (handle NaN/None)
+                    if pd.isna(ca_sum):
+                        ca_sum_str = "NaN"
+                    else:
+                        ca_sum_str = f"{ca_sum:,.2f}"
+                    logger.info(f"   📊 {step_name}: CA Sum = {ca_sum_str}, Non-null = {ca_non_null}, NULL = {ca_null}, Zero = {ca_zero}")
+                    return ca_sum if not pd.isna(ca_sum) else None
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Error calculating CA sum at {step_name}: {e}")
+                    return None
+            return None
+        
+        initial_ca_sum = log_ca_sum(df, "Initial")
+
+        # 0. Remove header-like rows (rows that match expected column names)
+        df = self._filter_header_rows(df)
+        logger.info(f"After header row filter: {len(df)} rows")
+        log_ca_sum(df, "After header filter")
 
         # 1. Garder que le tableau (keep only table data - skip if needed)
 
         # 1a. CROSS-REFERENCING FIRST: Matcher avec Description Cpt Comptable
         df = self._match_account_descriptions(df)
         logger.info(f"Matched account descriptions")
+        log_ca_sum(df, "After account matching")
 
         # 1b. CROSS-REFERENCING FIRST: Matcher avec Objectif C.A
         df = self._match_revenue_objectives(df)
         logger.info(f"Matched revenue objectives")
+        log_ca_sum(df, "After objective matching")
 
         # 2. Org Name: Supprimer toutes les lignes contenant AT_SIEGE
         df = self._filter_at_siege(df)
         logger.info(f"After AT_SIEGE filter: {len(df)} rows")
+        log_ca_sum(df, "After AT_SIEGE filter")
 
         # 3. Org Name: Remplacer DOT_ par vide
         df = self._clean_org_name_dot(df)
@@ -818,13 +826,36 @@ class RevenueDataProcessor:
         # 7. Cpt Comptable : Supprimer toutes les lignes contenant la lettre A
         df = self._filter_cpt_comptable_with_a(df)
         logger.info(f"After Cpt Comptable filter: {len(df)} rows")
+        log_ca_sum(df, "After Cpt Comptable filter")
 
         # 8. Date GL : Garder les lignes ayant l'année la plus récente
-        df = self._keep_most_recent_year(df)
-        logger.info(f"After keeping most recent year: {len(df)} rows")
+        # NOTE: Year filter is now optional - it will log what years are found but won't filter by default
+        # Uncomment the line below to enable year filtering
+        # df = self._keep_most_recent_year(df)
+        
+        # Log year distribution without filtering
+        date_col = self._find_column(df, ['Date GL', 'gl date'])
+        if date_col:
+            try:
+                import pandas as pd
+                df_temp = df.copy()
+                df_temp[date_col] = pd.to_datetime(df_temp[date_col], errors='coerce', dayfirst=True)
+                years = df_temp[date_col].dt.year.dropna()
+                if len(years) > 0:
+                    unique_years = sorted(years.unique())
+                    year_counts = years.value_counts().sort_index()
+                    logger.info(f"📅 Years found in journal table (no filtering applied): {unique_years}")
+                    logger.info(f"📅 Year distribution: {dict(year_counts)}")
+                    logger.info(f"📅 Total rows across all years: {len(df)}")
+            except Exception as e:
+                logger.debug(f"Could not analyze year distribution: {e}")
+        
+        logger.info(f"After year filter (disabled): {len(df)} rows")
+        log_ca_sum(df, "After year filter (disabled)")
 
         # 9-13. Clean numeric fields (remove ".")
         df = self._clean_numeric_fields(df)
+        log_ca_sum(df, "After numeric cleaning")
 
         # 14. Mettre le séparateur de millier avec deux chiffres après la virgule
         # (This is for display/export, not for processing)
@@ -838,6 +869,42 @@ class RevenueDataProcessor:
         # 19. Ajouter une colonne Taux de réalisation C.A
         df = self._calculate_achievement_rate(df)
 
+        # 20. Remove duplicate rows based on key fields
+        df = self._remove_duplicate_rows(df)
+        logger.info(f"After duplicate removal: {len(df)} rows")
+        final_ca_sum = log_ca_sum(df, "After duplicate removal (FINAL)")
+
+        # 21. Validate final result - check for rows that should have been filtered
+        self._validate_filtered_data(df)
+        
+        # Log summary of CA sum changes
+        if initial_ca_sum is not None and final_ca_sum is not None:
+            try:
+                ca_loss = initial_ca_sum - final_ca_sum
+                ca_loss_pct = (ca_loss / initial_ca_sum * 100) if initial_ca_sum != 0 else 0
+                logger.info(f"📊 CA Sum Summary: Initial = {initial_ca_sum:,.2f}, Final = {final_ca_sum:,.2f}, Loss = {ca_loss:,.2f} ({ca_loss_pct:.2f}%)")
+            except (TypeError, ValueError) as e:
+                logger.warning(f"⚠️ Could not calculate CA sum summary: {e}")
+            
+            # Check for rows with NULL or zero CA values
+            ca_col = self._find_column(df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+            if ca_col:
+                null_ca = df[df[ca_col].isna()]
+                zero_ca = df[(df[ca_col] == 0) & df[ca_col].notna()]
+                if len(null_ca) > 0:
+                    logger.warning(f"⚠️ Found {len(null_ca)} rows with NULL Chiffre Aff Exe Dzd")
+                    org_col = self._find_column(df, ['Org Name', 'organisation'])
+                    for idx, row in null_ca.head(10).iterrows():
+                        org_name = row.get(org_col, 'N/A') if org_col else 'N/A'
+                        logger.warning(f"   Row {idx}: Org Name = '{org_name}', CA = NULL")
+                if len(zero_ca) > 0:
+                    logger.warning(f"⚠️ Found {len(zero_ca)} rows with ZERO Chiffre Aff Exe Dzd")
+                    if len(zero_ca) <= 20:
+                        org_col = self._find_column(df, ['Org Name', 'organisation'])
+                        for idx, row in zero_ca.head(10).iterrows():
+                            org_name = row.get(org_col, 'N/A') if org_col else 'N/A'
+                            logger.warning(f"   Row {idx}: Org Name = '{org_name}', CA = 0")
+
         self.filtered_count = original_count - len(df)
         logger.info(
             f"Processing complete: {len(df)} rows remaining, {self.filtered_count} filtered")
@@ -845,15 +912,42 @@ class RevenueDataProcessor:
         return df
 
     def _filter_at_siege(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Remove rows where Org Name contains 'AT_SIEGE'"""
+        """Remove rows where Org Name contains 'AT_SIEGE' (or variations)"""
         org_name_col = self._find_column(df, ['Org Name', 'organisation'])
         if org_name_col:
             original = len(df)
-            df = df[~df[org_name_col].astype(
-                str).str.contains('AT_SIEGE', case=False, na=False)]
+            # Check for various AT_SIEGE patterns: AT_SIEGE, AT-SIEGE, AT SIEGE, etc.
+            # Normalize by replacing separators and checking for "ATSIEGE" pattern
+            org_name_str = df[org_name_col].astype(str).str.upper()
+            # Replace common separators with nothing to normalize
+            normalized = org_name_str.str.replace(r'[_\s\-]+', '', regex=True)
+            # Check if normalized contains "ATSIEGE"
+            mask = normalized.str.contains('ATSIEGE', case=False, na=False)
+            filtered_count = mask.sum()
+
+            # Calculate CA sum lost from filtered rows
+            ca_col = self._find_column(df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+            if ca_col and filtered_count > 0:
+                try:
+                    filtered_rows = df.loc[mask]
+                    ca_numeric = pd.to_numeric(filtered_rows[ca_col], errors='coerce')
+                    filtered_ca_sum = ca_numeric.sum()
+                    if not pd.isna(filtered_ca_sum) and filtered_ca_sum != 0:
+                        logger.info(f"   💰 CA Sum lost from AT_SIEGE filter: {filtered_ca_sum:,.2f} DZD")
+                except Exception as e:
+                    logger.debug(f"   Could not calculate CA sum lost from AT_SIEGE filter: {e}")
+
+            # Capture sample before filtering
+            if filtered_count > 0 and filtered_count <= 10:
+                filtered_sample = df.loc[mask, org_name_col].head(5).tolist()
+
+            df = df[~mask]
             filtered = original - len(df)
             if filtered > 0:
-                logger.info(f"Filtered {filtered} rows containing AT_SIEGE")
+                logger.info(f"Filtered {filtered} rows containing AT_SIEGE (or variations)")
+                # Log sample of filtered rows for debugging
+                if filtered_count <= 10 and filtered_count > 0:
+                    logger.info(f"   Sample filtered Org Names: {filtered_sample}")
         return df
 
     def _clean_org_name_dot(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -942,13 +1036,41 @@ class RevenueDataProcessor:
             anomaly_reason = RevenueProcessingHelpers.detect_anomalies_in_row(
                 row, cpt_col, desc_col)
             if anomaly_reason:
+                # Store full row data as dictionary for complete export
+                # Use the actual DataFrame column names to preserve all data
+                full_row_data = {}
+                import json
+                import numpy as np
+                import pandas as pd
+                
+                # Iterate through all columns in the DataFrame to capture ALL data
+                for col_name in df.columns:
+                    value = row[col_name]
+                    # Convert any pandas/numpy types to native Python types for JSON serialization
+                    if pd.isna(value):
+                        full_row_data[col_name] = None
+                    elif isinstance(value, (np.integer, np.floating)):
+                        full_row_data[col_name] = float(value) if isinstance(value, np.floating) else int(value)
+                    elif isinstance(value, (pd.Timestamp, pd.DatetimeIndex)):
+                        full_row_data[col_name] = value.isoformat() if hasattr(value, 'isoformat') else str(value)
+                    elif isinstance(value, (pd.Series, pd.DataFrame)):
+                        # Skip nested DataFrames/Series
+                        continue
+                    else:
+                        full_row_data[col_name] = value
+                
+                # Also get key fields using column finder for backward compatibility
+                org_col = self._find_column(df, ['Org Name', 'organisation'])
+                n_fact_col = self._find_column(df, ['N Fact', 'invoice'])
+                
                 self.anomalies.append({
                     "type": "Chiffre d'Affaires AR DOT",
-                    "org_name": row.get(self._find_column(df, ['Org Name', 'organisation']), 'N/A'),
-                    "n_fact": row.get(self._find_column(df, ['N Fact', 'invoice']), 'N/A'),
+                    "org_name": row[org_col] if org_col and org_col in row.index else (full_row_data.get(org_col, 'N/A') if org_col else 'N/A'),
+                    "n_fact": row[n_fact_col] if n_fact_col and n_fact_col in row.index else (full_row_data.get(n_fact_col, 'N/A') if n_fact_col else 'N/A'),
                     "reason": anomaly_reason,
-                    "cpt_comptable": row.get(cpt_col, 'N/A'),
-                    "description": row.get(desc_col, 'N/A')
+                    "cpt_comptable": row[cpt_col] if cpt_col in row.index else full_row_data.get(cpt_col, 'N/A'),
+                    "description": row[desc_col] if desc_col in row.index else full_row_data.get(desc_col, 'N/A'),
+                    "full_row_data": full_row_data  # Store complete row data with ALL columns
                 })
                 anomaly_rows.append(idx)
 
@@ -960,6 +1082,21 @@ class RevenueDataProcessor:
         cpt_col = self._find_column(
             df, ['Cpt Comptable', 'compte comptable'])
         if cpt_col:
+            original = len(df)
+            ca_col = self._find_column(df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+            
+            # Calculate CA sum before filtering
+            if ca_col:
+                try:
+                    mask = df[cpt_col].astype(str).str.contains('A', case=False, na=False)
+                    filtered_rows = df[mask]
+                    ca_numeric = pd.to_numeric(filtered_rows[ca_col], errors='coerce')
+                    filtered_ca_sum = ca_numeric.sum()
+                    if not pd.isna(filtered_ca_sum) and filtered_ca_sum != 0:
+                        logger.info(f"   💰 CA Sum lost from Cpt Comptable filter: {filtered_ca_sum:,.2f} DZD")
+                except Exception as e:
+                    logger.debug(f"   Could not calculate CA sum lost from Cpt Comptable filter: {e}")
+            
             return RevenueProcessingHelpers.filter_cpt_comptable_with_a(df, cpt_col)
         return df
 
@@ -969,6 +1106,210 @@ class RevenueDataProcessor:
         date_col = self._find_column(df, ['Date GL', 'gl date'])
         if date_col:
             return RevenueProcessingHelpers.keep_most_recent_year(df, date_col)
+        return df
+
+    def _filter_header_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove rows that look like header rows (contain expected column names)"""
+        if len(df) == 0:
+            return df
+        
+        # Expected revenue journal column names (normalized)
+        expected_headers = [
+            'org name', 'origine', 'n fact', 'typ fact', 'date fact',
+            'n client', 'client', 'delai paie', 'devise', 'obj fact',
+            'cpt comptable', 'date facture gl', 'date gl', 'periode de facturation',
+            'reference', 'termine flag', 'tax amount', 'creer par', 'n ligne',
+            'description (ligne de produit)', 'uom', 'qte', 'prix uni', 'taux change',
+            'mnt ht', 'tax', 'mnt tax', 'mnt ttc', 'memo line id', 'chiffre aff exe dzd'
+        ]
+        
+        def normalize(s):
+            return str(s).strip().lower().replace('_', ' ').replace('-', ' ')
+        
+        def is_header_row(row):
+            """Check if a row looks like a header row"""
+            row_values = [normalize(str(val)) for val in row.values if pd.notna(val)]
+            # Count how many values match expected headers exactly or as substring
+            matches = sum(1 for val in row_values if any(header in val or val in header for header in expected_headers))
+            # Require at least 6 matches to be confident it's a header row (not legitimate data)
+            # Also check if most values are exact header matches (more strict)
+            exact_matches = sum(1 for val in row_values if val in expected_headers)
+            # If 6+ matches OR 4+ exact matches, it's likely a header row
+            return matches >= 6 or exact_matches >= 4
+        
+        original = len(df)
+        # Filter out rows that look like headers
+        mask = df.apply(is_header_row, axis=1)
+        filtered_count = mask.sum()
+        
+        # Capture sample before filtering
+        if filtered_count > 0 and filtered_count <= 10:
+            filtered_sample = df.loc[mask].head(5)
+            sample_org_names = filtered_sample.get(self._find_column(df, ['Org Name', 'organisation']), pd.Series()).tolist() if len(filtered_sample) > 0 else []
+        
+        df = df[~mask]
+        filtered = original - len(df)
+        
+        if filtered > 0:
+            logger.info(f"Filtered {filtered} header-like rows")
+            # Log sample of filtered rows for debugging
+            if filtered_count <= 10 and filtered_count > 0 and len(sample_org_names) > 0:
+                logger.info(f"   Sample filtered Org Names: {sample_org_names[:3]}")
+        
+        return df
+
+    def _validate_filtered_data(self, df: pd.DataFrame) -> None:
+        """Validate that no rows that should be filtered are still present"""
+        if len(df) == 0:
+            return
+        
+        issues_found = []
+        
+        # Check for header-like rows that slipped through
+        expected_headers = [
+            'org name', 'origine', 'n fact', 'typ fact', 'date fact',
+            'n client', 'client', 'delai paie', 'devise', 'obj fact',
+            'cpt comptable', 'date facture gl', 'date gl', 'periode de facturation',
+            'reference', 'termine flag', 'tax amount', 'creer par', 'n ligne',
+            'description (ligne de produit)', 'uom', 'qte', 'prix uni', 'taux change',
+            'mnt ht', 'tax', 'mnt tax', 'mnt ttc', 'memo line id', 'chiffre aff exe dzd'
+        ]
+        
+        def normalize(s):
+            return str(s).strip().lower().replace('_', ' ').replace('-', ' ')
+        
+        def is_header_row(row):
+            row_values = [normalize(str(val)) for val in row.values if pd.notna(val)]
+            matches = sum(1 for val in row_values if any(header in val or val in header for header in expected_headers))
+            exact_matches = sum(1 for val in row_values if val in expected_headers)
+            return matches >= 6 or exact_matches >= 4
+        
+        header_mask = df.apply(is_header_row, axis=1)
+        if header_mask.any():
+            header_rows = df[header_mask]
+            issues_found.append(f"Found {len(header_rows)} header-like rows that should have been filtered")
+            logger.warning(f"⚠️ VALIDATION: {issues_found[-1]}")
+            org_col = self._find_column(df, ['Org Name', 'organisation'])
+            for idx, row in header_rows.head(5).iterrows():
+                org_name = row.get(org_col, 'N/A') if org_col else 'N/A'
+                logger.warning(f"   Row {idx}: Org Name = '{org_name}', Row values: {list(row.values)[:5]}")
+        
+        # Check for AT_SIEGE variations
+        org_name_col = self._find_column(df, ['Org Name', 'organisation'])
+        if org_name_col:
+            org_name_str = df[org_name_col].astype(str).str.upper()
+            normalized = org_name_str.str.replace(r'[_\s\-]+', '', regex=True)
+            at_siege_mask = normalized.str.contains('ATSIEGE', case=False, na=False)
+            if at_siege_mask.any():
+                at_siege_rows = df[at_siege_mask]
+                issues_found.append(f"Found {len(at_siege_rows)} rows with AT_SIEGE variations")
+                logger.warning(f"⚠️ VALIDATION: {issues_found[-1]}")
+                for idx, row in at_siege_rows.head(5).iterrows():
+                    logger.warning(f"   Row {idx}: Org Name = '{row.get(org_name_col, 'N/A')}'")
+        
+        # Check for Cpt Comptable with 'A'
+        cpt_col = self._find_column(df, ['Cpt Comptable', 'compte comptable'])
+        if cpt_col:
+            cpt_with_a = df[cpt_col].astype(str).str.contains('A', case=False, na=False)
+            if cpt_with_a.any():
+                cpt_a_rows = df[cpt_with_a]
+                issues_found.append(f"Found {len(cpt_a_rows)} rows with 'A' in Cpt Comptable")
+                logger.warning(f"⚠️ VALIDATION: {issues_found[-1]}")
+                for idx, row in cpt_a_rows.head(5).iterrows():
+                    logger.warning(f"   Row {idx}: Cpt Comptable = '{row.get(cpt_col, 'N/A')}'")
+        
+        # Check for invalid dates or wrong year
+        date_col = self._find_column(df, ['Date GL', 'gl date'])
+        if date_col:
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce', dayfirst=True)
+            valid_years = df[date_col].dt.year.dropna()
+            if len(valid_years) > 0:
+                most_recent_year = valid_years.max()
+                wrong_year_mask = (df[date_col].dt.year != most_recent_year) & df[date_col].notna()
+                invalid_date_mask = df[date_col].isna()
+                
+                if wrong_year_mask.any():
+                    wrong_year_rows = df[wrong_year_mask]
+                    issues_found.append(f"Found {len(wrong_year_rows)} rows with wrong year (not {most_recent_year})")
+                    logger.warning(f"⚠️ VALIDATION: {issues_found[-1]}")
+                    for idx, row in wrong_year_rows.head(5).iterrows():
+                        logger.warning(f"   Row {idx}: Date GL = '{row.get(date_col, 'N/A')}'")
+                
+                if invalid_date_mask.any():
+                    invalid_date_rows = df[invalid_date_mask]
+                    issues_found.append(f"Found {len(invalid_date_rows)} rows with invalid dates")
+                    logger.warning(f"⚠️ VALIDATION: {issues_found[-1]}")
+                    for idx, row in invalid_date_rows.head(5).iterrows():
+                        logger.warning(f"   Row {idx}: Date GL = '{row.get(date_col, 'N/A')}'")
+        
+        # Check for duplicates that should have been removed
+        key_fields = []
+        field_mappings = [
+            ('Org Name', 'org_name'),
+            ('N Fact', 'n_fact'),
+            ('Typ Fact', 'typ_fact'),
+            ('N Ligne', 'n_ligne'),
+            ('Cpt Comptable', 'cpt_comptable'),
+            ('Date Fact', 'date_fact'),
+            ('Date GL', 'date_gl')
+        ]
+        
+        for file_col, _ in field_mappings:
+            col = self._find_column(df, [file_col])
+            if col:
+                key_fields.append(col)
+        
+        if key_fields:
+            duplicates = df.duplicated(subset=key_fields, keep=False)
+            if duplicates.any():
+                duplicate_rows = df[duplicates]
+                issues_found.append(f"Found {len(duplicate_rows)} duplicate rows that should have been removed")
+                logger.warning(f"⚠️ VALIDATION: {issues_found[-1]}")
+                # Group duplicates to show which ones are duplicates
+                duplicate_groups = df[duplicates].groupby(key_fields).size()
+                logger.warning(f"   Found {len(duplicate_groups)} groups of duplicates")
+                for (key_tuple, count) in duplicate_groups.head(5).items():
+                    logger.warning(f"   Duplicate group ({count} rows): {dict(zip(key_fields, key_tuple))}")
+        
+        if not issues_found:
+            logger.info("✅ VALIDATION: No filtering issues detected")
+        else:
+            logger.error(f"❌ VALIDATION FAILED: {len(issues_found)} issue(s) found")
+
+    def _remove_duplicate_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove duplicate rows based on key identifying fields"""
+        if len(df) == 0:
+            return df
+        
+        # Key fields that should uniquely identify a revenue journal entry
+        key_fields = []
+        field_mappings = [
+            ('Org Name', 'org_name'),
+            ('N Fact', 'n_fact'),
+            ('Typ Fact', 'typ_fact'),
+            ('N Ligne', 'n_ligne'),
+            ('Cpt Comptable', 'cpt_comptable'),
+            ('Date Fact', 'date_fact'),
+            ('Date GL', 'date_gl')
+        ]
+        
+        for file_col, _ in field_mappings:
+            col = self._find_column(df, [file_col])
+            if col:
+                key_fields.append(col)
+        
+        if not key_fields:
+            logger.warning("⚠️ Could not find key fields for duplicate detection, skipping deduplication")
+            return df
+        
+        original = len(df)
+        # Remove duplicates, keeping the first occurrence
+        df = df.drop_duplicates(subset=key_fields, keep='first')
+        filtered = original - len(df)
+        
+        if filtered > 0:
+            logger.info(f"Removed {filtered} duplicate rows based on key fields: {key_fields}")
+        
         return df
 
     def _clean_numeric_fields(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1215,17 +1556,31 @@ class RevenueDataProcessor:
             anomaly_file = f"{export_dir}Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}.xlsx"
             
             # Create anomalies DataFrame from detected anomalies
+            # Include ALL columns from the original row data
             anomalies_data = []
             for anomaly in self.anomalies:
-                anomalies_data.append({
-                    'Type Anomalie': anomaly.get('type', 'Chiffre d\'Affaires AR DOT'),
-                    'DOT (Org Name)': anomaly.get('org_name', 'N/A'),
-                    'N Fact': anomaly.get('n_fact', 'N/A'),
-                    'Cpt Comptable': anomaly.get('cpt_comptable', 'N/A'),
-                    'Description': anomaly.get('description', 'N/A'),
-                    'Raison Anomalie': anomaly.get('reason', 'N/A'),
-                    'Date Detection': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                })
+                # Start with full row data if available
+                row_data = anomaly.get('full_row_data', {})
+                
+                # Build record with all columns, starting with full row data
+                record = dict(row_data) if row_data else {}
+                
+                # Add/override with anomaly-specific fields
+                record['Type Anomalie'] = anomaly.get('type', 'Chiffre d\'Affaires AR DOT')
+                record['Raison Anomalie'] = anomaly.get('reason', 'N/A')
+                record['Date Detection'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Ensure key fields are present (use anomaly data if not in row_data)
+                if 'Org Name' not in record or not record['Org Name']:
+                    record['Org Name'] = anomaly.get('org_name', 'N/A')
+                if 'N Fact' not in record or not record['N Fact']:
+                    record['N Fact'] = anomaly.get('n_fact', 'N/A')
+                if 'Cpt Comptable' not in record or not record['Cpt Comptable']:
+                    record['Cpt Comptable'] = anomaly.get('cpt_comptable', 'N/A')
+                if 'Description (ligne de produit)' not in record or not record.get('Description (ligne de produit)'):
+                    record['Description (ligne de produit)'] = anomaly.get('description', 'N/A')
+                
+                anomalies_data.append(record)
             
             df_anomalies = pd.DataFrame(anomalies_data)
             
@@ -1260,16 +1615,27 @@ class RevenueDataProcessor:
     def _save_anomalies_to_database(self, anomalies_data: List[Dict], file_upload_id: int):
         """Save anomalies to RevenueAnomaly table"""
         try:
+            import json
             for anomaly_data in anomalies_data:
+                # Extract key fields (handle both 'Org Name' and 'DOT (Org Name)' formats)
+                org_name = anomaly_data.get('Org Name') or anomaly_data.get('DOT (Org Name)', '')
+                n_fact = anomaly_data.get('N Fact', '')
+                cpt_comptable = anomaly_data.get('Cpt Comptable', '')
+                description = anomaly_data.get('Description (ligne de produit)') or anomaly_data.get('Description', '')
+                
+                # Store full row data as JSON (excluding anomaly-specific fields that we'll add separately)
+                original_data_dict = {k: v for k, v in anomaly_data.items() 
+                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                
                 revenue_anomaly = RevenueAnomaly(
                     file_upload_id=file_upload_id,
-                    org_name=anomaly_data.get('DOT (Org Name)'),
-                    n_fact=anomaly_data.get('N Fact'),
-                    cpt_comptable=anomaly_data.get('Cpt Comptable'),
-                    description_ligne_de_produit=anomaly_data.get('Description'),
-                    anomaly_type=anomaly_data.get('Type Anomalie'),
-                    anomaly_reason=anomaly_data.get('Raison Anomalie'),
-                    original_data=str(anomaly_data)  # Store full data as JSON string
+                    org_name=org_name,
+                    n_fact=n_fact,
+                    cpt_comptable=cpt_comptable,
+                    description_ligne_de_produit=description,
+                    anomaly_type=anomaly_data.get('Type Anomalie', "Chiffre d'Affaires AR DOT"),
+                    anomaly_reason=anomaly_data.get('Raison Anomalie', ''),
+                    original_data=json.dumps(original_data_dict, default=str, ensure_ascii=False)  # Store full data as JSON string
                 )
                 self.db.add(revenue_anomaly)
             
@@ -1388,64 +1754,11 @@ class RevenueDataProcessor:
             errors = []
             
             logger.info(f"💾 Starting to save {len(records)} revenue journal records to database (file_upload_id={file_upload_id})")
-            if records:
-                logger.info(f"   📊 First record sample keys: {list(records[0].keys())[:20]}")
-            
-            # Log all Taux Change values from the file
-            taux_change_values = []
-            taux_change_column_names = ['Taux Change', 'Taux Change', 'taux_change', 'taux change', 'TauxChange', 'Exchange Rate', 'exchange rate']
-            for i, record in enumerate(records):
-                for col_name in taux_change_column_names:
-                    if col_name in record:
-                        value = record[col_name]
-                        if not pd.isna(value) and value is not None and str(value).strip() not in ['', 'nan', 'None', 'null']:
-                            taux_change_values.append((i+1, col_name, value, type(value).__name__))
-                        break
-            
-            if taux_change_values:
-                logger.info(f"📊 Found {len(taux_change_values)} records with Taux Change values:")
-                for idx, (row_num, col_name, val, val_type) in enumerate(taux_change_values[:50]):  # Log first 50
-                    logger.info(f"   Row {row_num}: '{col_name}' = {val} (type: {val_type})")
-                if len(taux_change_values) > 50:
-                    logger.info(f"   ... and {len(taux_change_values) - 50} more records with Taux Change values")
-            else:
-                logger.warning(f"⚠️ No Taux Change values found in any of the {len(records)} records!")
-                # Log what columns are actually available
-                if records:
-                    available_cols = [k for k in records[0].keys() if 'taux' in k.lower() or 'change' in k.lower() or 'rate' in k.lower() or 'exchange' in k.lower()]
-                    logger.info(f"   Available columns containing 'taux', 'change', 'rate', or 'exchange': {available_cols}")
-                    # Also check first few records for any column that might be Taux Change
-                    logger.info(f"   All columns in first record: {list(records[0].keys())}")
             
             for i, record in enumerate(records):
                 try:
-                    # Log original record data for first few records
-                    if i < 5:
-                        logger.info(f"📋 Processing record {i+1}/{len(records)}")
-                        logger.info(f"   Raw record keys: {list(record.keys())[:15]}")
-                        # Log critical fields from raw record
-                        for key in ['Date Fact', 'Date facture GL', 'Date GL', 'Periode de facturation', 
-                                   'Taux Change', 'Memo Line Id', 'Cpt Comptable']:
-                            if key in record:
-                                raw_val = record[key]
-                                # Check if it's NaN
-                                if pd.isna(raw_val):
-                                    logger.info(f"   {key}: NaN/empty (type: {type(raw_val).__name__})")
-                                else:
-                                    logger.info(f"   {key}: {raw_val} (type: {type(raw_val).__name__})")
-                    
                     mapped = map_revenue_journal_record(
                         record, file_upload_id)
-
-                    # Log mapped values for first few records
-                    if i < 5:
-                        logger.info(f"   ✅ Mapped values for record {i+1}:")
-                        date_fields = ['date_fact', 'date_facture_gl', 'date_gl']
-                        other_fields = ['periode_de_facturation', 'taux_change', 'memo_line_id', 'account_description_id']
-                        for field in date_fields + other_fields:
-                            value = mapped.get(field)
-                            status = "✅" if value is not None else "❌ MISSING"
-                            logger.info(f"      {status} {field}: {value}")
 
                     # Get or create DOT for Chiffre d'Affaires module
                     if mapped.get('org_name'):
@@ -1475,8 +1788,6 @@ class RevenueDataProcessor:
                     account_desc = record.get('Account_Description')
                     if account_desc and hasattr(account_desc, 'id'):
                         mapped['account_description_id'] = account_desc.id
-                        if i < 5:
-                            logger.info(f"   ✅ Matched AccountDescription ID: {account_desc.id} from Account_Description object")
                     elif account_desc is None:
                         # Try to match by cpt_comptable if Account_Description wasn't matched
                         if mapped.get('cpt_comptable'):
@@ -1485,25 +1796,6 @@ class RevenueDataProcessor:
                             ).first()
                             if account:
                                 mapped['account_description_id'] = account.id
-                                if i < 5:
-                                    logger.info(f"   ✅ Matched AccountDescription ID: {account.id} by cpt_comptable query")
-                            else:
-                                if i < 5:
-                                    logger.warning(f"   ⚠️ No AccountDescription found for cpt_comptable: {mapped.get('cpt_comptable')}")
-
-                    # Log missing fields for debugging
-                    missing_fields = []
-                    for field in ['date_fact', 'date_facture_gl', 'date_gl', 'periode_de_facturation', 'taux_change', 'memo_line_id', 'account_description_id']:
-                        if field not in mapped or mapped[field] is None:
-                            missing_fields.append(field)
-                    
-                    if missing_fields:
-                        if i < 5:
-                            logger.warning(f"   ⚠️ Record {i+1} missing fields: {missing_fields}")
-                        else:
-                            # Log periodically for records beyond first 5
-                            if i % 100 == 0:
-                                logger.warning(f"   ⚠️ Record {i+1} missing fields: {missing_fields}")
 
                     journal_entry = RevenueJournal(**mapped)
                     self.db.add(journal_entry)
@@ -1531,13 +1823,6 @@ class RevenueDataProcessor:
                 self.db.flush()
                 logger.info(f"🔄 Flushed session: {saved_count} records to save")
                 
-                # Verify objects are still in session before commit
-                pending_count = len([obj for obj in self.db.new if isinstance(obj, RevenueJournal)])
-                logger.info(f"📊 RevenueJournal objects pending in session: {pending_count}")
-                
-                if pending_count == 0 and saved_count > 0:
-                    logger.error(f"❌ CRITICAL: No RevenueJournal objects in session but saved_count={saved_count}! This indicates objects were lost.")
-                
                 self.db.commit()
                 logger.info(f"✅ Transaction committed successfully")
                 
@@ -1548,26 +1833,12 @@ class RevenueDataProcessor:
                 total_in_db = self.db.query(RevenueJournal).count()
                 logger.info(f"📊 Total revenue journal entries in database after commit: {total_in_db}")
                 
-                # Show journal entries from the file we just processed with detailed field logging
+                # Verify save by checking count
                 if file_upload_id:
-                    recent_journals = self.db.query(RevenueJournal).filter(
+                    saved_count_verify = self.db.query(RevenueJournal).filter(
                         RevenueJournal.file_upload_id == file_upload_id
-                    ).limit(5).all()
-                    logger.info(f"📋 Sample journal entries saved (file_upload_id={file_upload_id}): {len(recent_journals)} found")
-                    
-                    # Count records with taux_change values
-                    taux_change_count = self.db.query(RevenueJournal).filter(
-                        RevenueJournal.file_upload_id == file_upload_id,
-                        RevenueJournal.taux_change.isnot(None)
                     ).count()
-                    logger.info(f"📊 Taux Change statistics: {taux_change_count}/{saved_count} records have taux_change values")
-                    
-                    for journal in recent_journals:
-                        logger.info(f"   ✅ ID={journal.id}, org_name='{journal.org_name}', n_fact='{journal.n_fact}'")
-                        logger.info(f"      📅 Dates - date_fact={journal.date_fact}, date_facture_gl={journal.date_facture_gl}, date_gl={journal.date_gl}")
-                        logger.info(f"      📝 Other - periode_de_facturation='{journal.periode_de_facturation}', taux_change={journal.taux_change}, memo_line_id='{journal.memo_line_id}'")
-                        logger.info(f"      🔗 Relationships - account_description_id={journal.account_description_id}, revenue_objective_id={journal.revenue_objective_id}")
-                        logger.info(f"      💰 Financial - cpt_comptable='{journal.cpt_comptable}', chiffre_aff_exe_dzd={journal.chiffre_aff_exe_dzd}, mnt_ht={journal.mnt_ht}, mnt_ttc={journal.mnt_ttc}")
+                    logger.info(f"✅ Verified {saved_count_verify} records saved for file_upload_id={file_upload_id}")
                 else:
                     logger.warning(f"⚠️ No file_upload_id provided, cannot verify saved records")
                 

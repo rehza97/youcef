@@ -355,7 +355,7 @@ async def process_kpi_file_background(
             db,
             user_id=user_id,
             filename=f"File {file_id}",
-            error=str(e)
+            error_message=str(e)
         )
 
     finally:

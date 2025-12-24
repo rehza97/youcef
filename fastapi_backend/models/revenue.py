@@ -125,7 +125,21 @@ class AccountDescription(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     def __repr__(self):
-        return f"<AccountDescription(id={self.id}, cpt_comptable='{self.cpt_comptable}', description='{self.description_cpt_comptable}')>"
+        try:
+            # Try to access attributes - if detached, this will raise DetachedInstanceError
+            from sqlalchemy import inspect
+            insp = inspect(self)
+            if insp.detached:
+                # Object is detached from session, use only primary key
+                return f"<AccountDescription(id={self.id}) [detached]>"
+            # Object is attached, safe to access all attributes
+            return f"<AccountDescription(id={self.id}, cpt_comptable='{self.cpt_comptable}', description='{self.description_cpt_comptable}')>"
+        except Exception:
+            # Fallback if inspection or attribute access fails
+            try:
+                return f"<AccountDescription(id={self.id})>"
+            except Exception:
+                return f"<AccountDescription(id=N/A)>"
 
 
 class RevenueObjective(Base):

@@ -267,7 +267,14 @@ async def get_revenue_overview(
             db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
         )
         if accessible_dot_ids:
-            query = query.filter(RevenueJournal.dot_id.in_(accessible_dot_ids))
+            # Include records where dot_id is in accessible list OR dot_id is NULL
+            # This ensures records without assigned DOTs are still included in totals
+            query = query.filter(
+                or_(
+                    RevenueJournal.dot_id.in_(accessible_dot_ids),
+                    RevenueJournal.dot_id.is_(None)
+                )
+            )
 
         # Apply all filters using helper function
         query = apply_revenue_filters(
@@ -2213,6 +2220,40 @@ async def export_revenue_anomalies(
         current_user, db, "can_export_analytics")
 
     try:
+        desired_journal_cols = [
+            "Org Name",
+            "Origine",
+            "N Fact",
+            "Typ Fact",
+            "Date Fact",
+            "N Client",
+            "Client",
+            "Delai Paie",
+            "Devise",
+            "Obj Fact",
+            "Cpt Comptable",
+            "Date facture GL",
+            "Date GL",
+            "Periode de facturation",
+            "Reference",
+            "Termine Flag",
+            "Tax Amount",
+            "Creer Par",
+            "N Ligne",
+            "Description (ligne de produit)",
+            "Uom",
+            "Qte",
+            "Prix Uni",
+            "Taux Change",
+            "Mnt Ht",
+            "Tax",
+            "Mnt Tax",
+            "Mnt Ttc",
+            "Memo Line Id",
+            "Chiffre Aff Exe Dzd",
+        ]
+        anomaly_meta_cols = ["Type Anomalie", "Raison Anomalie", "Date Détection", "File Upload ID"]
+
         # Build query
         query = db.query(RevenueAnomaly)
 
@@ -2225,50 +2266,136 @@ async def export_revenue_anomalies(
         # Fetch all anomalies
         data = query.order_by(RevenueAnomaly.created_at.desc()).all()
 
-        # Convert to DataFrame - include ALL original columns
+        # Convert to DataFrame - include ALL columns matching normal export
         records = []
         for item in data:
-            # Start with original row data if available
+            # Start with original row data if available (to get all original columns)
+            record = {}
             if item.original_data:
                 try:
                     import json
                     original_row = json.loads(item.original_data)
-                    # Use original row data, but exclude anomaly-specific fields we'll add separately
+                    # Use ALL original row data, preserving ALL columns
+                    # Only exclude anomaly-specific fields we'll add separately
                     record = {k: v for k, v in original_row.items() 
-                             if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']}
-                except (json.JSONDecodeError, TypeError):
-                    # Fallback if JSON parsing fails
-                    record = {}
-            else:
-                record = {}
+                             if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                except (json.JSONDecodeError, TypeError) as e:
+                    # Legacy fallback: original_data may be stored as str(dict) (single quotes)
+                    try:
+                        import ast
+                        legacy_row = ast.literal_eval(item.original_data)
+                        if isinstance(legacy_row, dict):
+                            record = {k: v for k, v in legacy_row.items()
+                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                        else:
+                            logger.warning(f"Failed to parse original_data for anomaly {item.id}: {e}")
+                            record = {}
+                    except Exception:
+                        logger.warning(f"Failed to parse original_data for anomaly {item.id}: {e}")
+                        record = {}
             
-            # Add/override with database fields (these are the key identifiers)
-            record.update({
-                "ID": item.id,
-                "Org Name": item.org_name or record.get('Org Name'),
-                "N Fact": item.n_fact or record.get('N Fact'),
-                "Cpt Comptable": item.cpt_comptable or record.get('Cpt Comptable'),
-                "Description (ligne de produit)": item.description_ligne_de_produit or record.get('Description (ligne de produit)'),
-            })
+            # Helper function to safely get values with multiple key variations
+            def safe_get(record_dict, *keys, default=''):
+                """Try multiple key variations to get value"""
+                for key in keys:
+                    if key in record_dict:
+                        val = record_dict[key]
+                        # Return value if it's not None and not empty string
+                        if val is not None and val != '':
+                            return val
+                return default
+            
+            # Standardize key column names while preserving ALL other columns from original_data
+            # Only update fields that need standardization or are missing
+            standardized_updates = {}
+            
+            # Map common column name variations to standard names
+            column_mappings = {
+                'Org Name': ['Org Name', 'DOT (Org Name)', 'org_name'],
+                'Origine': ['Origine', 'origine'],
+                'N Fact': ['N Fact', 'n_fact'],
+                'Typ Fact': ['Typ Fact', 'typ_fact'],
+                'Date Fact': ['Date Fact', 'date_fact'],
+                'N Client': ['N Client', 'n_client'],
+                'Client': ['Client', 'client'],
+                'Delai Paie': ['Delai Paie', 'delai_paie'],
+                'Devise': ['Devise', 'devise'],
+                'Obj Fact': ['Obj Fact', 'obj_fact'],
+                'Cpt Comptable': ['Cpt Comptable', 'cpt_comptable'],
+                'Date Facture GL': ['Date Facture GL', 'Date facture GL', 'date_facture_gl'],
+                'Date GL': ['Date GL', 'date_gl'],
+                'Periode de Facturation': ['Periode de Facturation', 'Periode de facturation', 'periode_de_facturation'],
+                'Reference': ['Reference', 'reference'],
+                'Termine Flag': ['Termine Flag', 'termine_flag'],
+                'Tax Amount': ['Tax Amount', 'tax_amount'],
+                'Creer Par': ['Creer Par', 'creer_par'],
+                'N Ligne': ['N Ligne', 'n_ligne'],
+                'Description (ligne de produit)': ['Description (ligne de produit)', 'Description', 'description_ligne_de_produit'],
+                'Uom': ['Uom', 'uom'],
+                'Qte': ['Qte', 'qte'],
+                'Prix Uni': ['Prix Uni', 'prix_uni'],
+                'Taux Change': ['Taux Change', 'taux_change'],
+                'Mnt Ht': ['Mnt Ht', 'mnt_ht'],
+                'Tax': ['Tax', 'tax'],
+                'Mnt Tax': ['Mnt Tax', 'mnt_tax'],
+                'Mnt Ttc': ['Mnt Ttc', 'mnt_ttc'],
+                'Memo Line Id': ['Memo Line Id', 'memo_line_id'],
+                'Chiffre Aff Exe Dzd': ['Chiffre Aff Exe Dzd', 'chiffre_aff_exe_dzd'],
+                'TVA': ['TVA', 'tva'],
+                'Chiffre Aff Exe Dzd TTC': ['Chiffre Aff Exe Dzd TTC', 'chiffre_aff_exe_dzd_ttc'],
+                'Taux Réalisation CA (%)': ['Taux Réalisation CA (%)', 'Taux de réalisation C.A', 'taux_realisation_ca'],
+            }
+            
+            # Standardize column names while preserving values
+            for std_name, variations in column_mappings.items():
+                value = safe_get(record, *variations, default=None)
+                if value is not None:
+                    standardized_updates[std_name] = value
+                # Remove old variation keys to avoid duplicates
+                for var in variations[1:]:  # Skip first (standard) name
+                    if var in record:
+                        del record[var]
+            
+            # Update record with standardized names
+            record.update(standardized_updates)
+            
+            # Normalize some header names to match the journal export headers
+            if "Date Facture GL" in record and "Date facture GL" not in record:
+                record["Date facture GL"] = record.pop("Date Facture GL")
+            if "Periode de Facturation" in record and "Periode de facturation" not in record:
+                record["Periode de facturation"] = record.pop("Periode de Facturation")
+
+            # Ensure key fields are present (use database fields as fallback)
+            if 'ID' not in record or record.get('ID') is None:
+                record['ID'] = item.id
+            if 'Org Name' not in record or not record.get('Org Name'):
+                record['Org Name'] = item.org_name or ''
+            if 'N Fact' not in record or not record.get('N Fact'):
+                record['N Fact'] = item.n_fact or ''
+            if 'Cpt Comptable' not in record or not record.get('Cpt Comptable'):
+                record['Cpt Comptable'] = item.cpt_comptable or ''
+            if 'Description (ligne de produit)' not in record or not record.get('Description (ligne de produit)'):
+                record['Description (ligne de produit)'] = item.description_ligne_de_produit or ''
             
             # Add anomaly-specific fields at the end
             record["Type Anomalie"] = item.anomaly_type or "Chiffre d'Affaires AR DOT"
-            record["Raison Anomalie"] = item.anomaly_reason
-            record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else None
+            record["Raison Anomalie"] = item.anomaly_reason or ""
+            record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else ""
             record["File Upload ID"] = item.file_upload_id
+
+            # Ensure ALL desired journal columns exist (even if empty)
+            for col in desired_journal_cols:
+                record.setdefault(col, "")
             
             records.append(record)
 
-        # Create DataFrame and ensure consistent column order
+        # Create DataFrame with consistent column order matching normal export
         if records:
             df = pd.DataFrame(records)
-            # Order columns: original columns first, then anomaly-specific columns
-            original_cols = [col for col in df.columns 
-                           if col not in ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']]
-            anomaly_cols = ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']
-            # Reorder: original columns, then anomaly columns
-            all_cols = original_cols + [col for col in anomaly_cols if col in df.columns]
-            df = df[[col for col in all_cols if col in df.columns]]
+            ordered_cols = [c for c in desired_journal_cols if c in df.columns]
+            ordered_cols += [c for c in anomaly_meta_cols if c in df.columns]
+            remaining_cols = [c for c in df.columns if c not in ordered_cols]
+            df = df[ordered_cols + remaining_cols]
         else:
             df = pd.DataFrame()
 
@@ -2769,56 +2896,140 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                             "message": f"Processing anomaly record {idx:,} of {len(anomaly_data):,}..."
                         }))
 
-                    # Start with original row data if available (all 31 columns)
+                    # Start with original row data if available (all columns)
+                    record = {}
                     if item.original_data:
                         try:
                             import json
                             original_row = json.loads(item.original_data)
-                            # Use original row data, but exclude anomaly-specific fields we'll add separately
+                            # Use ALL original row data, preserving ALL columns
+                            # Only exclude anomaly-specific fields we'll add separately
                             record = {k: v for k, v in original_row.items()
-                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']}
-                        except (json.JSONDecodeError, TypeError):
-                            # Fallback if JSON parsing fails
-                            record = {}
-                    else:
-                        record = {}
+                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                        except (json.JSONDecodeError, TypeError) as e:
+                            # Legacy fallback: original_data may be stored as str(dict) (single quotes)
+                            try:
+                                import ast
+                                legacy_row = ast.literal_eval(item.original_data)
+                                if isinstance(legacy_row, dict):
+                                    record = {k: v for k, v in legacy_row.items()
+                                             if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                                else:
+                                    logger.warning(f"Failed to parse original_data for anomaly {item.id}: {e}")
+                                    record = {}
+                            except Exception:
+                                logger.warning(f"Failed to parse original_data for anomaly {item.id}: {e}")
+                                record = {}
 
-                    # Add/override with database fields (these are the key identifiers)
-                    record.update({
-                        "ID": item.id,
-                        "Org Name": item.org_name or record.get('Org Name'),
-                        "N Fact": item.n_fact or record.get('N Fact'),
-                        "Cpt Comptable": item.cpt_comptable or record.get('Cpt Comptable'),
-                        "Description (ligne de produit)": item.description_ligne_de_produit or record.get('Description (ligne de produit)'),
-                    })
+                    # Helper function to safely get values with multiple key variations
+                    def safe_get(record_dict, *keys, default=''):
+                        """Try multiple key variations to get value"""
+                        for key in keys:
+                            if key in record_dict:
+                                val = record_dict[key]
+                                if val is not None and val != '':
+                                    return val
+                        return default
+
+                    # Standardize key column names while preserving ALL other columns from original_data
+                    column_mappings = {
+                        'Org Name': ['Org Name', 'DOT (Org Name)', 'org_name'],
+                        'Origine': ['Origine', 'origine'],
+                        'N Fact': ['N Fact', 'n_fact'],
+                        'Typ Fact': ['Typ Fact', 'typ_fact'],
+                        'Date Fact': ['Date Fact', 'date_fact'],
+                        'N Client': ['N Client', 'n_client'],
+                        'Client': ['Client', 'client'],
+                        'Delai Paie': ['Delai Paie', 'delai_paie'],
+                        'Devise': ['Devise', 'devise'],
+                        'Obj Fact': ['Obj Fact', 'obj_fact'],
+                        'Cpt Comptable': ['Cpt Comptable', 'cpt_comptable'],
+                        'Date Facture GL': ['Date Facture GL', 'Date facture GL', 'date_facture_gl'],
+                        'Date GL': ['Date GL', 'date_gl'],
+                        'Periode de Facturation': ['Periode de Facturation', 'Periode de facturation', 'periode_de_facturation'],
+                        'Reference': ['Reference', 'reference'],
+                        'Termine Flag': ['Termine Flag', 'termine_flag'],
+                        'Tax Amount': ['Tax Amount', 'tax_amount'],
+                        'Creer Par': ['Creer Par', 'creer_par'],
+                        'N Ligne': ['N Ligne', 'n_ligne'],
+                        'Description (ligne de produit)': ['Description (ligne de produit)', 'Description', 'description_ligne_de_produit'],
+                        'Uom': ['Uom', 'uom'],
+                        'Qte': ['Qte', 'qte'],
+                        'Prix Uni': ['Prix Uni', 'prix_uni'],
+                        'Taux Change': ['Taux Change', 'taux_change'],
+                        'Mnt Ht': ['Mnt Ht', 'mnt_ht'],
+                        'Tax': ['Tax', 'tax'],
+                        'Mnt Tax': ['Mnt Tax', 'mnt_tax'],
+                        'Mnt Ttc': ['Mnt Ttc', 'mnt_ttc'],
+                        'Memo Line Id': ['Memo Line Id', 'memo_line_id'],
+                        'Chiffre Aff Exe Dzd': ['Chiffre Aff Exe Dzd', 'chiffre_aff_exe_dzd'],
+                        'TVA': ['TVA', 'tva'],
+                        'Chiffre Aff Exe Dzd TTC': ['Chiffre Aff Exe Dzd TTC', 'chiffre_aff_exe_dzd_ttc'],
+                        'Taux Réalisation CA (%)': ['Taux Réalisation CA (%)', 'Taux de réalisation C.A', 'taux_realisation_ca'],
+                    }
+                    
+                    # Standardize column names while preserving values
+                    standardized_updates = {}
+                    for std_name, variations in column_mappings.items():
+                        value = safe_get(record, *variations, default=None)
+                        if value is not None:
+                            standardized_updates[std_name] = value
+                        # Remove old variation keys to avoid duplicates
+                        for var in variations[1:]:  # Skip first (standard) name
+                            if var in record:
+                                del record[var]
+                    
+                    # Update record with standardized names
+                    record.update(standardized_updates)
+
+                    # Normalize some header names to match the journal export headers
+                    if "Date Facture GL" in record and "Date facture GL" not in record:
+                        record["Date facture GL"] = record.pop("Date Facture GL")
+                    if "Periode de Facturation" in record and "Periode de facturation" not in record:
+                        record["Periode de facturation"] = record.pop("Periode de Facturation")
+                    
+                    # Ensure key fields are present (use database fields as fallback)
+                    if 'ID' not in record or record.get('ID') is None:
+                        record['ID'] = item.id
+                    if 'Org Name' not in record or not record.get('Org Name'):
+                        record['Org Name'] = item.org_name or ''
+                    if 'N Fact' not in record or not record.get('N Fact'):
+                        record['N Fact'] = item.n_fact or ''
+                    if 'Cpt Comptable' not in record or not record.get('Cpt Comptable'):
+                        record['Cpt Comptable'] = item.cpt_comptable or ''
+                    if 'Description (ligne de produit)' not in record or not record.get('Description (ligne de produit)'):
+                        record['Description (ligne de produit)'] = item.description_ligne_de_produit or ''
 
                     # Add anomaly-specific fields at the end
                     record["Type Anomalie"] = item.anomaly_type or "Chiffre d'Affaires AR DOT"
-                    record["Raison Anomalie"] = item.anomaly_reason
+                    record["Raison Anomalie"] = item.anomaly_reason or ""
                     record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else ""
                     record["File Upload ID"] = item.file_upload_id
 
+                    # Ensure ALL desired journal columns exist (even if empty)
+                    for col in [
+                        "Org Name","Origine","N Fact","Typ Fact","Date Fact","N Client","Client","Delai Paie","Devise","Obj Fact",
+                        "Cpt Comptable","Date facture GL","Date GL","Periode de facturation","Reference","Termine Flag","Tax Amount",
+                        "Creer Par","N Ligne","Description (ligne de produit)","Uom","Qte","Prix Uni","Taux Change","Mnt Ht","Tax",
+                        "Mnt Tax","Mnt Ttc","Memo Line Id","Chiffre Aff Exe Dzd"
+                    ]:
+                        record.setdefault(col, "")
+
                     anomaly_records.append(record)
 
-                # Create DataFrame and ensure consistent column order
+                # Create DataFrame and ensure consistent column order matching normal export
                 if anomaly_records:
                     anomaly_df = pd.DataFrame(anomaly_records)
-                    # Define expected column order: original columns first, then anomaly-specific
-                    original_cols = [
-                        'Org Name', 'Origine', 'N Fact', 'Typ Fact', 'Date Fact',
-                        'N Client', 'Client', 'Delai Paie', 'Devise', 'Obj Fact',
-                        'Cpt Comptable', 'Date facture GL', 'Date GL', 'Periode de facturation',
-                        'Reference', 'Termine Flag', 'Tax Amount', 'Creer Par', 'N Ligne',
-                        'Description (ligne de produit)', 'Uom', 'Qte', 'Prix Uni', 'Taux Change',
-                        'Mnt Ht', 'Tax', 'Mnt Tax', 'Mnt Ttc', 'Memo Line Id',
-                        'Chiffre Aff Exe Dzd', 'TVA', 'Chiffre_Aff_Exe_Dzd_TTC',
-                        'Objectif_CA', 'Taux de réalisation C.A'
+                    desired_cols = [
+                        "Org Name","Origine","N Fact","Typ Fact","Date Fact","N Client","Client","Delai Paie","Devise","Obj Fact",
+                        "Cpt Comptable","Date facture GL","Date GL","Periode de facturation","Reference","Termine Flag","Tax Amount",
+                        "Creer Par","N Ligne","Description (ligne de produit)","Uom","Qte","Prix Uni","Taux Change","Mnt Ht","Tax",
+                        "Mnt Tax","Mnt Ttc","Memo Line Id","Chiffre Aff Exe Dzd"
                     ]
-                    anomaly_cols = ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']
-                    # Keep only columns that exist, in the defined order
-                    ordered_cols = [col for col in original_cols + anomaly_cols if col in anomaly_df.columns]
-                    # Add any remaining columns that weren't in our predefined lists
-                    remaining_cols = [col for col in anomaly_df.columns if col not in ordered_cols]
+                    meta_cols = ["Type Anomalie", "Raison Anomalie", "Date Détection", "File Upload ID"]
+                    ordered_cols = [c for c in desired_cols if c in anomaly_df.columns]
+                    ordered_cols += [c for c in meta_cols if c in anomaly_df.columns]
+                    remaining_cols = [c for c in anomaly_df.columns if c not in ordered_cols]
                     anomaly_df = anomaly_df[ordered_cols + remaining_cols]
                 else:
                     anomaly_df = pd.DataFrame()
@@ -2899,55 +3110,133 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                 data = anomaly_query.all()
                 records = []
                 for item in data:
-                    # Start with original row data if available (all 31 columns)
+                    # Start with original row data if available (all columns)
+                    record = {}
                     if item.original_data:
                         try:
                             import json
                             original_row = json.loads(item.original_data)
-                            # Use original row data, but exclude anomaly-specific fields we'll add separately
+                            # Use ALL original row data, but exclude anomaly-specific fields we'll add separately
                             record = {k: v for k, v in original_row.items()
-                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection']}
-                        except (json.JSONDecodeError, TypeError):
-                            # Fallback if JSON parsing fails
-                            record = {}
-                    else:
-                        record = {}
+                                     if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                        except (json.JSONDecodeError, TypeError) as e:
+                            # Legacy fallback: original_data may be stored as str(dict) (single quotes)
+                            try:
+                                import ast
+                                legacy_row = ast.literal_eval(item.original_data)
+                                if isinstance(legacy_row, dict):
+                                    record = {k: v for k, v in legacy_row.items()
+                                             if k not in ['Type Anomalie', 'Raison Anomalie', 'Date Detection', 'Date Détection']}
+                                else:
+                                    logger.warning(f"Failed to parse original_data for anomaly {item.id}: {e}")
+                                    record = {}
+                            except Exception:
+                                logger.warning(f"Failed to parse original_data for anomaly {item.id}: {e}")
+                                record = {}
 
-                    # Add/override with database fields (these are the key identifiers)
-                    record.update({
-                        "ID": item.id,
-                        "Org Name": item.org_name or record.get('Org Name'),
-                        "N Fact": item.n_fact or record.get('N Fact'),
-                        "Cpt Comptable": item.cpt_comptable or record.get('Cpt Comptable'),
-                        "Description (ligne de produit)": item.description_ligne_de_produit or record.get('Description (ligne de produit)'),
-                    })
+                    # Helper function to safely get values with multiple key variations
+                    def safe_get(record_dict, *keys, default=''):
+                        """Try multiple key variations to get value"""
+                        for key in keys:
+                            if key in record_dict:
+                                val = record_dict[key]
+                                if val is not None and val != '':
+                                    return val
+                        return default
+
+                    # Preserve ALL keys from original_data; only standardize names + fill missing keys
+                    column_mappings = {
+                        'Org Name': ['Org Name', 'DOT (Org Name)', 'org_name'],
+                        'Origine': ['Origine', 'origine'],
+                        'N Fact': ['N Fact', 'n_fact'],
+                        'Typ Fact': ['Typ Fact', 'typ_fact'],
+                        'Date Fact': ['Date Fact', 'date_fact'],
+                        'N Client': ['N Client', 'n_client'],
+                        'Client': ['Client', 'client'],
+                        'Delai Paie': ['Delai Paie', 'delai_paie'],
+                        'Devise': ['Devise', 'devise'],
+                        'Obj Fact': ['Obj Fact', 'obj_fact'],
+                        'Cpt Comptable': ['Cpt Comptable', 'cpt_comptable'],
+                        'Date Facture GL': ['Date Facture GL', 'Date facture GL', 'date_facture_gl'],
+                        'Date GL': ['Date GL', 'date_gl'],
+                        'Periode de Facturation': ['Periode de Facturation', 'Periode de facturation', 'periode_de_facturation'],
+                        'Reference': ['Reference', 'reference'],
+                        'Termine Flag': ['Termine Flag', 'termine_flag'],
+                        'Tax Amount': ['Tax Amount', 'tax_amount'],
+                        'Creer Par': ['Creer Par', 'creer_par'],
+                        'N Ligne': ['N Ligne', 'n_ligne'],
+                        'Description (ligne de produit)': ['Description (ligne de produit)', 'Description', 'description_ligne_de_produit'],
+                        'Uom': ['Uom', 'uom'],
+                        'Qte': ['Qte', 'qte'],
+                        'Prix Uni': ['Prix Uni', 'prix_uni'],
+                        'Taux Change': ['Taux Change', 'taux_change'],
+                        'Mnt Ht': ['Mnt Ht', 'mnt_ht'],
+                        'Tax': ['Tax', 'tax'],
+                        'Mnt Tax': ['Mnt Tax', 'mnt_tax'],
+                        'Mnt Ttc': ['Mnt Ttc', 'mnt_ttc'],
+                        'Memo Line Id': ['Memo Line Id', 'memo_line_id'],
+                        'Chiffre Aff Exe Dzd': ['Chiffre Aff Exe Dzd', 'chiffre_aff_exe_dzd'],
+                        'TVA': ['TVA', 'tva'],
+                        'Chiffre Aff Exe Dzd TTC': ['Chiffre Aff Exe Dzd TTC', 'chiffre_aff_exe_dzd_ttc'],
+                        'Taux Réalisation CA (%)': ['Taux Réalisation CA (%)', 'Taux de réalisation C.A', 'taux_realisation_ca'],
+                    }
+
+                    standardized_updates = {}
+                    for std_name, variations in column_mappings.items():
+                        value = safe_get(record, *variations, default=None)
+                        if value is not None:
+                            standardized_updates[std_name] = value
+                        for var in variations[1:]:
+                            if var in record:
+                                del record[var]
+                    record.update(standardized_updates)
+
+                    # Ensure key fields are present (DB fallback)
+                    record.setdefault("ID", item.id)
+                    if not record.get("Org Name"):
+                        record["Org Name"] = item.org_name or ""
+                    if not record.get("N Fact"):
+                        record["N Fact"] = item.n_fact or ""
+                    if not record.get("Cpt Comptable"):
+                        record["Cpt Comptable"] = item.cpt_comptable or ""
+                    if not record.get("Description (ligne de produit)"):
+                        record["Description (ligne de produit)"] = item.description_ligne_de_produit or ""
 
                     # Add anomaly-specific fields at the end
                     record["Type Anomalie"] = item.anomaly_type or "Chiffre d'Affaires AR DOT"
-                    record["Raison Anomalie"] = item.anomaly_reason
+                    record["Raison Anomalie"] = item.anomaly_reason or ""
                     record["Date Détection"] = item.created_at.strftime('%Y-%m-%d %H:%M:%S') if item.created_at else ""
                     record["File Upload ID"] = item.file_upload_id
 
+                    # Normalize some header names to match the journal export headers
+                    if "Date Facture GL" in record and "Date facture GL" not in record:
+                        record["Date facture GL"] = record.pop("Date Facture GL")
+                    if "Periode de Facturation" in record and "Periode de facturation" not in record:
+                        record["Periode de facturation"] = record.pop("Periode de Facturation")
+
+                    # Ensure ALL desired journal columns exist (even if empty)
+                    for col in [
+                        "Org Name","Origine","N Fact","Typ Fact","Date Fact","N Client","Client","Delai Paie","Devise","Obj Fact",
+                        "Cpt Comptable","Date facture GL","Date GL","Periode de facturation","Reference","Termine Flag","Tax Amount",
+                        "Creer Par","N Ligne","Description (ligne de produit)","Uom","Qte","Prix Uni","Taux Change","Mnt Ht","Tax",
+                        "Mnt Tax","Mnt Ttc","Memo Line Id","Chiffre Aff Exe Dzd"
+                    ]:
+                        record.setdefault(col, "")
+
                     records.append(record)
 
-                # Ensure consistent column order
+                # Ensure consistent column order matching normal export
                 if records:
                     df_temp = pd.DataFrame(records)
-                    # Define expected column order: original columns first, then anomaly-specific
-                    original_cols = [
-                        'Org Name', 'Origine', 'N Fact', 'Typ Fact', 'Date Fact',
-                        'N Client', 'Client', 'Delai Paie', 'Devise', 'Obj Fact',
-                        'Cpt Comptable', 'Date facture GL', 'Date GL', 'Periode de facturation',
-                        'Reference', 'Termine Flag', 'Tax Amount', 'Creer Par', 'N Ligne',
-                        'Description (ligne de produit)', 'Uom', 'Qte', 'Prix Uni', 'Taux Change',
-                        'Mnt Ht', 'Tax', 'Mnt Tax', 'Mnt Ttc', 'Memo Line Id',
-                        'Chiffre Aff Exe Dzd', 'TVA', 'Chiffre_Aff_Exe_Dzd_TTC',
-                        'Objectif_CA', 'Taux de réalisation C.A'
+                    desired_cols = [
+                        "Org Name","Origine","N Fact","Typ Fact","Date Fact","N Client","Client","Delai Paie","Devise","Obj Fact",
+                        "Cpt Comptable","Date facture GL","Date GL","Periode de facturation","Reference","Termine Flag","Tax Amount",
+                        "Creer Par","N Ligne","Description (ligne de produit)","Uom","Qte","Prix Uni","Taux Change","Mnt Ht","Tax",
+                        "Mnt Tax","Mnt Ttc","Memo Line Id","Chiffre Aff Exe Dzd"
                     ]
-                    anomaly_cols = ['ID', 'Type Anomalie', 'Raison Anomalie', 'Date Détection', 'File Upload ID']
-                    # Keep only columns that exist, in the defined order
-                    ordered_cols = [col for col in original_cols + anomaly_cols if col in df_temp.columns]
-                    # Add any remaining columns that weren't in our predefined lists
+                    meta_cols = ["Type Anomalie", "Raison Anomalie", "Date Détection", "File Upload ID"]
+                    ordered_cols = [col for col in desired_cols if col in df_temp.columns]
+                    ordered_cols += [col for col in meta_cols if col in df_temp.columns]
                     remaining_cols = [col for col in df_temp.columns if col not in ordered_cols]
                     records = df_temp[ordered_cols + remaining_cols].to_dict('records')
 
@@ -3239,12 +3528,23 @@ async def get_dot_corporate_monthly(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     dot_names: Optional[List[str]] = Query(None, description="Filter by DOT names"),
-    year: Optional[int] = Query(None, description="Filter by year (defaults to current year)")
+    org_name: Optional[List[str]] = Query(None, description="Filter by organization names (maps to dot_name)"),
+    typ_fact: Optional[List[str]] = Query(None, description="Filter by Type Fact"),
+    cpt_comptable: Optional[List[str]] = Query(None, description="Filter by Account Code"),
+    year: Optional[int] = Query(None, description="Filter by year (defaults to current year)"),
+    start_date: Optional[str] = Query(None, description="Filter by start date (YYYY-MM format)"),
+    end_date: Optional[str] = Query(None, description="Filter by end date (YYYY-MM format)"),
+    start_date_fact: Optional[str] = Query(None, description="Filter by start date fact (YYYY-MM format)"),
+    end_date_fact: Optional[str] = Query(None, description="Filter by end date fact (YYYY-MM format)"),
+    taux_ca_min: Optional[float] = Query(None, description="Filter by minimum achievement rate"),
+    taux_ca_max: Optional[float] = Query(None, description="Filter by maximum achievement rate"),
+    search: Optional[str] = Query(None, description="Search filter")
 ):
     """
     Get monthly DOT Corporate objectives aggregated by month
     Returns monthly values from objectifs_monthly_dot table
-    Supports filtering by DOT names and year
+    Applies ALL revenue filters to determine which DOTs to include
+    Only includes objectives for DOTs that have revenue data matching the filters
     Requires: can_view_analytics permission
     """
     PermissionService.require_permission(
@@ -3254,30 +3554,98 @@ async def get_dot_corporate_monthly(
         from datetime import datetime
         from calendar import monthrange
         
-        # Default to current year if not specified
-        if year is None:
-            year = datetime.utcnow().year
+        # Determine year from date filters or use provided/default year
+        filter_year = year
+        if start_date:
+            try:
+                filter_year = int(start_date.split('-')[0])
+            except (ValueError, IndexError):
+                pass
+        elif start_date_fact:
+            try:
+                filter_year = int(start_date_fact.split('-')[0])
+            except (ValueError, IndexError):
+                pass
         
-        # Build query
-        query = db.query(RevenueDOTCorporate).filter(
-            RevenueDOTCorporate.year == year
-        )
+        # Default to current year if not specified
+        if filter_year is None:
+            filter_year = datetime.utcnow().year
+        
+        # STEP 1: Apply ALL filters to revenue_journal table to find matching DOTs
+        # This ensures objectives only include DOTs that have revenue data matching ALL filters
+        revenue_query = db.query(RevenueJournal)
         
         # Apply DOT filtering based on module-specific access
         accessible_dot_ids = DOTService.get_user_accessible_dots(
             db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
         )
         if accessible_dot_ids:
+            revenue_query = revenue_query.filter(
+                or_(
+                    RevenueJournal.dot_id.in_(accessible_dot_ids),
+                    RevenueJournal.dot_id.is_(None)
+                )
+            )
+        
+        # Apply ALL revenue filters using helper function
+        revenue_query = apply_revenue_filters(
+            revenue_query,
+            org_name=org_name,
+            typ_fact=typ_fact,
+            cpt_comptable=cpt_comptable,
+            start_date=start_date,
+            end_date=end_date,
+            start_date_fact=start_date_fact,
+            end_date_fact=end_date_fact,
+            search=search
+        )
+        
+        # Get distinct DOT names/IDs that match ALL the filters
+        matching_dots = revenue_query.with_entities(
+            RevenueJournal.org_name,
+            RevenueJournal.dot_id
+        ).distinct().all()
+        
+        # Extract DOT names and IDs that match filters
+        matching_dot_names = set()
+        matching_dot_ids = set()
+        for dot_row in matching_dots:
+            if dot_row.org_name:
+                matching_dot_names.add(dot_row.org_name)
+            if dot_row.dot_id:
+                matching_dot_ids.add(dot_row.dot_id)
+        
+        # STEP 2: Build query for objectifs_monthly_dot table
+        # Filter to only include DOTs that have matching revenue data
+        query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == filter_year
+        )
+        
+        # Apply DOT access filtering
+        if accessible_dot_ids:
             query = query.filter(RevenueDOTCorporate.dot_id.in_(accessible_dot_ids))
         
-        # Apply DOT name filter if provided
-        if dot_names:
-            query = query.filter(RevenueDOTCorporate.dot_name.in_(dot_names))
+        # Filter by DOTs that match the revenue filters
+        # Only include objectives for DOTs that have revenue data matching ALL filters
+        if matching_dot_names or matching_dot_ids:
+            dot_filters = []
+            if matching_dot_names:
+                dot_filters.append(RevenueDOTCorporate.dot_name.in_(matching_dot_names))
+            if matching_dot_ids:
+                dot_filters.append(RevenueDOTCorporate.dot_id.in_(matching_dot_ids))
+            if dot_filters:
+                query = query.filter(or_(*dot_filters))
+        elif org_name or dot_names:
+            # If no matching dots found but explicit filters provided, use them directly
+            if dot_names:
+                query = query.filter(RevenueDOTCorporate.dot_name.in_(dot_names))
+            elif org_name:
+                query = query.filter(RevenueDOTCorporate.dot_name.in_(org_name))
         
-        # Get all records
+        # Get all records from objectifs_monthly_dot table
         records = query.all()
         
-        # Aggregate monthly values across all DOTs
+        # Aggregate monthly values across all DOTs (for backward compatibility)
         monthly_totals = {
             'january': 0.0,
             'february': 0.0,
@@ -3293,47 +3661,107 @@ async def get_dot_corporate_monthly(
             'december': 0.0,
         }
         
-        for record in records:
-            if record.january:
-                monthly_totals['january'] += float(record.january)
-            if record.february:
-                monthly_totals['february'] += float(record.february)
-            if record.march:
-                monthly_totals['march'] += float(record.march)
-            if record.april:
-                monthly_totals['april'] += float(record.april)
-            if record.may:
-                monthly_totals['may'] += float(record.may)
-            if record.june:
-                monthly_totals['june'] += float(record.june)
-            if record.july:
-                monthly_totals['july'] += float(record.july)
-            if record.august:
-                monthly_totals['august'] += float(record.august)
-            if record.september:
-                monthly_totals['september'] += float(record.september)
-            if record.october:
-                monthly_totals['october'] += float(record.october)
-            if record.november:
-                monthly_totals['november'] += float(record.november)
-            if record.december:
-                monthly_totals['december'] += float(record.december)
-        
-        # Convert to format expected by frontend: { "YYYY-MM": value }
-        # Frontend expects month keys in format "YYYY-MM"
-        by_month_objective = {}
+        # Build per-DOT monthly objectives
+        dots_data = {}
         month_names = ['january', 'february', 'march', 'april', 'may', 'june',
                       'july', 'august', 'september', 'october', 'november', 'december']
         
+        for record in records:
+            dot_key = f"{record.dot_name}_{record.dot_id or 'none'}"
+            
+            # Initialize DOT data if not exists
+            if dot_key not in dots_data:
+                dots_data[dot_key] = {
+                    'dot_name': record.dot_name,
+                    'dot_id': record.dot_id,
+                    'by_month': {}
+                }
+            
+            # Extract monthly values for this DOT
+            for idx, month_name in enumerate(month_names, start=1):
+                month_key = f"{filter_year}-{idx:02d}"
+                month_value = getattr(record, month_name, None)
+                
+                if month_value is not None:
+                    month_float = float(month_value)
+                    # Add to DOT's monthly objectives
+                    if month_key not in dots_data[dot_key]['by_month']:
+                        dots_data[dot_key]['by_month'][month_key] = 0.0
+                    dots_data[dot_key]['by_month'][month_key] += month_float
+                    
+                    # Add to aggregated totals
+                    monthly_totals[month_name] += month_float
+        
+        # Convert aggregated totals to format expected by frontend: { "YYYY-MM": value }
+        # Apply date range filters to include only months within the range
+        by_month_objective = {}
+        
+        # Determine date range for filtering months
+        start_month = None
+        end_month = None
+        
+        # Use start_date/end_date or start_date_fact/end_date_fact
+        date_filter_start = start_date or start_date_fact
+        date_filter_end = end_date or end_date_fact
+        
+        if date_filter_start:
+            try:
+                start_parts = date_filter_start.split('-')
+                if len(start_parts) >= 2:
+                    start_month = int(start_parts[1])  # Extract month number
+            except (ValueError, IndexError):
+                pass
+        
+        if date_filter_end:
+            try:
+                end_parts = date_filter_end.split('-')
+                if len(end_parts) >= 2:
+                    end_month = int(end_parts[1])  # Extract month number
+            except (ValueError, IndexError):
+                pass
+        
         for idx, month_name in enumerate(month_names, start=1):
-            month_key = f"{year}-{idx:02d}"
+            # Apply month filter if date range is specified
+            if start_month is not None and idx < start_month:
+                continue
+            if end_month is not None and idx > end_month:
+                continue
+            
+            month_key = f"{filter_year}-{idx:02d}"
             by_month_objective[month_key] = monthly_totals[month_name]
         
+        # Apply date filters to per-DOT monthly data as well
+        dots_list = []
+        for dot_data in dots_data.values():
+            filtered_by_month = {}
+            for month_key, value in dot_data['by_month'].items():
+                try:
+                    month_num = int(month_key.split('-')[1])
+                    # Apply month filter if date range is specified
+                    if start_month is not None and month_num < start_month:
+                        continue
+                    if end_month is not None and month_num > end_month:
+                        continue
+                    filtered_by_month[month_key] = value
+                except (ValueError, IndexError):
+                    # Include if we can't parse
+                    filtered_by_month[month_key] = value
+            
+            dots_list.append({
+                'dot_name': dot_data['dot_name'],
+                'dot_id': dot_data['dot_id'],
+                'by_month': filtered_by_month,
+                'total': sum(filtered_by_month.values())
+            })
+        
+        # Sort dots by dot_name for consistency
+        dots_list.sort(key=lambda x: x['dot_name'] or '')
+        
         return {
-            "year": year,
-            "by_month": by_month_objective,
+            "year": filter_year,
+            "by_month": by_month_objective,  # Aggregated totals (for backward compatibility)
             "total": sum(monthly_totals.values()),
-            "dot_count": len(set(r.dot_name for r in records))
+            "dots": dots_list  # Individual DOTs with their monthly objectives
         }
         
     except Exception as e:

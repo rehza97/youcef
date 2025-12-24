@@ -90,3 +90,5 @@ def downgrade():
                   table_name='revenue_dot_corporate')
     op.drop_table('revenue_dot_corporate')
 
+
+

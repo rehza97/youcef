@@ -1388,7 +1388,35 @@ export const getDotCorporateMonthly = (params = {}) => {
       : [params.dot_names]
     ).forEach((v) => query.append("dot_names", v));
   }
+  if (params.org_name) {
+    (Array.isArray(params.org_name)
+      ? params.org_name
+      : [params.org_name]
+    ).forEach((v) => query.append("org_name", v));
+  }
+  if (params.typ_fact) {
+    (Array.isArray(params.typ_fact)
+      ? params.typ_fact
+      : [params.typ_fact]
+    ).forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.cpt_comptable) {
+    (Array.isArray(params.cpt_comptable)
+      ? params.cpt_comptable
+      : [params.cpt_comptable]
+    ).forEach((v) => query.append("cpt_comptable", v));
+  }
   if (params.year) query.append("year", params.year);
+  if (params.start_date) query.append("start_date", params.start_date);
+  if (params.end_date) query.append("end_date", params.end_date);
+  if (params.start_date_fact)
+    query.append("start_date_fact", params.start_date_fact);
+  if (params.end_date_fact) query.append("end_date_fact", params.end_date_fact);
+  if (params.taux_ca_min !== undefined)
+    query.append("taux_ca_min", params.taux_ca_min);
+  if (params.taux_ca_max !== undefined)
+    query.append("taux_ca_max", params.taux_ca_max);
+  if (params.search) query.append("search", params.search);
   const qs = query.toString();
   return api.get(`/api/revenue/dot-corporate/monthly${qs ? `?${qs}` : ""}`);
 };
@@ -1953,6 +1981,11 @@ export const getRevenueJournals = (params = {}) => {
 
 export const getRevenueJournal = (journalId) => {
   return api.get(`/api/revenue/journal/${journalId}`);
+};
+
+// Get available years from revenue journal table
+export const getRevenueAvailableYears = () => {
+  return api.get("/api/revenue/available-years");
 };
 
 // ============================================================================

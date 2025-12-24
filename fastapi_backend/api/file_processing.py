@@ -175,7 +175,7 @@ async def process_file_background(file_id: int, user_id: int, task_id: str = Non
             db,
             user_id=user_id,
             filename=f"File {file_id}",
-            error=str(e)
+            error_message=str(e)
         )
         logger.info(f"📢 Error notification sent for file_id: {file_id}")
 

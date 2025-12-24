@@ -386,17 +386,14 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
 
         return default
 
-    # Maximum value for NUMERIC(15, 2): 9,999,999,999,999.99 (13 digits before decimal, 2 after)
+    # Maximum values for different NUMERIC precisions:
+    # NUMERIC(15, 2): 9,999,999,999,999.99 (13 digits before decimal, 2 after)
     MAX_NUMERIC_15_2 = 9999999999999.99
     MIN_NUMERIC_15_2 = -9999999999999.99
-    
-    # Maximum value for NUMERIC(15, 4): 99,999,999,999.9999 (11 digits before decimal, 4 after)
-    # This is used for qte (quantity) field
+    # NUMERIC(15, 4): 99,999,999,999.9999 (11 digits before decimal, 4 after)
     MAX_NUMERIC_15_4 = 99999999999.9999
     MIN_NUMERIC_15_4 = -99999999999.9999
-    
-    # Maximum value for NUMERIC(15, 6): 999,999,999.999999 (9 digits before decimal, 6 after)
-    # This is used for taux_change (exchange rate) field
+    # NUMERIC(15, 6): 999,999,999.999999 (9 digits before decimal, 6 after)
     MAX_NUMERIC_15_6 = 999999999.999999
     MIN_NUMERIC_15_6 = -999999999.999999
 
@@ -425,10 +422,10 @@ def map_revenue_journal_record(record: dict, file_upload_id: int = None) -> dict
         "n_ligne": safe_string(_get(["N Ligne", "line number"])),
         "description_ligne_de_produit": safe_string(_get(["Description (ligne de produit)", "product line description", "description ligne"])),
         "uom": safe_string(_get(["Uom", "unit of measure", "unite"])),
-        # qte uses NUMERIC(15, 4) in database, so it needs different validation
+        # qte is NUMERIC(15, 4) - must be < 10^11
         "qte": safe_float(_get(["Qte", "quantity", "quantite"]), max_value=MAX_NUMERIC_15_4, min_value=MIN_NUMERIC_15_4),
         "prix_uni": safe_float(_get(["Prix Uni", "unit price", "prix unitaire"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
-        # taux_change uses NUMERIC(15, 6) in database, so it needs different validation
+        # taux_change is NUMERIC(15, 6) - must be < 10^9
         "taux_change": safe_float(_get(["Taux Change", "exchange rate", "taux", "taux change", "taux_change", "tauxchange", "rate", "exchange"]), max_value=MAX_NUMERIC_15_6, min_value=MIN_NUMERIC_15_6),
         "mnt_ht": safe_float(_get(["Mnt Ht", "montant ht", "amount excluding tax"]), max_value=MAX_NUMERIC_15_2, min_value=MIN_NUMERIC_15_2),
         "tax": safe_string(_get(["Tax", "taxe"])),
@@ -486,17 +483,6 @@ def map_revenue_objective_record(record: dict, file_upload_id: int = None) -> di
         return default
 
     dot_name = safe_string(_get(["DOT", "dot name", "organisation"]))
-    
-    # Clean DOT name: remove separators (-, –, _) and DOT_ prefix
-    if dot_name:
-        import re
-        # Remove DOT_ prefix
-        dot_name = re.sub(r'^DOT[_\s]+', '', dot_name, flags=re.IGNORECASE)
-        # Replace -, – and _ with spaces
-        dot_name = dot_name.replace('-', ' ').replace('–', ' ').replace('_', ' ')
-        # Normalize whitespace
-        dot_name = re.sub(r'\s+', ' ', dot_name).strip()
-    
     objectif_ca = safe_float(_get(["Objectif C.A", "objectif", "objective", "target"]))
     
     # Log mapping for debugging

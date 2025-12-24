@@ -37,6 +37,7 @@ import {
   exportRevenueData,
   startRevenueExport,
   downloadRevenueExport,
+  getRevenueAvailableYears,
   getRevenueExportStatus,
   getRevenuePreviewData,
   getRevenueObjectivesPreview,
@@ -719,7 +720,11 @@ const RevenuePage = () => {
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
 
-  // Global year filter
+  // Available years from journal table
+  const [availableYears, setAvailableYears] = useState([]);
+  const [yearsLoading, setYearsLoading] = useState(true);
+
+  // Global year filter - initialize to current year, will be updated when years are fetched
   const [globalYear, setGlobalYear] = useState(new Date().getFullYear());
 
   // Filter state
@@ -765,7 +770,8 @@ const RevenuePage = () => {
 
   // DOT Corporate monthly objectives state
   const [dotCorporateMonthly, setDotCorporateMonthly] = useState({
-    by_month: {},
+    by_month: {}, // Aggregated monthly objectives
+    dots: [], // Individual DOTs with their monthly objectives (for filtering)
     year: new Date().getFullYear(),
     total: 0,
     dot_count: 0,
@@ -803,8 +809,9 @@ const RevenuePage = () => {
     try {
       // Build filter params for API calls
       // Apply global year filter to date ranges if not already set
-      const yearStart = `${globalYear}-01`;
-      const yearEnd = `${globalYear}-12`;
+      // COMMENTED OUT: Yearly global filter disabled
+      // const yearStart = `${globalYear}-01`;
+      // const yearEnd = `${globalYear}-12`;
 
       const filterParams = {
         org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
@@ -812,10 +819,11 @@ const RevenuePage = () => {
         cpt_comptable:
           filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
         // Use global year filter for date ranges if not explicitly set
-        start_date: filters.date_gl_start || yearStart,
-        end_date: filters.date_gl_end || yearEnd,
-        start_date_fact: filters.date_fact_start || yearStart,
-        end_date_fact: filters.date_fact_end || yearEnd,
+        // COMMENTED OUT: Yearly global filter disabled
+        start_date: filters.date_gl_start, // || yearStart,
+        end_date: filters.date_gl_end, // || yearEnd,
+        start_date_fact: filters.date_fact_start, // || yearStart,
+        end_date_fact: filters.date_fact_end, // || yearEnd,
         taux_ca_min: filters.taux_ca_min || undefined,
         taux_ca_max: filters.taux_ca_max || undefined,
         search: filters.search || undefined,
@@ -899,32 +907,81 @@ const RevenuePage = () => {
     }
   };
 
+  // Fetch available years from journal table
   useEffect(() => {
-    fetchFilters();
-    fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const fetchAvailableYears = async () => {
+      try {
+        setYearsLoading(true);
+        const response = await getRevenueAvailableYears();
+        const years = response.data || [];
+        setAvailableYears(years);
+
+        // Set default year to most recent year if available
+        if (years.length > 0) {
+          const mostRecentYear = years[0]; // Years are sorted descending
+          setGlobalYear(mostRecentYear);
+        }
+      } catch (error) {
+        console.error("Error fetching available years:", error);
+        // Fallback to current year if API fails
+        setAvailableYears([new Date().getFullYear()]);
+      } finally {
+        setYearsLoading(false);
+      }
+    };
+
+    fetchAvailableYears();
   }, []);
 
-  // Refetch data when global year changes
   useEffect(() => {
-    fetchData();
-  }, [globalYear]);
+    fetchFilters();
+    // Only fetch data after years are loaded to ensure correct year filter
+    if (!yearsLoading && availableYears.length > 0) {
+      fetchData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yearsLoading, availableYears]);
+
+  // COMMENTED OUT: Refetch data when global year changes
+  // useEffect(() => {
+  //   if (!yearsLoading) {
+  //     fetchData();
+  //   }
+  //   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // }, [globalYear, yearsLoading]);
 
   // Refetch DOT Corporate data when filters change
   useEffect(() => {
     const fetchDotCorporate = async () => {
       try {
+        // Apply ALL filters as revenue data to DOT Corporate monthly objectives
+        // This ensures objectives only include DOTs that have revenue data matching ALL filters
         const res = await getDotCorporateMonthly({
           dot_names:
             dotCorporateFilters.dot_names.length > 0
               ? dotCorporateFilters.dot_names
               : undefined,
-          year: globalYear, // Use global year filter
+          // Apply ALL revenue filters
+          org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
+          typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
+          cpt_comptable:
+            filters.cpt_comptable.length > 0
+              ? filters.cpt_comptable
+              : undefined,
+          start_date: filters.date_gl_start || undefined,
+          end_date: filters.date_gl_end || undefined,
+          start_date_fact: filters.date_fact_start || undefined,
+          end_date_fact: filters.date_fact_end || undefined,
+          taux_ca_min: filters.taux_ca_min || undefined,
+          taux_ca_max: filters.taux_ca_max || undefined,
+          search: filters.search || undefined,
+          // COMMENTED OUT: Yearly global filter disabled
+          // year: globalYear, // Use global year filter
         });
         setDotCorporateMonthly(
           res.data || {
-            by_month: {},
-            year: globalYear,
+            by_month: {}, // Aggregated monthly objectives
+            dots: [], // Individual DOTs with their monthly objectives
             total: 0,
             dot_count: 0,
           }
@@ -934,7 +991,19 @@ const RevenuePage = () => {
       }
     };
     fetchDotCorporate();
-  }, [dotCorporateFilters.dot_names, globalYear]); // Include globalYear in dependencies
+  }, [
+    dotCorporateFilters.dot_names,
+    filters.org_name,
+    filters.typ_fact,
+    filters.cpt_comptable,
+    filters.date_gl_start,
+    filters.date_gl_end,
+    filters.date_fact_start,
+    filters.date_fact_end,
+    filters.taux_ca_min,
+    filters.taux_ca_max,
+    filters.search,
+  ]); // Refetch when ANY filter changes
 
   /**
    * Calculate global achievement rate
@@ -1576,8 +1645,8 @@ const RevenuePage = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Chiffre d'Affaire DOT Corporate</h1>
         <div className="flex flex-wrap items-center gap-2">
-          {/* Global Year Filter */}
-          <div className="flex items-center gap-2">
+          {/* COMMENTED OUT: Global Year Filter */}
+          {/* <div className="flex items-center gap-2">
             <Label
               htmlFor="global-year-filter"
               className="text-sm whitespace-nowrap"
@@ -1598,17 +1667,24 @@ const RevenuePage = () => {
                 <SelectValue placeholder="Année" />
               </SelectTrigger>
               <SelectContent>
-                {Array.from({ length: 5 }, (_, i) => {
-                  const year = new Date().getFullYear() - i;
-                  return (
+                {yearsLoading ? (
+                  <SelectItem value="" disabled>
+                    Chargement...
+                  </SelectItem>
+                ) : availableYears.length > 0 ? (
+                  availableYears.map((year) => (
                     <SelectItem key={year} value={year.toString()}>
                       {year}
                     </SelectItem>
-                  );
-                })}
+                  ))
+                ) : (
+                  <SelectItem value={new Date().getFullYear().toString()}>
+                    {new Date().getFullYear()}
+                  </SelectItem>
+                )}
               </SelectContent>
             </Select>
-          </div>
+          </div> */}
           <Button
             variant="outline"
             onClick={() => setShowFilters((s) => !s)}

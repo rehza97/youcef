@@ -5,6 +5,7 @@ Handles file upload, processing, and data retrieval for revenue data
 
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Query, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import extract, distinct, or_
 from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
@@ -717,4 +718,65 @@ async def list_revenue_journals(
 
     except Exception as e:
         logger.error(f"Error listing revenue journals: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/available-years", response_model=List[int])
+async def get_available_years(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get list of available years from revenue journal table
+    Returns years sorted in descending order (most recent first)
+    Requires: can_view_analytics permission
+    """
+    try:
+        # Check permission
+        PermissionService.require_permission(current_user, db, "can_view_analytics")
+        
+        # Apply DOT filtering based on module-specific access
+        from services.dot_service import DOTService
+        from models import MODULE_CHIFFRE_AFFAIRES
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        
+        # Build query with DOT filtering
+        # Query RevenueJournal directly and extract years
+        query = db.query(RevenueJournal.date_gl).filter(
+            RevenueJournal.date_gl.isnot(None)
+        )
+        
+        # Apply DOT access filter
+        if accessible_dot_ids:
+            query = query.filter(
+                or_(
+                    RevenueJournal.dot_id.in_(accessible_dot_ids),
+                    RevenueJournal.dot_id.is_(None)
+                )
+            )
+        
+        # Get all dates, extract years, get unique values
+        dates = [row.date_gl for row in query.all() if row.date_gl is not None]
+        years_set = set()
+        for date_val in dates:
+            try:
+                if isinstance(date_val, date):
+                    years_set.add(date_val.year)
+                elif isinstance(date_val, datetime):
+                    years_set.add(date_val.year)
+            except (AttributeError, TypeError):
+                continue
+        
+        # Convert to sorted list (descending)
+        years = sorted(years_set, reverse=True)
+        
+        logger.info(f"Found {len(years)} available years: {years}")
+        return years
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching available years: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -298,7 +298,8 @@ class FileProcessingService:
                 "anomalies": anomalies,
                 "statistics": statistics
             }
-            logger.info(f"📋 Processing results: {result}")
+            # Log summary instead of full result to avoid DetachedInstanceError with SQLAlchemy objects
+            logger.info(f"📋 Processing results: file_id={file_id}, status=completed, total_rows={total_rows}, processed_rows={processed_rows}, errors={len(errors) if errors else 0}, anomalies={len(anomalies) if anomalies else 0}")
             return result
 
         except Exception as e:
