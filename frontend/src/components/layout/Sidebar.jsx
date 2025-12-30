@@ -29,7 +29,7 @@ const Sidebar = () => {
     { name: "Parc Corporate NGBSS", href: "/encaissement", icon: BarChart3 },
     { name: "Chiffre d'Affaires AR DOT", href: "/revenue", icon: BarChart3 },
     {
-      name: "Encaissement AR DOT",
+      name: "Encaissement et créance AR DOT",
       href: "/encaissement-ar-dot",
       icon: BarChart3,
     },

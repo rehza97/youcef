@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 Fix existing revenue_journal records to link revenue_objective_id and calculate taux_realisation_ca
+
+UPDATED: Now uses RevenueDOTCorporate (monthly objectives) instead of RevenueObjective
+Calculates monthly achievement rates based on date_gl month.
 """
 
 import sys
@@ -10,8 +13,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from database.connection import SessionLocal
-from models.revenue import RevenueJournal, RevenueObjective
+from models.revenue import RevenueJournal, RevenueDOTCorporate
 from sqlalchemy import func
+from datetime import datetime
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -19,11 +23,18 @@ logger = logging.getLogger(__name__)
 
 
 def fix_revenue_objectives():
-    """Fix revenue_objective_id and taux_realisation_ca for existing records"""
+    """
+    Fix revenue_objective_id and taux_realisation_ca for existing records
+
+    Uses RevenueDOTCorporate (monthly objectives) and calculates monthly achievement rates.
+    """
     db = SessionLocal()
     try:
-        # Get all revenue objectives
-        objectives = db.query(RevenueObjective).all()
+        # Get all revenue objectives (from monthly objectives table)
+        current_year = datetime.utcnow().year
+        objectives = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
         objective_map = {obj.dot_name.upper().strip(): obj for obj in objectives}
 
         logger.info(f"📋 Found {len(objectives)} revenue objectives")
@@ -59,15 +70,21 @@ def fix_revenue_objectives():
             if objective:
                 record.revenue_objective_id = objective.id
 
-                # Calculate achievement rate
-                if record.chiffre_aff_exe_dzd and objective.objectif_ca:
+                # Calculate monthly achievement rate (CA / Monthly Objective)
+                if record.chiffre_aff_exe_dzd and record.date_gl:
                     try:
                         ca = float(record.chiffre_aff_exe_dzd)
-                        objectif = float(objective.objectif_ca)
-                        if objectif != 0:
-                            record.taux_realisation_ca = (ca / objectif) * 100
-                    except (ValueError, TypeError):
-                        pass
+                        # Extract month from date_gl
+                        month_num = record.date_gl.month if hasattr(record.date_gl, 'month') else None
+
+                        if month_num:
+                            # Get month-specific objective
+                            monthly_objective = objective.get_month_objective(month_num)
+                            if monthly_objective and monthly_objective != 0:
+                                record.taux_realisation_ca = (ca / monthly_objective) * 100
+                                logger.debug(f"   📊 {record.org_name} Month {month_num}: {ca} / {monthly_objective} = {record.taux_realisation_ca:.2f}%")
+                    except (ValueError, TypeError, AttributeError) as e:
+                        logger.warning(f"   ⚠️ Error calculating monthly achievement rate: {e}")
 
                 updated_count += 1
 

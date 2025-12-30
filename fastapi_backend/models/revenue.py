@@ -79,9 +79,10 @@ class RevenueJournal(Base):
     account_description_id = Column(Integer, ForeignKey("account_descriptions.id"), nullable=True)
     account_description = relationship("AccountDescription", back_populates="revenue_journals")
 
-    # Foreign key to RevenueObjective
-    revenue_objective_id = Column(Integer, ForeignKey("revenue_objectives.id"), nullable=True)
-    revenue_objective = relationship("RevenueObjective", back_populates="revenue_journals")
+    # Foreign key to RevenueDOTCorporate (monthly objectives)
+    # Note: Renamed from revenue_objectives to objectifs_monthly_dot for month-specific tracking
+    revenue_objective_id = Column(Integer, ForeignKey("objectifs_monthly_dot.id"), nullable=True)
+    revenue_objective = relationship("RevenueDOTCorporate", back_populates="revenue_journals")
 
     # Anomaly flag
     is_anomaly = Column(Boolean, default=False, index=True)
@@ -144,8 +145,11 @@ class AccountDescription(Base):
 
 class RevenueObjective(Base):
     """
-    Revenue Objectives - Objectif C.A.xlsx
-    Stores revenue targets by DOT
+    DEPRECATED: Revenue Objectives - Objectif C.A.xlsx
+    Stores revenue targets by DOT (ANNUAL objectives only)
+
+    This model is deprecated. Use RevenueDOTCorporate for monthly objectives instead.
+    Kept for reference and backward compatibility.
     """
     __tablename__ = "revenue_objectives"
 
@@ -163,8 +167,9 @@ class RevenueObjective(Base):
     dot_name = Column(String(200), nullable=False, index=True)  # DOT name
     objectif_ca = Column(Numeric(15, 2), nullable=False)  # Revenue objective
 
-    # Relationship back to revenue journals
-    revenue_journals = relationship("RevenueJournal", back_populates="revenue_objective")
+    # Relationship back to revenue journals - REMOVED after migration to monthly objectives
+    # revenue_journals now points to RevenueDOTCorporate (objectifs_monthly_dot table)
+    # revenue_journals = relationship("RevenueJournal", back_populates="revenue_objective")
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -224,6 +229,9 @@ class RevenueDOTCorporate(Base):
     dot_id = Column(Integer, ForeignKey("dots.id"), nullable=True, index=True)
     dot = relationship("DOT", back_populates="revenue_dot_corporate")
 
+    # Relationship back to revenue journals
+    revenue_journals = relationship("RevenueJournal", back_populates="revenue_objective")
+
     # DOT name
     dot_name = Column(String(200), nullable=False, index=True)
 
@@ -247,6 +255,41 @@ class RevenueDOTCorporate(Base):
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def annual_objective(self) -> float:
+        """
+        Calculate annual objective from sum of monthly values.
+        Returns the sum of all 12 monthly objectives.
+        """
+        months = [
+            self.january, self.february, self.march, self.april,
+            self.may, self.june, self.july, self.august,
+            self.september, self.october, self.november, self.december
+        ]
+        return sum(float(m or 0) for m in months)
+
+    def get_month_objective(self, month_num: int) -> float:
+        """
+        Get objective for specific month (1-12).
+
+        Args:
+            month_num: Month number (1=January, 12=December)
+
+        Returns:
+            Objective value for that month, or 0.0 if invalid month
+        """
+        month_names = [
+            'january', 'february', 'march', 'april', 'may', 'june',
+            'july', 'august', 'september', 'october', 'november', 'december'
+        ]
+
+        if not 1 <= month_num <= 12:
+            return 0.0
+
+        month_attr = month_names[month_num - 1]
+        value = getattr(self, month_attr, None)
+        return float(value or 0)
 
     def __repr__(self):
         return f"<RevenueDOTCorporate(id={self.id}, dot_name='{self.dot_name}', year={self.year}, total={self.december})>"

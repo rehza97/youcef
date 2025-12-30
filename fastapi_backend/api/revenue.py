@@ -528,26 +528,32 @@ async def list_revenue_objectives(
     file_upload_id: Optional[int] = Query(None, description="Filter by file upload ID")
 ):
     """
-    List all revenue objectives
+    List all revenue objectives (now sourced from RevenueDOTCorporate with monthly details)
     Requires: can_view_analytics permission
     """
     PermissionService.require_permission(
         current_user, db, "can_view_analytics")
 
     try:
-        query = db.query(RevenueObjective)
+        from models.revenue import RevenueDOTCorporate
+        from datetime import datetime
+
+        # Query from RevenueDOTCorporate (monthly objectives table)
+        current_year = datetime.utcnow().year
+        query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        )
 
         # Apply filters
         if dot_name:
-            query = query.filter(RevenueObjective.dot_name.ilike(f"%{dot_name}%"))
-        
+            query = query.filter(RevenueDOTCorporate.dot_name.ilike(f"%{dot_name}%"))
+
         if file_upload_id:
-            query = query.filter(RevenueObjective.file_upload_id == file_upload_id)
+            query = query.filter(RevenueDOTCorporate.file_upload_id == file_upload_id)
 
-        objectives = query.order_by(RevenueObjective.dot_name.asc()).all()
+        objectives = query.order_by(RevenueDOTCorporate.dot_name.asc()).all()
 
-        # Convert to response models, explicitly constructing to avoid
-        # Pydantic serialization issues with SQLAlchemy relationship objects
+        # Convert to response models, using annual_objective for objectif_ca
         result = []
         for obj in objectives:
             response = RevenueObjectiveResponse(
@@ -555,12 +561,12 @@ async def list_revenue_objectives(
                 file_upload_id=obj.file_upload_id,
                 dot_id=obj.dot_id,
                 dot_name=obj.dot_name,
-                objectif_ca=float(obj.objectif_ca) if obj.objectif_ca else 0.0,
+                objectif_ca=float(obj.annual_objective),  # Calculate from monthly values
                 created_at=obj.created_at,
                 updated_at=obj.updated_at,
             )
             result.append(response)
-        
+
         return result
 
     except Exception as e:
@@ -575,26 +581,33 @@ async def get_revenue_objective(
     db: Session = Depends(get_db)
 ):
     """
-    Get a specific revenue objective by ID
+    Get a specific revenue objective by ID (now sourced from RevenueDOTCorporate)
     Requires: can_view_analytics permission
     """
     PermissionService.require_permission(
         current_user, db, "can_view_analytics")
 
     try:
-        objective = db.query(RevenueObjective).filter(
-            RevenueObjective.id == objective_id).first()
+        from models.revenue import RevenueDOTCorporate
+        from datetime import datetime
+
+        # Query from RevenueDOTCorporate (monthly objectives table)
+        current_year = datetime.utcnow().year
+        objective = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.id == objective_id,
+            RevenueDOTCorporate.year == current_year
+        ).first()
 
         if not objective:
             raise HTTPException(status_code=404, detail="Revenue objective not found")
 
-        # Convert to response model, explicitly excluding the dot relationship
+        # Convert to response model, using annual_objective for objectif_ca
         return RevenueObjectiveResponse(
             id=objective.id,
             file_upload_id=objective.file_upload_id,
             dot_id=objective.dot_id,
             dot_name=objective.dot_name,
-            objectif_ca=float(objective.objectif_ca) if objective.objectif_ca else 0.0,
+            objectif_ca=float(objective.annual_objective),  # Calculate from monthly values
             created_at=objective.created_at,
             updated_at=objective.updated_at,
         )

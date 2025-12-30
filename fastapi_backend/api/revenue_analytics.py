@@ -331,23 +331,14 @@ async def get_revenue_overview(
         by_month = {str(row.month): float(row.total or 0)
                     for row in by_month_data}
 
-        # Monthly Objective series (distribute total objective equally across 12 months)
-        # If there are months returned, use their year to build matching keys
+        # Monthly Objective series (now using actual monthly values from objectifs_monthly_dot)
+        # Get year from revenue data or use current year
         by_month_objective: Dict[str, float] = {}
 
-        # Build objective query with same filters as revenue
-        objective_query = db.query(func.sum(RevenueObjective.objectif_ca))
-
-        # Apply org_name filter to objectives
-        if org_name:
-            objective_query = objective_query.filter(RevenueObjective.dot_name.in_(org_name))
-
-        total_objective = objective_query.scalar() or 0.0
-
-        if by_month_data and total_objective:
-            # Group months by year to support multi-year datasets
-            from collections import defaultdict
-            months_by_year: Dict[int, list] = defaultdict(list)
+        # Determine which year(s) to query objectives for
+        from collections import defaultdict
+        months_by_year: Dict[int, list] = defaultdict(list)
+        if by_month_data:
             for row in by_month_data:
                 dt = row.month
                 year = getattr(dt, 'year', None)
@@ -360,14 +351,33 @@ async def get_revenue_overview(
                 if year is not None:
                     months_by_year[year].append(str(dt))
 
-            # Distribute the total objective per year equally (12 months)
-            # If multiple years, use the same total per year unless a per-year objective model is added later
-            for year, month_keys in months_by_year.items():
-                monthly_value = float(total_objective) / 12.0
-                for mk in month_keys:
-                    by_month_objective[mk] = monthly_value
-        else:
-            by_month_objective = {}
+        # If no revenue data, use current year
+        if not months_by_year:
+            current_year = datetime.utcnow().year
+            months_by_year[current_year] = []
+
+        # Query monthly objectives for each year
+        total_objective = 0.0
+        for year in months_by_year.keys():
+            objective_query = db.query(RevenueDOTCorporate).filter(
+                RevenueDOTCorporate.year == year
+            )
+
+            # Apply org_name filter to objectives
+            if org_name:
+                objective_query = objective_query.filter(RevenueDOTCorporate.dot_name.in_(org_name))
+
+            objectives = objective_query.all()
+
+            # Calculate total annual objective for this year
+            total_objective += sum(obj.annual_objective for obj in objectives)
+
+            # Build monthly objectives using actual monthly values
+            for month_num in range(1, 13):
+                month_key = f"{year}-{month_num:02d}"
+                month_objective = sum(obj.get_month_objective(month_num) for obj in objectives)
+                if month_objective > 0:
+                    by_month_objective[month_key] = month_objective
 
         # Anomalies count
         anomalies_count = db.query(RevenueAnomaly).count()
@@ -1013,15 +1023,18 @@ async def get_revenue_by_org(
         results = query.group_by(
             RevenueJournal.org_name).order_by(func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
 
-        # Get all objectives - ensure we have objectives for all DOTs
+        # Get all objectives from monthly objectives table (current year)
         objectives_dict = {}
-        objectives = db.query(RevenueObjective).all()
+        current_year = datetime.utcnow().year
+        objectives = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
         for obj in objectives:
             # Use normalized dot_name for consistent matching
             from services.revenue_processing_helpers import RevenueProcessingHelpers
             normalized_dot_name = RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name)
             objectives_dict[normalized_dot_name] = {
-                'value': float(obj.objectif_ca or 0),
+                'value': obj.annual_objective,  # Calculate from monthly values
                 'original_name': obj.dot_name  # Keep original name for reference
             }
 
@@ -1236,16 +1249,28 @@ async def get_revenue_by_month(
             func.to_char(RevenueJournal.date_gl, 'YYYY-MM')
         ).order_by('month').all()
 
-        # Get all objectives to match by month
-        # Since objectives are typically annual, we'll try to distribute them
-        all_objectives = db.query(RevenueObjective).all()
-        total_objective = sum(float(obj.objectif_ca or 0) for obj in all_objectives)
-        monthly_objective = total_objective / 12.0 if total_objective else None
+        # Get all objectives from monthly objectives table
+        # Build month-specific objectives map
+        current_year = datetime.utcnow().year
+        all_objectives = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
+
+        # Build monthly objectives map
+        monthly_objectives_map = {}
+        for month_num in range(1, 13):
+            month_key = f"{current_year}-{month_num:02d}"
+            monthly_objectives_map[month_key] = sum(
+                obj.get_month_objective(month_num) for obj in all_objectives
+            )
 
         response = []
         for row in results:
             if row.month:  # Only include valid months
                 total_revenue = float(row.total_revenue or 0)
+
+                # Get month-specific objective from actual monthly data
+                monthly_objective = monthly_objectives_map.get(row.month, 0.0)
 
                 # Calculate achievement rate per month: (Total CA for month / Monthly objective) × 100
                 achievement_rate = 0.0
@@ -1363,16 +1388,17 @@ async def get_dot_corporate_by_month(
                     monthly_totals[month_key] += float_value
                     dot_counts[month_key].add(record.dot_id or record.dot_name)
         
-        # Get objectives for the year (if available)
-        # Try to get objectives from RevenueObjective table
-        objectives_query = db.query(RevenueObjective)
+        # Get objectives for the year from monthly objectives table
+        objectives_query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == year
+        )
         if accessible_dot_ids:
-            objectives_query = objectives_query.filter(RevenueObjective.dot_id.in_(accessible_dot_ids))
+            objectives_query = objectives_query.filter(RevenueDOTCorporate.dot_id.in_(accessible_dot_ids))
         if dot_ids:
-            objectives_query = objectives_query.filter(RevenueObjective.dot_id.in_(dot_ids))
-        
+            objectives_query = objectives_query.filter(RevenueDOTCorporate.dot_id.in_(dot_ids))
+
         all_objectives = objectives_query.all()
-        total_objective = sum(float(obj.objectif_ca or 0) for obj in all_objectives)
+        total_objective = sum(obj.annual_objective for obj in all_objectives)
         monthly_objective = total_objective / 12.0 if total_objective else None
         
         # Build response
@@ -1470,9 +1496,12 @@ async def get_revenue_by_type_fact(
             RevenueJournal.typ_fact
         ).order_by(func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
 
-        # Get total objective for achievement rate calculation
-        all_objectives = db.query(RevenueObjective).all()
-        total_objective = sum(float(obj.objectif_ca or 0) for obj in all_objectives)
+        # Get total objective for achievement rate calculation from monthly objectives
+        current_year = datetime.utcnow().year
+        all_objectives = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
+        total_objective = sum(obj.annual_objective for obj in all_objectives)
 
         response = []
         for row in results:
@@ -2168,17 +2197,75 @@ async def export_revenue_data(
 
         df = pd.DataFrame(records)
 
+        # Define numeric columns for French formatting
+        numeric_cols = [
+            "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
+            "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
+            "TVA", "Taux Réalisation CA (%)"
+        ]
+
         # Generate file
         output = io.BytesIO()
 
         if format == "xlsx":
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Chiffre Affaires AR DOT')
+                
+                # Apply French number formatting (space for thousands, comma for decimal)
+                workbook = writer.book
+                worksheet = writer.sheets['Chiffre Affaires AR DOT']
+                
+                # French format: # ##0,00 (space thousands separator, comma decimal separator)
+                french_number_format = '# ##0,00'
+                
+                for col_idx, col_name in enumerate(df.columns, start=1):
+                    if col_name in numeric_cols:
+                        for row_idx in range(2, len(df) + 2):  # Start from row 2 (row 1 is header)
+                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            if cell.value is not None and cell.value != "":
+                                cell.number_format = french_number_format
+            
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
         else:  # csv
-            df.to_csv(output, index=False)
-            media_type = "text/csv"
+            # Format numbers with French formatting (space thousands, comma decimal) for CSV
+            def format_french_number(x):
+                """Format number with French formatting: space for thousands, comma for decimal"""
+                if pd.isna(x) or not isinstance(x, (int, float)):
+                    return x
+                # Format with 2 decimals, then convert to French format
+                # First format with comma thousands separator and period decimal
+                formatted = f"{x:,.2f}"
+                # Split into integer and decimal parts
+                if '.' in formatted:
+                    int_part, dec_part = formatted.rsplit('.', 1)
+                    # Remove commas (thousands separators) and add spaces
+                    int_part_clean = int_part.replace(',', '')
+                    # Add space every 3 digits from right
+                    int_part_formatted = ''
+                    for i, digit in enumerate(reversed(int_part_clean)):
+                        if i > 0 and i % 3 == 0:
+                            int_part_formatted = ' ' + int_part_formatted
+                        int_part_formatted = digit + int_part_formatted
+                    # Combine with comma as decimal separator
+                    return int_part_formatted + ',' + dec_part
+                else:
+                    # No decimal part, just format integer part with spaces
+                    int_part_clean = formatted.replace(',', '')
+                    int_part_formatted = ''
+                    for i, digit in enumerate(reversed(int_part_clean)):
+                        if i > 0 and i % 3 == 0:
+                            int_part_formatted = ' ' + int_part_formatted
+                        int_part_formatted = digit + int_part_formatted
+                    return int_part_formatted + ',00'
+            
+            df_formatted = df.copy()
+            for col in numeric_cols:
+                if col in df_formatted.columns:
+                    df_formatted[col] = df_formatted[col].apply(format_french_number)
+            
+            df_formatted.to_csv(output, index=False, sep=";", encoding='utf-8-sig')
+            media_type = "text/csv; charset=utf-8"
             filename = f"Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
 
         output.seek(0)
@@ -3049,13 +3136,62 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                 file_ext = "xlsx" if format == "xlsx" else "csv"
                 normal_filename = f"Chiffre_Affaires_AR_DOT_{timestamp}.{file_ext}"
 
+                # Define numeric columns for French formatting
+                numeric_cols = [
+                    "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
+                    "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
+                    "TVA", "Taux Réalisation CA (%)"
+                ]
+                
                 # Write normal file
                 normal_buffer = io.BytesIO()
                 if format == "xlsx":
                     with pd.ExcelWriter(normal_buffer, engine='openpyxl') as writer:
                         normal_df.to_excel(writer, index=False, sheet_name='Chiffre Affaires AR DOT')
+                        
+                        # Apply French number formatting (space for thousands, comma for decimal)
+                        workbook = writer.book
+                        worksheet = writer.sheets['Chiffre Affaires AR DOT']
+                        
+                        # French format: # ##0,00 (space thousands separator, comma decimal separator)
+                        french_number_format = '# ##0,00'
+                        
+                        for col_idx, col_name in enumerate(normal_df.columns, start=1):
+                            if col_name in numeric_cols:
+                                for row_idx in range(2, len(normal_df) + 2):
+                                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                                    if cell.value is not None and cell.value != "":
+                                        cell.number_format = french_number_format
                 else:
-                    normal_df.to_csv(normal_buffer, index=False, encoding='utf-8-sig')
+                    # Format numbers with French formatting (space thousands, comma decimal) for CSV
+                        def format_french_number(x):
+                            """Format number with French formatting: space for thousands, comma for decimal"""
+                            if pd.isna(x) or not isinstance(x, (int, float)):
+                                return x
+                            formatted = f"{x:,.2f}"
+                            if '.' in formatted:
+                                int_part, dec_part = formatted.rsplit('.', 1)
+                                int_part_clean = int_part.replace(',', '')
+                                int_part_formatted = ''
+                                for i, digit in enumerate(reversed(int_part_clean)):
+                                    if i > 0 and i % 3 == 0:
+                                        int_part_formatted = ' ' + int_part_formatted
+                                    int_part_formatted = digit + int_part_formatted
+                                return int_part_formatted + ',' + dec_part
+                            else:
+                                int_part_clean = formatted.replace(',', '')
+                                int_part_formatted = ''
+                                for i, digit in enumerate(reversed(int_part_clean)):
+                                    if i > 0 and i % 3 == 0:
+                                        int_part_formatted = ' ' + int_part_formatted
+                                    int_part_formatted = digit + int_part_formatted
+                                return int_part_formatted + ',00'
+                        
+                        normal_df_formatted = normal_df.copy()
+                        for col in numeric_cols:
+                            if col in normal_df_formatted.columns:
+                                normal_df_formatted[col] = normal_df_formatted[col].apply(format_french_number)
+                        normal_df_formatted.to_csv(normal_buffer, index=False, sep=";", encoding='utf-8-sig')
                 zip_file.writestr(normal_filename, normal_buffer.getvalue())
 
                 # Write anomaly file
@@ -3065,8 +3201,50 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                     if format == "xlsx":
                         with pd.ExcelWriter(anomaly_buffer, engine='openpyxl') as writer:
                             anomaly_df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
+                            
+                            # Apply French number formatting (space for thousands, comma for decimal)
+                            workbook = writer.book
+                            worksheet = writer.sheets['Anomalies CA AR DOT']
+                            
+                            # French format: # ##0,00 (space thousands separator, comma decimal separator)
+                            french_number_format = '# ##0,00'
+                            
+                            for col_idx, col_name in enumerate(anomaly_df.columns, start=1):
+                                if col_name in numeric_cols:
+                                    for row_idx in range(2, len(anomaly_df) + 2):
+                                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                                        if cell.value is not None and cell.value != "":
+                                            cell.number_format = french_number_format
                     else:
-                        anomaly_df.to_csv(anomaly_buffer, index=False, encoding='utf-8-sig')
+                        # Format numbers with French formatting (space thousands, comma decimal) for CSV
+                        def format_french_number(x):
+                            """Format number with French formatting: space for thousands, comma for decimal"""
+                            if pd.isna(x) or not isinstance(x, (int, float)):
+                                return x
+                            formatted = f"{x:,.2f}"
+                            if '.' in formatted:
+                                int_part, dec_part = formatted.rsplit('.', 1)
+                                int_part_clean = int_part.replace(',', '')
+                                int_part_formatted = ''
+                                for i, digit in enumerate(reversed(int_part_clean)):
+                                    if i > 0 and i % 3 == 0:
+                                        int_part_formatted = ' ' + int_part_formatted
+                                    int_part_formatted = digit + int_part_formatted
+                                return int_part_formatted + ',' + dec_part
+                            else:
+                                int_part_clean = formatted.replace(',', '')
+                                int_part_formatted = ''
+                                for i, digit in enumerate(reversed(int_part_clean)):
+                                    if i > 0 and i % 3 == 0:
+                                        int_part_formatted = ' ' + int_part_formatted
+                                    int_part_formatted = digit + int_part_formatted
+                                return int_part_formatted + ',00'
+                        
+                        anomaly_df_formatted = anomaly_df.copy()
+                        for col in numeric_cols:
+                            if col in anomaly_df_formatted.columns:
+                                anomaly_df_formatted[col] = anomaly_df_formatted[col].apply(format_french_number)
+                        anomaly_df_formatted.to_csv(anomaly_buffer, index=False, sep=";", encoding='utf-8-sig')
                     zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
                 else:
                     zip_file.writestr("NO_ANOMALIES_FOUND.txt", "No anomalies found with the applied filters.")

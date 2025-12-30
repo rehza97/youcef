@@ -1127,6 +1127,50 @@ export const getEncaissementByDateRglt = (filters = {}) => {
   );
 };
 
+export const getEncaissementByTauxCreance = (filters = {}) => {
+  const params = new URLSearchParams();
+  if (
+    filters.organisation &&
+    Array.isArray(filters.organisation) &&
+    filters.organisation.length > 0
+  ) {
+    filters.organisation.forEach((org) => params.append("organisation", org));
+  }
+  if (filters.date_fact_start)
+    params.append("date_fact_start", filters.date_fact_start);
+  if (filters.date_fact_end)
+    params.append("date_fact_end", filters.date_fact_end);
+  if (
+    filters.taux_encaissement_min !== undefined &&
+    filters.taux_encaissement_min !== ""
+  ) {
+    params.append("taux_encaissement_min", filters.taux_encaissement_min);
+  }
+  if (
+    filters.taux_encaissement_max !== undefined &&
+    filters.taux_encaissement_max !== ""
+  ) {
+    params.append("taux_encaissement_max", filters.taux_encaissement_max);
+  }
+  if (filters.search) params.append("search", filters.search);
+  if (filters.year) params.append("year", filters.year);
+  if (
+    filters.typ_fact &&
+    Array.isArray(filters.typ_fact) &&
+    filters.typ_fact.length > 0
+  ) {
+    filters.typ_fact.forEach((typ) => params.append("typ_fact", typ));
+  }
+  if (filters.date_rglt_start)
+    params.append("date_rglt_start", filters.date_rglt_start);
+  if (filters.date_rglt_end)
+    params.append("date_rglt_end", filters.date_rglt_end);
+  const queryString = params.toString();
+  return api.get(
+    `/api/encaissement/by-taux-creance${queryString ? `?${queryString}` : ""}`
+  );
+};
+
 export const getEncaissementChartData = (chartType) => {
   if (!chartType) return Promise.reject(new Error("Chart type is required"));
   return api.get(
@@ -2015,6 +2059,77 @@ export const getEncaissementRecords = (params = {}) => {
   return api.get(`/api/encaissement/records?${query.toString()}`);
 };
 
+// Get preview data with separate filters (for preview tab)
+export const getEncaissementPreviewData = (params = {}) => {
+  const query = new URLSearchParams();
+  if (params.page) query.append("page", params.page);
+  if (params.page_size) query.append("page_size", params.page_size);
+  
+  // Column filters (arrays)
+  if (params.id && Array.isArray(params.id)) {
+    params.id.forEach((v) => query.append("id", v));
+  }
+  if (params.file_upload_id && Array.isArray(params.file_upload_id)) {
+    params.file_upload_id.forEach((v) => query.append("file_upload_id", v));
+  }
+  if (params.dot_id && Array.isArray(params.dot_id)) {
+    params.dot_id.forEach((v) => query.append("dot_id", v));
+  }
+  if (params.organisation && Array.isArray(params.organisation)) {
+    params.organisation.forEach((v) => query.append("organisation", v));
+  }
+  if (params.source && Array.isArray(params.source)) {
+    params.source.forEach((v) => query.append("source", v));
+  }
+  if (params.n_fact && Array.isArray(params.n_fact)) {
+    params.n_fact.forEach((v) => query.append("n_fact", v));
+  }
+  if (params.typ_fact && Array.isArray(params.typ_fact)) {
+    params.typ_fact.forEach((v) => query.append("typ_fact", v));
+  }
+  if (params.client && Array.isArray(params.client)) {
+    params.client.forEach((v) => query.append("client", v));
+  }
+  if (params.n_client && Array.isArray(params.n_client)) {
+    params.n_client.forEach((v) => query.append("n_client", v));
+  }
+  if (params.mois && Array.isArray(params.mois)) {
+    params.mois.forEach((v) => query.append("mois", v));
+  }
+  
+  // Date filters
+  if (params.date_fact_start) query.append("date_fact_start", params.date_fact_start);
+  if (params.date_fact_end) query.append("date_fact_end", params.date_fact_end);
+  if (params.date_rglt_start) query.append("date_rglt_start", params.date_rglt_start);
+  if (params.date_rglt_end) query.append("date_rglt_end", params.date_rglt_end);
+  
+  // Numeric range filters
+  if (params.montant_ht_min !== undefined) query.append("montant_ht_min", params.montant_ht_min);
+  if (params.montant_ht_max !== undefined) query.append("montant_ht_max", params.montant_ht_max);
+  if (params.montant_taxe_min !== undefined) query.append("montant_taxe_min", params.montant_taxe_min);
+  if (params.montant_taxe_max !== undefined) query.append("montant_taxe_max", params.montant_taxe_max);
+  if (params.montant_ttc_min !== undefined) query.append("montant_ttc_min", params.montant_ttc_min);
+  if (params.montant_ttc_max !== undefined) query.append("montant_ttc_max", params.montant_ttc_max);
+  if (params.encaissement_min !== undefined) query.append("encaissement_min", params.encaissement_min);
+  if (params.encaissement_max !== undefined) query.append("encaissement_max", params.encaissement_max);
+  if (params.taux_encaissement_min !== undefined) query.append("taux_encaissement_min", params.taux_encaissement_min);
+  if (params.taux_encaissement_max !== undefined) query.append("taux_encaissement_max", params.taux_encaissement_max);
+  if (params.montant_restant_min !== undefined) query.append("montant_restant_min", params.montant_restant_min);
+  if (params.montant_restant_max !== undefined) query.append("montant_restant_max", params.montant_restant_max);
+  
+  // Boolean filters
+  if (params.is_duplicate !== undefined) query.append("is_duplicate", params.is_duplicate);
+  if (params.is_anomaly !== undefined) query.append("is_anomaly", params.is_anomaly);
+  
+  // Other filters
+  if (params.search) query.append("search", params.search);
+  if (params.year) query.append("year", params.year);
+  if (params.sort_by) query.append("sort_by", params.sort_by);
+  if (params.sort_order) query.append("sort_order", params.sort_order);
+  
+  return api.get(`/api/encaissement/preview-data?${query.toString()}`);
+};
+
 export const getEncaissementRecordById = (recordId) => {
   if (!recordId) return Promise.reject(new Error("Record ID is required"));
   return api.get(`/api/encaissement/records/${recordId}`);
@@ -2140,6 +2255,52 @@ export const exportEncaissementRecords = (params = {}) => {
 
   return api.get(`/api/encaissement/export?${query.toString()}`, {
     responseType: format === "csv" || format === "xlsx" ? "blob" : undefined,
+  });
+};
+
+// Start async encaissement export
+export const startEncaissementExport = (filters = {}) => {
+  const format = filters.format || "xlsx";
+  const { format: _, ...filterParams } = filters;
+
+  // Build URLSearchParams, only including non-empty values
+  const params = new URLSearchParams();
+  params.append("format", format);
+
+  // Only add filter params that have values
+  // Handle arrays (for column filters) and single values
+  Object.keys(filterParams).forEach((key) => {
+    const value = filterParams[key];
+    if (value !== undefined && value !== null && value !== "") {
+      if (Array.isArray(value)) {
+        // For arrays, append each value separately
+        value.forEach((v) => {
+          if (v !== undefined && v !== null && v !== "") {
+            params.append(key, v);
+          }
+        });
+      } else {
+        params.append(key, value);
+      }
+    }
+  });
+
+  console.log(
+    "🔍 [FRONTEND API] startEncaissementExport - params:",
+    params.toString()
+  );
+  return api.post(`/api/encaissement/export-async?${params.toString()}`);
+};
+
+// Get encaissement export task status
+export const getEncaissementExportStatus = (taskId) => {
+  return api.get(`/api/encaissement/export-status/${taskId}`);
+};
+
+// Download completed encaissement export file
+export const downloadEncaissementExport = (taskId) => {
+  return api.get(`/api/encaissement/export-download/${taskId}`, {
+    responseType: "blob",
   });
 };
 

@@ -10,7 +10,7 @@ from datetime import datetime
 import logging
 from decimal import Decimal
 
-from models.revenue import RevenueJournal, RevenueObjective
+from models.revenue import RevenueJournal, RevenueObjective, RevenueDOTCorporate
 from models.revenue_pivot import RevenuePivotCache, RevenuePivotMetadata
 
 logger = logging.getLogger(__name__)
@@ -67,10 +67,13 @@ class RevenuePivotService:
 
         result = query.first()
 
-        # Get total objective
-        total_objective = self.db.query(
-            func.sum(RevenueObjective.objectif_ca)
-        ).scalar() or 0
+        # Get total objective from monthly objectives table
+        from datetime import datetime
+        current_year = datetime.utcnow().year
+        objectives = self.db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
+        total_objective = sum(obj.annual_objective for obj in objectives)
 
         # Create pivot record
         pivot = RevenuePivotCache(
@@ -115,11 +118,15 @@ class RevenuePivotService:
         results = query.all()
 
         # Get objectives by org
-        objectives = self.db.query(RevenueObjective).all()
+        from datetime import datetime
+        current_year = datetime.utcnow().year
+        objectives = self.db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
         # Use normalized dot_name for consistent matching
         from services.revenue_processing_helpers import RevenueProcessingHelpers
         obj_dict = {
-            RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name): obj.objectif_ca 
+            RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name): obj.annual_objective
             for obj in objectives
         }
 
@@ -172,15 +179,26 @@ class RevenuePivotService:
 
         results = query.all()
 
-        # Get total objective and distribute monthly
-        total_objective = self.db.query(
-            func.sum(RevenueObjective.objectif_ca)
-        ).scalar() or 0
-        monthly_objective = float(total_objective) / 12.0
+        # Get monthly objectives
+        from datetime import datetime
+        current_year = datetime.utcnow().year
+        all_objectives = self.db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
+
+        # Build map of month number -> total objective for that month across all DOTs
+        monthly_objectives_map = {}
+        for month_num in range(1, 13):
+            monthly_objectives_map[month_num] = sum(
+                obj.get_month_objective(month_num) for obj in all_objectives
+            )
 
         # Create pivot records
         pivots = []
         for row in results:
+            # Extract month number from row.month (format: 'YYYY-MM')
+            month_num = int(row.month.split('-')[1]) if row.month and '-' in row.month else 1
+            monthly_objective = monthly_objectives_map.get(month_num, 0.0)
             pivot = RevenuePivotCache(
                 file_upload_id=file_upload_id,
                 pivot_type="by_month",
@@ -188,7 +206,7 @@ class RevenuePivotService:
                 year=int(row.year) if row.year else None,
                 total_revenue=float(row.total_revenue or 0),
                 total_revenue_ttc=float(row.total_revenue_ttc or 0),
-                total_objective=monthly_objective,
+                total_objective=float(monthly_objective),
                 avg_achievement_rate=float(row.avg_achievement_rate or 0),
                 record_count=int(row.record_count or 0),
             )
@@ -269,11 +287,16 @@ class RevenuePivotService:
         results = query.all()
 
         # Get objectives by org
-        objectives = self.db.query(RevenueObjective).all()
+        from datetime import datetime
+        current_year = datetime.utcnow().year
+        objectives = self.db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == current_year
+        ).all()
         # Use normalized dot_name for consistent matching
         from services.revenue_processing_helpers import RevenueProcessingHelpers
+        # Store full objects, not just values, so we can access month-specific objectives
         obj_dict = {
-            RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name): obj.objectif_ca 
+            RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name): obj
             for obj in objectives
         }
 
@@ -282,8 +305,13 @@ class RevenuePivotService:
         for row in results:
             # Normalize org_name for consistent objective lookup
             normalized_org_name = RevenueProcessingHelpers.clean_org_name_for_matching(row.org_name or "")
-            objective = obj_dict.get(normalized_org_name, 0)
-            monthly_objective = float(objective) / 12.0
+            obj_record = obj_dict.get(normalized_org_name)
+
+            # Extract month number from row.month (format: 'YYYY-MM')
+            month_num = int(row.month.split('-')[1]) if row.month and '-' in row.month else 1
+
+            # Get the actual monthly objective for this org for this specific month
+            monthly_objective = obj_record.get_month_objective(month_num) if obj_record else 0.0
 
             pivot = RevenuePivotCache(
                 file_upload_id=file_upload_id,

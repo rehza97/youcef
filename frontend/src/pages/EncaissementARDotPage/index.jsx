@@ -11,6 +11,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   BarChart,
   Bar,
@@ -43,8 +51,12 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useProcessing } from "../../contexts/ProcessingContext";
 import {
   getEncaissementOverview,
   getEncaissementByOrganisation,
@@ -52,10 +64,15 @@ import {
   getEncaissementByEncaisseRate,
   getEncaissementByTypFact,
   getEncaissementByDateRglt,
+  getEncaissementByTauxCreance,
   getEncaissementFilters,
   getEncaissementRecords,
+  getEncaissementPreviewData,
   exportEncaissementRecords,
   getEncaissementColumnValues,
+  startEncaissementExport,
+  downloadEncaissementExport,
+  getEncaissementExportStatus,
 } from "../../services/api";
 import {
   Table,
@@ -100,7 +117,7 @@ const ExcelFilter = ({
   const [searchTerm, setSearchTerm] = useState("");
   const [tempSelected, setTempSelected] = useState(selected);
 
-  // Initialize tempSelected when dropdown opens
+  // Initialize tempSelected when dropdown opens or selected prop changes
   useEffect(() => {
     if (open) {
       setTempSelected(selected);
@@ -108,28 +125,68 @@ const ExcelFilter = ({
         onFetchValues();
       }
     }
-  }, [open, selected, values.length, loading, onFetchValues]);
+  }, [open, selected]); // Removed onFetchValues and other deps to avoid unnecessary re-renders
 
-  const filteredValues = values.filter((val) =>
-    val.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Fetch values when dropdown opens if needed
+  useEffect(() => {
+    if (open && values.length === 0 && !loading) {
+      onFetchValues();
+    }
+  }, [open, values.length, loading]); // onFetchValues removed to prevent infinite loops
 
-  const handleToggle = (value) => {
-    setTempSelected((prev) =>
-      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+  const filteredValues = useMemo(() => {
+    return values.filter((val) =>
+      val.toLowerCase().includes(searchTerm.toLowerCase())
     );
+  }, [values, searchTerm]);
+
+  // Check if all filtered values are selected (for Select All button)
+  const allFilteredSelected = useMemo(() => {
+    return (
+      filteredValues.length > 0 &&
+      filteredValues.every((val) => tempSelected.includes(val))
+    );
+  }, [filteredValues, tempSelected]);
+
+  // Check for unsaved changes (memoized to avoid recalculating on every render)
+  const hasUnsavedChanges = useMemo(() => {
+    if (tempSelected.length !== selected.length) return true;
+    const tempSet = new Set(tempSelected);
+    return selected.some((val) => !tempSet.has(val));
+  }, [tempSelected, selected]);
+
+  const handleToggle = (value, checked) => {
+    if (checked) {
+      // Add value if checked
+      setTempSelected((prev) =>
+        prev.includes(value) ? prev : [...prev, value]
+      );
+    } else {
+      // Remove value if unchecked
+      setTempSelected((prev) => prev.filter((v) => v !== value));
+    }
   };
 
   const handleSelectAll = () => {
-    if (tempSelected.length === filteredValues.length) {
-      setTempSelected([]);
+    if (allFilteredSelected) {
+      // Deselect only filtered values, keep others that aren't in current filter
+      setTempSelected((prev) =>
+        prev.filter((val) => !filteredValues.includes(val))
+      );
     } else {
-      setTempSelected([...filteredValues]);
+      // Select all filtered values, preserve existing selections
+      setTempSelected((prev) => {
+        const newSet = new Set(prev);
+        filteredValues.forEach((val) => newSet.add(val));
+        return Array.from(newSet);
+      });
     }
   };
 
   const handleApply = () => {
-    onFilterChange(tempSelected);
+    if (hasUnsavedChanges) {
+      onFilterChange(tempSelected);
+    }
     setOpen(false);
     setSearchTerm("");
   };
@@ -141,10 +198,19 @@ const ExcelFilter = ({
     setSearchTerm("");
   };
 
+  const handleOpenChange = (newOpen) => {
+    if (!newOpen && open) {
+      // When closing without applying, reset tempSelected to current selected (discard unsaved changes)
+      setTempSelected(selected);
+      setSearchTerm("");
+    }
+    setOpen(newOpen);
+  };
+
   const hasFilter = selected.length > 0;
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         <button
           className={`flex items-center gap-1 px-1 py-0.5 rounded hover:bg-gray-100 ${
@@ -181,14 +247,17 @@ const ExcelFilter = ({
           <button
             onClick={handleSelectAll}
             className="text-xs text-blue-600 hover:text-blue-800"
+            disabled={filteredValues.length === 0}
           >
-            {tempSelected.length === filteredValues.length &&
-            filteredValues.length > 0
+            {allFilteredSelected && filteredValues.length > 0
               ? "Tout désélectionner"
               : "Tout sélectionner"}
           </button>
           <span className="text-xs text-muted-foreground">
             {tempSelected.length} sélectionné(s)
+            {hasUnsavedChanges && (
+              <span className="ml-1 text-orange-600 font-semibold">•</span>
+            )}
           </span>
         </div>
         <div className="overflow-y-auto flex-1 max-h-64">
@@ -205,8 +274,9 @@ const ExcelFilter = ({
               <DropdownMenuCheckboxItem
                 key={value}
                 checked={tempSelected.includes(value)}
-                onCheckedChange={() => handleToggle(value)}
+                onCheckedChange={(checked) => handleToggle(value, checked)}
                 className="text-sm"
+                onSelect={(e) => e.preventDefault()} // Prevent dropdown from closing on select
               >
                 {value}
               </DropdownMenuCheckboxItem>
@@ -234,6 +304,7 @@ const ExcelFilter = ({
 
 // Column definitions for Encaissement AR DOT table
 const ENCAISSEMENT_COLUMNS = [
+  { key: "id", label: "ID", filterable: true, sortable: true, format: "mono" },
   {
     key: "organisation",
     label: "Organisation",
@@ -360,6 +431,29 @@ const getColorByEncaissementRate = (taux) => {
     return COLORS.warning; // Yellow for 20.01% to 49.99%
   } else {
     return COLORS.danger; // Red for < 20%
+  }
+};
+
+/**
+ * Get color based on taux de créance (receivable rate) ranges
+ * Inverse of encaissement rate - higher receivable rate is worse (red)
+ * < 20%: Green (success) - low receivables
+ * 20.01% to 49.99%: Blue (primary) - moderate receivables
+ * 50% to 74.99%: Orange (secondary) - high receivables
+ * 75% to 99.99%: Yellow (warning) - very high receivables
+ * >= 100%: Red (danger) - critical receivables
+ */
+const getColorByTauxCreance = (taux) => {
+  if (taux >= 100) {
+    return COLORS.danger; // Red for >= 100% (critical)
+  } else if (taux >= 75) {
+    return COLORS.warning; // Yellow for 75% to 99.99% (very high)
+  } else if (taux >= 50) {
+    return COLORS.secondary; // Orange for 50% to 74.99% (high)
+  } else if (taux >= 20.01) {
+    return COLORS.primary; // Blue for 20.01% to 49.99% (moderate)
+  } else {
+    return COLORS.success; // Green for < 20% (low receivables - good)
   }
 };
 
@@ -524,12 +618,24 @@ const CustomLabel = (props) => {
  * Main Encaissement AR DOT Page Component
  */
 const EncaissementARDotPage = () => {
+  const { subscribeTask } = useProcessing();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
   const [monthSortOrder, setMonthSortOrder] = useState("desc"); // "asc" or "desc"
+
+  // New export progress state for async export
+  const [exportProgress, setExportProgress] = useState({
+    isOpen: false,
+    taskId: null,
+    status: "idle",
+    progress: 0,
+    message: "",
+    filename: null,
+    downloadUrl: null,
+  });
 
   // Filter state
   const [filters, setFilters] = useState({
@@ -605,6 +711,7 @@ const EncaissementARDotPage = () => {
   const [byTauxEncaissement, setByTauxEncaissement] = useState([]);
   const [byTypFact, setByTypFact] = useState([]);
   const [byDateRglt, setByDateRglt] = useState([]);
+  const [byTauxCreance, setByTauxCreance] = useState([]);
 
   // Preview data state
   const [previewData, setPreviewData] = useState([]);
@@ -684,6 +791,7 @@ const EncaissementARDotPage = () => {
         tauxRes,
         typFactRes,
         dateRgltRes,
+        tauxCreanceRes,
       ] = await Promise.all([
         getEncaissementOverview(overviewParamsForYears), // Get all years for dropdown
         getEncaissementOverview(filterParams), // Get filtered overview for display
@@ -692,6 +800,7 @@ const EncaissementARDotPage = () => {
         getEncaissementByEncaisseRate(filterParams),
         getEncaissementByTypFact(filterParams),
         getEncaissementByDateRglt(filterParams),
+        getEncaissementByTauxCreance(filterParams),
       ]);
 
       // Use the overview with all years for the dropdown
@@ -721,6 +830,7 @@ const EncaissementARDotPage = () => {
       setByTauxEncaissement(tauxRes.data || []);
       setByTypFact(typFactRes.data || []);
       setByDateRglt(dateRgltRes.data || []);
+      setByTauxCreance(tauxCreanceRes.data || []);
 
       if (showRefreshing) {
         toast.success("Données actualisées");
@@ -815,6 +925,38 @@ const EncaissementARDotPage = () => {
       percentage: total > 0 ? (item.Encaissement / total) * 100 : 0,
     }));
   }, [byDateFact]);
+
+  /**
+   * CHART 3.5: DOT et Taux de Créance (Receivable Rate)
+   * Shows receivable rate by DOT, sorted from highest to lowest
+   * Taux de créance = (montant_restant / montant_ttc) * 100
+   */
+  const tauxCreanceChartData = useMemo(() => {
+    return byTauxCreance
+      .map((item) => {
+        const montantTTC = item.total_montant_ttc || 0;
+        const montantRestant = item.total_montant_restant || 0;
+        const encaissement = item.total_encaissement || 0;
+        // Use taux_creance from API response, or calculate if not available
+        const taux_creance = item.taux_creance !== undefined && item.taux_creance !== null
+          ? item.taux_creance
+          : (montantTTC > 0 ? (montantRestant / montantTTC) * 100 : 0);
+
+        return {
+          organisation: item.organisation || "Inconnu",
+          "Montant TTC": montantTTC,
+          Encaissement: encaissement,
+          "Montant Restant": montantRestant,
+          taux_creance: taux_creance,
+        };
+      })
+      .sort((a, b) => b.taux_creance - a.taux_creance) // Sort by taux de créance from high to low
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1, // Add ranking number (1-based)
+        label: `${index + 1}. ${item.organisation}`, // Label with rank number
+      }));
+  }, [byTauxCreance]);
 
   /**
    * CHART 3: DOT et Taux d'encaissement
@@ -1090,7 +1232,131 @@ const EncaissementARDotPage = () => {
     setPreviewPage(1);
   };
 
-  // Fetch preview data
+  // Export preview data with current preview filters (separate from main filters)
+  const handlePreviewExport = async () => {
+    try {
+      setExporting(true);
+
+      // Build filter params - use only preview column filters (not main filters)
+      const filterParams = {
+        format: "xlsx",
+      };
+
+      // Add all column filters (preview-specific filters only)
+      Object.keys(columnFilters).forEach((key) => {
+        if (
+          columnFilters[key] &&
+          Array.isArray(columnFilters[key]) &&
+          columnFilters[key].length > 0
+        ) {
+          filterParams[key] = columnFilters[key]; // Keep as array for API
+        }
+      });
+
+      // Add sorting
+      if (orderBy) {
+        filterParams.sort_by = orderBy;
+        filterParams.sort_order = orderDirection;
+      }
+
+      // Remove undefined values
+      Object.keys(filterParams).forEach((key) => {
+        if (
+          filterParams[key] === undefined ||
+          (Array.isArray(filterParams[key]) &&
+            filterParams[key].length === 0) ||
+          filterParams[key] === ""
+        ) {
+          delete filterParams[key];
+        }
+      });
+
+      console.log(
+        "🚀 [PREVIEW EXPORT] Starting export with preview filters:",
+        filterParams
+      );
+
+      // Start async export
+      const response = await startEncaissementExport(filterParams);
+
+      const taskId = response.data.task_id;
+
+      // Open progress dialog
+      setExportProgress({
+        isOpen: true,
+        taskId,
+        status: "processing",
+        progress: 0,
+        message: "Démarrage de l'export...",
+        filename: null,
+        downloadUrl: null,
+      });
+
+      toast.info("Export démarré en arrière-plan");
+    } catch (err) {
+      console.error("❌ Preview Export failed:", err);
+      toast.error("Erreur lors du démarrage de l'export");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDownloadExport = async () => {
+    try {
+      const response = await downloadEncaissementExport(exportProgress.taskId);
+
+      // Response is a blob
+      const blob = response.data;
+      const filename =
+        exportProgress.filename ||
+        `encaissement_export_${new Date().toISOString().split("T")[0]}.xlsx`;
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast.success("Export téléchargé avec succès");
+      setExportProgress((prev) => ({ ...prev, isOpen: false }));
+    } catch (error) {
+      toast.error("Erreur lors du téléchargement de l'export");
+    }
+  };
+
+  // WebSocket listener for export progress
+  useEffect(() => {
+    const handleExportUpdate = (message) => {
+      if (
+        message.type === "processing_update" &&
+        message.task_id === exportProgress.taskId
+      ) {
+        const updateData = message.data;
+        setExportProgress((prev) => ({
+          ...prev,
+          status: updateData.status || prev.status,
+          progress: updateData.progress || prev.progress,
+          message: updateData.message || prev.message,
+          filename: updateData.filename || prev.filename,
+          downloadUrl: updateData.download_url || prev.downloadUrl,
+        }));
+      }
+    };
+
+    if (exportProgress.taskId && subscribeTask) {
+      subscribeTask(exportProgress.taskId, handleExportUpdate);
+    }
+
+    return () => {
+      // Cleanup handled by ProcessingContext
+    };
+  }, [exportProgress.taskId, subscribeTask]);
+
+  // Fetch preview data with separate preview filters
   const fetchPreviewData = useCallback(async () => {
     if (activeTab !== "preview") return;
 
@@ -1102,24 +1368,15 @@ const EncaissementARDotPage = () => {
         page_size: previewPageSize,
       };
 
-      // Add main filters
-      if (filters.organisation && filters.organisation.length > 0) {
-        params.organisation = filters.organisation.join(",");
-      }
-
-      // Add year filter
-      if (filters.year) {
-        params.year = filters.year;
-      }
-
-      // Merge column filters with main filters
+      // Add column filters (these are the preview-specific filters)
+      // Convert column filters to array format for the API
       Object.keys(columnFilters).forEach((key) => {
         if (
           columnFilters[key] &&
           Array.isArray(columnFilters[key]) &&
           columnFilters[key].length > 0
         ) {
-          params[key] = columnFilters[key].join(",");
+          params[key] = columnFilters[key]; // Keep as array for the API
         }
       });
 
@@ -1129,7 +1386,7 @@ const EncaissementARDotPage = () => {
         params.sort_order = orderDirection;
       }
 
-      const response = await getEncaissementRecords(params);
+      const response = await getEncaissementPreviewData(params);
 
       setPreviewData(response.data?.items || []);
       setPreviewTotal(response.data?.total || 0);
@@ -1143,7 +1400,6 @@ const EncaissementARDotPage = () => {
     activeTab,
     previewPage,
     previewPageSize,
-    filters,
     columnFilters,
     orderBy,
     orderDirection,
@@ -1568,6 +1824,11 @@ const EncaissementARDotPage = () => {
             label: "BY Taux d'encaissement",
             icon: Percent,
           },
+          {
+            id: "taux-creance",
+            label: "BY Taux de créance",
+            icon: Percent,
+          },
           { id: "preview", label: "PREVIEW DATA", icon: FileText },
         ].map((tab) => (
           <Button
@@ -1952,6 +2213,131 @@ const EncaissementARDotPage = () => {
           </Card>
         )}
 
+        {activeTab === "taux-creance" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>DOT et Taux de Créance </CardTitle>
+              {/* Color Legend for Receivable Rate */}
+              <div className="flex items-center gap-3 sm:gap-4 flex-wrap mt-4 pt-4 border-t">
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.success }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    &lt; 20%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.primary }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    20% - 50%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.secondary }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    50% - 75%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.warning }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    75% - 99.99%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded"
+                    style={{ backgroundColor: COLORS.danger }}
+                  />
+                  <span className="text-xs text-muted-foreground">≥ 100%</span>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {tauxCreanceChartData.length > 0 ? (
+                <ResponsiveContainer
+                  width="100%"
+                  height={Math.max(
+                    400,
+                    Math.min(800, tauxCreanceChartData.length * 20)
+                  )}
+                >
+                  <BarChart
+                    data={tauxCreanceChartData}
+                    margin={{ left: 20, right: 20, top: 10, bottom: 140 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" />
+                    <XAxis
+                      dataKey="label"
+                      angle={-45}
+                      textAnchor="end"
+                      height={140}
+                      tick={{ fontSize: 11 }}
+                      interval={0}
+                    />
+                    <YAxis
+                      type="number"
+                      tickFormatter={(value) => `${value.toFixed(0)}%`}
+                      style={{ fontSize: "12px" }}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const data = payload[0].payload;
+                          return (
+                            <div className="bg-white p-3 border rounded shadow-lg">
+                              <p className="font-semibold">
+                                {data.organisation}
+                              </p>
+                              <p className="text-sm">
+                                Taux de créance: {formatPercent(data.taux_creance)}
+                              </p>
+                              <p className="text-sm">
+                                Montant Restant:{" "}
+                                {formatCurrency(data["Montant Restant"])}
+                              </p>
+                              <p className="text-sm">
+                                Montant TTC:{" "}
+                                {formatCurrency(data["Montant TTC"])}
+                              </p>
+                              <p className="text-sm">
+                                Encaissement:{" "}
+                                {formatCurrency(data.Encaissement)}
+                              </p>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="taux_creance" radius={[4, 4, 0, 0]}>
+                      {tauxCreanceChartData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={getColorByTauxCreance(entry.taux_creance)}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyState message="Aucune donnée Taux de créance disponible" />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         {activeTab === "typ-fact" && (
           <Card>
             <CardHeader>
@@ -2079,6 +2465,25 @@ const EncaissementARDotPage = () => {
                   <div className="text-sm text-muted-foreground">
                     {formatNumber(previewTotal)} enregistrement(s) total
                   </div>
+                  <Button
+                    onClick={handlePreviewExport}
+                    disabled={exporting || previewLoading}
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                  >
+                    {exporting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Export...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4" />
+                        Exporter
+                      </>
+                    )}
+                  </Button>
                 </div>
               </div>
             </CardHeader>
@@ -2095,9 +2500,6 @@ const EncaissementARDotPage = () => {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead className="sticky left-0 bg-background z-10">
-                            ID
-                          </TableHead>
                           {ENCAISSEMENT_COLUMNS.map((col) => (
                             <TableHead
                               key={col.key}
@@ -2156,9 +2558,6 @@ const EncaissementARDotPage = () => {
                       <TableBody>
                         {previewData.map((record) => (
                           <TableRow key={record.id}>
-                            <TableCell className="font-mono text-xs sticky left-0 bg-background z-10">
-                              {record.id || "-"}
-                            </TableCell>
                             {ENCAISSEMENT_COLUMNS.map((col) => {
                               const value = record[col.key];
                               let displayValue = "-";
@@ -2169,33 +2568,49 @@ const EncaissementARDotPage = () => {
                                     value
                                   ).toLocaleDateString("fr-FR");
                                 } else if (col.format === "mono") {
-                                  displayValue = value;
+                                  displayValue = String(value);
                                 } else if (col.format === "number") {
                                   displayValue = formatCurrency(value);
                                 } else if (col.format === "percent") {
                                   displayValue = formatPercent(value);
                                 } else if (col.format === "truncate") {
-                                  displayValue = value;
+                                  displayValue = String(value);
                                 } else {
-                                  displayValue = value;
+                                  displayValue = String(value);
                                 }
                               }
 
                               return (
                                 <TableCell
                                   key={col.key}
-                                  className={
-                                    col.format === "mono"
-                                      ? "font-mono text-xs"
-                                      : col.format === "number" ||
-                                        col.format === "percent"
-                                      ? "text-right"
-                                      : col.format === "truncate"
-                                      ? "max-w-[200px] truncate"
-                                      : col.format === "date"
-                                      ? "text-xs"
-                                      : ""
-                                  }
+                                  className={`
+                                    ${
+                                      col.key === "id"
+                                        ? "sticky left-0 bg-background z-10"
+                                        : ""
+                                    }
+                                    ${
+                                      col.format === "mono"
+                                        ? "font-mono text-xs"
+                                        : ""
+                                    }
+                                    ${
+                                      col.format === "truncate"
+                                        ? "max-w-[200px] truncate"
+                                        : ""
+                                    }
+                                    ${
+                                      col.format === "number" ||
+                                      col.format === "percent"
+                                        ? "text-right"
+                                        : ""
+                                    }
+                                    ${
+                                      col.format === "date"
+                                        ? "text-xs"
+                                        : ""
+                                    }
+                                  `}
                                 >
                                   {displayValue}
                                 </TableCell>
@@ -2292,6 +2707,91 @@ const EncaissementARDotPage = () => {
           </Card>
         )}
       </div>
+
+      {/* Export Progress Dialog */}
+      <Dialog
+        open={exportProgress.isOpen}
+        onOpenChange={(open) =>
+          setExportProgress((prev) => ({ ...prev, isOpen: open }))
+        }
+      >
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Progression de l'Export</DialogTitle>
+            <DialogDescription>
+              {exportProgress.status === "completed"
+                ? "Export terminé avec succès !"
+                : "Veuillez patienter pendant l'export de vos données..."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Progress Bar */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Progression</span>
+                <span className="font-medium">{exportProgress.progress}%</span>
+              </div>
+              <Progress value={exportProgress.progress} className="h-2" />
+            </div>
+
+            {/* Status Icon and Message */}
+            <div className="flex items-start space-x-3">
+              {exportProgress.status === "processing" && (
+                <Loader2 className="h-5 w-5 animate-spin text-blue-500 mt-0.5" />
+              )}
+              {exportProgress.status === "completed" && (
+                <CheckCircle2 className="h-5 w-5 text-green-500 mt-0.5" />
+              )}
+              {exportProgress.status === "failed" && (
+                <XCircle className="h-5 w-5 text-red-500 mt-0.5" />
+              )}
+              <div className="flex-1 space-y-1">
+                <p className="text-sm font-medium">
+                  {exportProgress.status === "completed" && "Export Prêt"}
+                  {exportProgress.status === "processing" &&
+                    "Traitement en cours..."}
+                  {exportProgress.status === "failed" && "Échec de l'Export"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {exportProgress.message}
+                </p>
+                {exportProgress.filename && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Fichier : {exportProgress.filename}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Download Button */}
+            {exportProgress.status === "completed" && (
+              <Button
+                onClick={handleDownloadExport}
+                className="w-full"
+                variant="default"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Télécharger l'Export
+              </Button>
+            )}
+
+            {/* Close Button */}
+            {(exportProgress.status === "completed" ||
+              exportProgress.status === "failed") && (
+              <Button
+                onClick={() =>
+                  setExportProgress((prev) => ({ ...prev, isOpen: false }))
+                }
+                className="w-full"
+                variant="outline"
+              >
+                Fermer
+              </Button>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

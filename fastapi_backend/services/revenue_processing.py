@@ -225,7 +225,16 @@ class RevenueDataProcessor:
             }
 
     def process_revenue_objectives(self, file_path: str, file_upload_id: int = None) -> Dict[str, Any]:
-        """Process Revenue Objectives file (Objectif C.A.xlsx)"""
+        """
+        DEPRECATED: Process Revenue Objectives file (Objectif C.A.xlsx)
+
+        This method processes the OLD annual objectives file format.
+        Use process_dot_corporate() instead for monthly objectives (recommended).
+
+        This method is kept for backward compatibility but will not be used
+        for achievement rate calculations.
+        """
+        logger.warning("⚠️ DEPRECATED: process_revenue_objectives() is deprecated. Use process_dot_corporate() instead.")
         try:
             df = self._read_file(file_path)
             logger.info(f"✅ Loaded {len(df)} revenue objectives from file")
@@ -1056,6 +1065,10 @@ class RevenueDataProcessor:
                     elif isinstance(value, (pd.Series, pd.DataFrame)):
                         # Skip nested DataFrames/Series
                         continue
+                    elif hasattr(value, '__tablename__'):
+                        # Handle SQLAlchemy ORM objects (like AccountDescription)
+                        # Convert to dict with just the ID to avoid serialization errors
+                        full_row_data[col_name] = {"id": getattr(value, 'id', None)} if hasattr(value, 'id') else str(value)
                     else:
                         full_row_data[col_name] = value
                 
@@ -1477,19 +1490,30 @@ class RevenueDataProcessor:
         return df
 
     def _match_revenue_objectives(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Match with revenue objectives"""
+        """
+        Match with revenue objectives (using monthly objectives table)
+
+        NOTE: Stores full RevenueDOTCorporate objects for monthly access.
+        Use obj.annual_objective for annual total or obj.get_month_objective(month_num) for monthly.
+        """
         # Load objectives from database if not cached
         if not self.revenue_objectives:
-            objectives = self.db.query(RevenueObjective).all()
+            from datetime import datetime
+            current_year = datetime.utcnow().year
+            objectives = self.db.query(RevenueDOTCorporate).filter(
+                RevenueDOTCorporate.year == current_year
+            ).all()
             from services.revenue_processing_helpers import RevenueProcessingHelpers
+            # Store full objects for monthly access (not just annual_objective)
             self.revenue_objectives = {
-                RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name): obj.objectif_ca
+                RevenueProcessingHelpers.clean_org_name_for_matching(obj.dot_name): obj
                 for obj in objectives
             }
 
         from services.revenue_processing_helpers import RevenueProcessingHelpers
         org_col = self._find_column(df, ['Org Name', 'organisation'])
         if org_col:
+            # Return annual_objective for legacy compatibility, but store full object in cache
             df['Objectif_CA'] = df[org_col].apply(
                 lambda x: RevenueProcessingHelpers.match_revenue_objective(
                     x, self.revenue_objectives)
@@ -1768,21 +1792,36 @@ class RevenueDataProcessor:
                         )
                         mapped['dot_id'] = dot.id
 
-                        # Match revenue objective by org_name
-                        objective = self.db.query(RevenueObjective).filter(
-                            RevenueObjective.dot_name.ilike(mapped['org_name'])
+                        # Match revenue objective by org_name (using monthly objectives table)
+                        from datetime import datetime
+                        current_year = datetime.utcnow().year
+                        objective = self.db.query(RevenueDOTCorporate).filter(
+                            RevenueDOTCorporate.dot_name.ilike(mapped['org_name']),
+                            RevenueDOTCorporate.year == current_year
                         ).first()
                         if objective:
                             mapped['revenue_objective_id'] = objective.id
-                            # Calculate achievement rate (CA / Objectif)
-                            if mapped.get('chiffre_aff_exe_dzd') and objective.objectif_ca:
+                            # Calculate achievement rate (CA / Monthly Objectif)
+                            # Extract month from date_gl to get month-specific objective
+                            if mapped.get('chiffre_aff_exe_dzd') and mapped.get('date_gl'):
                                 try:
                                     ca = float(mapped['chiffre_aff_exe_dzd'])
-                                    objectif = float(objective.objectif_ca)
-                                    if objectif != 0:
-                                        mapped['taux_realisation_ca'] = (ca / objectif) * 100
-                                except (ValueError, TypeError):
-                                    pass
+                                    # Get month number from date_gl (1-12)
+                                    date_gl = mapped['date_gl']
+                                    if isinstance(date_gl, str):
+                                        # Parse string date to datetime
+                                        from dateutil import parser
+                                        date_gl = parser.parse(date_gl)
+                                    month_num = date_gl.month if hasattr(date_gl, 'month') else None
+
+                                    if month_num:
+                                        # Get month-specific objective
+                                        monthly_objective = objective.get_month_objective(month_num)
+                                        if monthly_objective and monthly_objective != 0:
+                                            mapped['taux_realisation_ca'] = (ca / monthly_objective) * 100
+                                            logger.debug(f"   📊 Achievement rate: {ca} / {monthly_objective} = {mapped['taux_realisation_ca']:.2f}%")
+                                except (ValueError, TypeError, AttributeError) as e:
+                                    logger.warning(f"   ⚠️ Error calculating monthly achievement rate: {e}")
 
                     # Extract account_description_id from matched Account_Description object
                     account_desc = record.get('Account_Description')

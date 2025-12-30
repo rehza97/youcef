@@ -26,18 +26,19 @@ class DOT(Base):
     created_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, nullable=True)
 
-    # Relationships
-    parks = relationship("Park", back_populates="dot")
-    parks_2b = relationship("Park2B", back_populates="dot")
-    users = relationship("User", back_populates="dot")
-    revenue_journals = relationship("RevenueJournal", back_populates="dot")
-    revenue_objectives = relationship("RevenueObjective", back_populates="dot")
-    revenue_dot_corporate = relationship("RevenueDOTCorporate", back_populates="dot")
-    encaissement_ar_records = relationship("EncaissementARDot", back_populates="dot")
-    encaissement_anomaly_records = relationship("EncaissementAnomaly", back_populates="dot")
-    encaissement_aggregate_views = relationship("EncaissementAggregateView", back_populates="dot")
-    creance_periodique_records = relationship("CreancePeriodiqueDot", back_populates="dot_relationship")
-    creance_aggregate_views = relationship("CreanceAggregateView", back_populates="dot_relationship")
+    # Relationships with CASCADE DELETE
+    # When a DOT is deleted, all related records will be automatically deleted
+    parks = relationship("Park", back_populates="dot", cascade="all, delete-orphan")
+    parks_2b = relationship("Park2B", back_populates="dot", cascade="all, delete-orphan")
+    users = relationship("User", back_populates="dot", cascade="all, delete-orphan")
+    revenue_journals = relationship("RevenueJournal", back_populates="dot", cascade="all, delete-orphan")
+    revenue_objectives = relationship("RevenueObjective", back_populates="dot", cascade="all, delete-orphan")
+    revenue_dot_corporate = relationship("RevenueDOTCorporate", back_populates="dot", cascade="all, delete-orphan")
+    encaissement_ar_records = relationship("EncaissementARDot", back_populates="dot", cascade="all, delete-orphan")
+    encaissement_anomaly_records = relationship("EncaissementAnomaly", back_populates="dot", cascade="all, delete-orphan")
+    encaissement_aggregate_views = relationship("EncaissementAggregateView", back_populates="dot", cascade="all, delete-orphan")
+    creance_periodique_records = relationship("CreancePeriodiqueDot", back_populates="dot_relationship", cascade="all, delete-orphan")
+    creance_aggregate_views = relationship("CreanceAggregateView", back_populates="dot_relationship", cascade="all, delete-orphan")
 
     # Unique constraint: DOT name must be unique within each module
     __table_args__ = (

@@ -109,6 +109,7 @@ const DOTManagementPage: React.FC = () => {
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [openUsageDialog, setOpenUsageDialog] = useState(false);
   const [openBulkUpdateDialog, setOpenBulkUpdateDialog] = useState(false);
+  const [forceDelete, setForceDelete] = useState(false);
 
   // Form states
   const [formData, setFormData] = useState({
@@ -213,12 +214,22 @@ const DOTManagementPage: React.FC = () => {
     }
   };
 
-  const handleDeleteDot = async (dotId: number) => {
+  const handleDeleteDot = async (dotId: number, force: boolean = false) => {
     try {
-      await api.delete(`/api/dots/${dotId}`);
-      toast.success('DOT deleted successfully!');
+      const response = await api.delete(`/api/dots/${dotId}?force=${force}`);
+
+      // Show detailed success message with statistics
+      if (response.data.total_deleted > 0) {
+        toast.success(`DOT deleted with ${response.data.total_deleted} related records!`, {
+          description: `${response.data.message}`,
+        });
+      } else {
+        toast.success('DOT deleted successfully!');
+      }
+
       setOpenDeleteDialog(false);
       setEditingDot(null);
+      setForceDelete(false);
       fetchDots();
       fetchModuleSummary();
     } catch (error: any) {
@@ -269,6 +280,7 @@ const DOTManagementPage: React.FC = () => {
   const openDeleteDialogWithDot = async (dot: DOT) => {
     await fetchDotUsage(dot.id);
     setEditingDot(dot);
+    setForceDelete(false); // Reset force delete when opening dialog
     setOpenDeleteDialog(true);
   };
 
@@ -711,7 +723,7 @@ const DOTManagementPage: React.FC = () => {
 
       {/* Delete Dialog */}
       <Dialog open={openDeleteDialog} onOpenChange={setOpenDeleteDialog}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle>Delete DOT</DialogTitle>
             <DialogDescription>
@@ -720,19 +732,27 @@ const DOTManagementPage: React.FC = () => {
           </DialogHeader>
           {dotUsageStats && (
             <div className="space-y-4 py-4">
-              {!dotUsageStats.can_delete && (
-                <Alert variant="destructive">
-                  <AlertTitle>Cannot delete this DOT</AlertTitle>
-                  <AlertDescription>
-                    <p className="mb-2">The following blockers exist:</p>
-                    <ul className="list-disc list-inside space-y-1">
-                      {dotUsageStats.deletion_blockers.map((blocker, idx) => (
-                        <li key={idx}>{blocker}</li>
-                      ))}
-                    </ul>
-                  </AlertDescription>
-                </Alert>
-              )}
+              {/* Show usage statistics */}
+              <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg">
+                <div>
+                  <p className="text-sm font-medium">Users</p>
+                  <p className="text-2xl font-bold">{dotUsageStats.users_count}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Parks</p>
+                  <p className="text-2xl font-bold">{dotUsageStats.parks_count}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Revenue Records</p>
+                  <p className="text-2xl font-bold">{dotUsageStats.revenue_records}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Encaissement</p>
+                  <p className="text-2xl font-bold">{dotUsageStats.encaissement_records}</p>
+                </div>
+              </div>
+
+              {/* Safe to delete */}
               {dotUsageStats.can_delete && (
                 <Alert>
                   <Check className="h-4 w-4" />
@@ -742,6 +762,40 @@ const DOTManagementPage: React.FC = () => {
                   </AlertDescription>
                 </Alert>
               )}
+
+              {/* Force delete option */}
+              {!dotUsageStats.can_delete && (
+                <>
+                  <Alert variant="destructive">
+                    <AlertTitle>This DOT has related data</AlertTitle>
+                    <AlertDescription>
+                      <p className="mb-2">Total records: <strong>{dotUsageStats.deletion_blockers.length > 0 ? 'See statistics above' : '0'}</strong></p>
+                      <p>Enable "Force Delete" below to permanently delete this DOT and ALL related data.</p>
+                    </AlertDescription>
+                  </Alert>
+
+                  {/* Force delete checkbox */}
+                  <div className="flex items-start space-x-3 p-4 border-2 border-destructive rounded-lg bg-destructive/5">
+                    <Checkbox
+                      id="force-delete"
+                      checked={forceDelete}
+                      onCheckedChange={(checked) => setForceDelete(checked as boolean)}
+                    />
+                    <div className="flex-1">
+                      <Label
+                        htmlFor="force-delete"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                      >
+                        <span className="text-destructive font-bold">⚠️ Force Delete (CASCADE)</span>
+                      </Label>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        I understand this will <strong>permanently delete</strong> the DOT and ALL related records
+                        (users, parks, revenue, encaissement, créance data). This action cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
           <DialogFooter>
@@ -750,10 +804,10 @@ const DOTManagementPage: React.FC = () => {
             </Button>
             <Button
               variant="destructive"
-              onClick={() => editingDot && handleDeleteDot(editingDot.id)}
-              disabled={!dotUsageStats?.can_delete}
+              onClick={() => editingDot && handleDeleteDot(editingDot.id, forceDelete)}
+              disabled={!dotUsageStats?.can_delete && !forceDelete}
             >
-              Delete
+              {forceDelete ? 'Force Delete' : 'Delete'}
             </Button>
           </DialogFooter>
         </DialogContent>

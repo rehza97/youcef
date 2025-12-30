@@ -494,7 +494,13 @@ class RevenueProcessingHelpers:
     @staticmethod
     def match_revenue_objective(org_name: str,
                                  revenue_objectives: Dict[str, Any]) -> Optional[float]:
-        """Match Org Name with revenue objectives"""
+        """
+        Match Org Name with revenue objectives
+
+        NOTE: revenue_objectives dict now contains RevenueDOTCorporate objects
+        (not just float values). This method extracts annual_objective for
+        backward compatibility.
+        """
         if not org_name or not revenue_objectives:
             return None
 
@@ -504,14 +510,17 @@ class RevenueProcessingHelpers:
 
         # Try exact match first
         if org_clean in revenue_objectives:
-            return revenue_objectives[org_clean]
+            obj = revenue_objectives[org_clean]
+            # Handle both old format (float) and new format (object with annual_objective)
+            return obj.annual_objective if hasattr(obj, 'annual_objective') else obj
 
         # Try partial match
         for key, value in revenue_objectives.items():
             key_clean = RevenueProcessingHelpers.clean_org_name_for_matching(
                 key)
             if org_clean in key_clean or key_clean in org_clean:
-                return value
+                # Handle both old format (float) and new format (object with annual_objective)
+                return value.annual_objective if hasattr(value, 'annual_objective') else value
 
         return None
 

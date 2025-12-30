@@ -192,40 +192,76 @@ class DOTService:
             raise
 
     @staticmethod
-    def delete_dot(db: Session, dot_id: int) -> bool:
-        """Delete DOT if no users are assigned to it"""
+    def delete_dot(db: Session, dot_id: int, force: bool = False) -> Dict[str, Any]:
+        """
+        Delete DOT and optionally all related records
+
+        Args:
+            db: Database session
+            dot_id: ID of DOT to delete
+            force: If True, deletes DOT with ALL related records (CASCADE DELETE)
+                   If False, checks for related records and blocks deletion
+
+        Returns:
+            Dictionary with deletion statistics
+        """
         try:
             dot = db.query(DOT).filter(DOT.id == dot_id).first()
             if not dot:
-                return False
+                return {"success": False, "error": "DOT not found"}
 
-            # Check if any users are assigned to this DOT
+            # Count related records
             from models.user import User
-            user_count = db.query(User).filter(User.dot_id == dot_id).count()
-            if user_count > 0:
-                raise ValueError(
-                    f"Cannot delete DOT '{dot.name}' - {user_count} users are assigned to it")
+            from models.park import Park
+            from models.revenue import RevenueJournal, RevenueObjective, RevenueDOTCorporate
+            from models.encaissement import EncaissementARDot, EncaissementAnomaly
+            from models.creance import CreancePeriodiqueDot
 
-            # Check if any parks are assigned to this DOT
-            try:
-                from models.park import Park
-                park_count = db.query(Park).filter(
-                    Park.dot_id == dot_id).count()
-                if park_count > 0:
-                    raise ValueError(
-                        f"Cannot delete DOT '{dot.name}' - {park_count} parks are assigned to it")
-            except ImportError:
-                # Park model might not exist in all deployments
-                pass
+            # Store DOT name separately
+            dot_name = dot.name
+
+            # Count related records (only numeric values)
+            stats = {
+                "users": db.query(User).filter(User.dot_id == dot_id).count(),
+                "parks": db.query(Park).filter(Park.dot_id == dot_id).count(),
+                "revenue_journals": db.query(RevenueJournal).filter(RevenueJournal.dot_id == dot_id).count(),
+                "revenue_objectives": db.query(RevenueObjective).filter(RevenueObjective.dot_id == dot_id).count(),
+                "monthly_objectives": db.query(RevenueDOTCorporate).filter(RevenueDOTCorporate.dot_id == dot_id).count(),
+                "encaissement_records": db.query(EncaissementARDot).filter(EncaissementARDot.dot_id == dot_id).count(),
+                "encaissement_anomalies": db.query(EncaissementAnomaly).filter(EncaissementAnomaly.dot_id == dot_id).count(),
+                "creance_records": db.query(CreancePeriodiqueDot).filter(CreancePeriodiqueDot.dot_id == dot_id).count(),
+            }
+
+            total_records = sum(stats.values())
+
+            # If force=False and records exist, block deletion
+            if not force and total_records > 0:
+                raise ValueError(
+                    f"Cannot delete DOT '{dot_name}' - {total_records} related records exist. "
+                    f"Use force=True to delete DOT with all related data. "
+                    f"Records: {stats}"
+                )
+
+            # CASCADE DELETE: SQLAlchemy will automatically delete all related records
+            # due to cascade="all, delete-orphan" in DOT model relationships
+            logger.warning(f"🗑️  CASCADE DELETE: Deleting DOT '{dot_name}' (ID: {dot_id}) with {total_records} related records")
+            logger.warning(f"   Breakdown: {stats}")
 
             db.delete(dot)
             db.commit()
 
-            logger.info(f"Deleted DOT: {dot.name} (ID: {dot_id})")
-            return True
+            logger.info(f"✅ Deleted DOT: {dot_name} (ID: {dot_id}) and {total_records} related records")
+
+            return {
+                "success": True,
+                "dot_id": dot_id,
+                "dot_name": dot_name,
+                "deleted_records": stats,
+                "total_deleted": total_records
+            }
 
         except Exception as e:
-            logger.error(f"Error deleting DOT {dot_id}: {str(e)}")
+            logger.error(f"❌ Error deleting DOT {dot_id}: {str(e)}")
             db.rollback()
             raise
 

@@ -238,26 +238,46 @@ def update_dot(
 @router.delete("/{dot_id}", status_code=status.HTTP_200_OK)
 def delete_dot(
     dot_id: int,
+    force: bool = Query(False, description="If true, delete DOT with ALL related records (CASCADE DELETE). Use with caution!"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Delete a DOT (Admin only)
 
-    - Cannot delete if users or parks are assigned to it
+    **Parameters:**
+    - **dot_id**: ID of the DOT to delete
+    - **force**: If `false` (default), blocks deletion if related records exist
+                 If `true`, performs CASCADE DELETE of DOT and ALL related data:
+                   - Users
+                   - Parks
+                   - Revenue journals & objectives
+                   - Encaissement records
+                   - Créance records
+                   - All other related data
+
+    **⚠️ WARNING:** Using `force=true` will permanently delete the DOT and ALL its data!
+
+    **Returns:**
+    - Deletion statistics showing all deleted records
     """
     PermissionService.check_admin_permissions(current_user, db)
 
     try:
-        success = DOTService.delete_dot(db=db, dot_id=dot_id)
-        if not success:
+        result = DOTService.delete_dot(db=db, dot_id=dot_id, force=force)
+
+        if not result.get("success"):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"DOT with ID {dot_id} not found"
+                detail=result.get("error", f"DOT with ID {dot_id} not found")
             )
+
         return {
             "success": True,
-            "message": f"DOT {dot_id} deleted successfully"
+            "message": f"DOT '{result['dot_name']}' deleted successfully" +
+                      (f" with {result['total_deleted']} related records" if force else ""),
+            "deleted_records": result.get("deleted_records", {}),
+            "total_deleted": result.get("total_deleted", 0)
         }
     except ValueError as e:
         raise HTTPException(

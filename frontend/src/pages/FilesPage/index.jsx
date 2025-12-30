@@ -69,6 +69,7 @@ import {
   RefreshCw,
   Wifi,
   WifiOff,
+  Play,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -428,7 +429,8 @@ const FilesPage = () => {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = selectedFile.original_filename;
+      const file = files.find(f => f.id === fileId);
+      a.download = file?.original_filename || "file";
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -438,6 +440,18 @@ const FilesPage = () => {
       console.error("Erreur lors du téléchargement:", error);
       toast.error("Erreur lors du téléchargement du fichier");
     }
+  };
+
+  const handleStartTreatment = async (file) => {
+    await processFileData(file.id, file);
+  };
+
+  const isFileProcessing = (file) => {
+    return (
+      file.processing_status === "processing" ||
+      processingStatus[file.id] === "processing" ||
+      liveProcessingData[file.id]?.status === "processing"
+    );
   };
 
   const getFileTypeIcon = (fileType) => {
@@ -488,6 +502,12 @@ const FilesPage = () => {
   const formatDate = (dateString) => {
     if (!dateString) return "N/A";
     return new Date(dateString).toLocaleDateString("fr-FR");
+  };
+
+  const truncateFileName = (filename, maxLength = 20) => {
+    if (!filename) return "";
+    if (filename.length <= maxLength) return filename;
+    return filename.substring(0, maxLength) + "...";
   };
 
   const files = filesData?.data?.files || [];
@@ -732,7 +752,17 @@ const FilesPage = () => {
             {/* Enhanced File List with Table */}
             <Card>
               <CardHeader>
-                <CardTitle>Fichiers téléchargés</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Fichiers téléchargés</CardTitle>
+                  {!filesLoading && files.length > 0 && (
+                    <div className="text-sm text-gray-600">
+                      {files.length} fichier{files.length > 1 ? "s" : ""}
+                      {filesData?.data?.total && filesData.data.total > files.length && (
+                        <span className="text-gray-500"> sur {filesData.data.total}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 {filesLoading ? (
@@ -757,237 +787,291 @@ const FilesPage = () => {
                     </p>
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Fichier</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Classification</TableHead>
-                        <TableHead>Taille</TableHead>
-                        <TableHead>Statut</TableHead>
-                        <TableHead>Traitement</TableHead>
-                        <TableHead>Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {files.map((file) => (
-                        <TableRow key={file.id}>
-                          <TableCell>
-                            <div className="flex items-center space-x-3">
-                              <div className="text-2xl">
-                                {getFileTypeIcon(file.file_type)}
-                              </div>
-                              <div>
-                                <div className="font-medium">
-                                  {file.original_filename}
-                                </div>
-                                <div className="text-sm text-gray-500">
-                                  {formatDate(file.uploaded_at)}
-                                </div>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {file.file_type.toUpperCase()}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col space-y-1">
-                              {file.is_manual_classification && file.manual_kpi_type ? (
-                                <>
-                                  <div className="flex items-center space-x-1">
-                                    <span className="text-xs">✋</span>
-                                    <Badge variant="secondary" className="text-xs">
-                                      {availableFileTypes.find(t => t.value === file.manual_kpi_type)?.label || file.manual_kpi_type}
-                                    </Badge>
-                                  </div>
-                                  <span className="text-[10px] text-gray-500">Manuel</span>
-                                </>
-                              ) : file.detected_kpi_type && file.detected_kpi_type !== 'unknown' ? (
-                                <>
-                                  <div className="flex items-center space-x-1">
-                                    <span className="text-xs">🤖</span>
-                                    <Badge
-                                      variant="outline"
-                                      className={`text-xs ${
-                                        file.detection_confidence >= 80
-                                          ? 'border-green-500 text-green-700'
-                                          : file.detection_confidence >= 50
-                                          ? 'border-yellow-500 text-yellow-700'
-                                          : 'border-red-500 text-red-700'
-                                      }`}
-                                    >
-                                      {availableFileTypes.find(t => t.value === file.detected_kpi_type)?.label || file.detected_kpi_type}
-                                    </Badge>
-                                  </div>
-                                  <span className="text-[10px] text-gray-500">
-                                    Auto ({file.detection_confidence || 0}%)
-                                  </span>
-                                </>
-                              ) : (
-                                <Badge variant="outline" className="text-xs border-gray-300 text-gray-500">
-                                  Non classifié
-                                </Badge>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {formatFileSize(file.file_size)}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
-                              <Badge
-                                className={getStatusColor(
-                                  file.processing_status
-                                )}
-                              >
-                                {file.processing_status === "completed"
-                                  ? "Terminé"
-                                  : file.processing_status === "processing"
-                                  ? "En cours"
-                                  : file.processing_status === "failed"
-                                  ? "Échec"
-                                  : "En attente"}
-                              </Badge>
-                              {file.processing_status === "processing" && (
-                                <div className="flex items-center space-x-1">
-                                  <div className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                                  <span className="text-xs text-blue-600">
-                                    Temps réel
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {liveProcessingData[file.id] ? (
-                              <div className="space-y-2 min-w-[200px]">
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="font-medium">
-                                    {liveProcessingData[file.id].status ===
-                                    "completed"
-                                      ? "✅ Terminé"
-                                      : liveProcessingData[file.id].status ===
-                                        "failed"
-                                      ? "❌ Échec"
-                                      : "🔄 En cours..."}
-                                  </span>
-                                  <span className="font-semibold text-blue-600">
-                                    {Math.round(
-                                      liveProcessingData[file.id].progress || 0
-                                    )}
-                                    %
-                                  </span>
-                                </div>
-                                <Progress
-                                  value={
-                                    liveProcessingData[file.id].progress || 0
-                                  }
-                                  className="h-2"
-                                />
-                                <div className="flex items-center justify-between text-[10px] text-gray-600">
-                                  <span>
-                                    {liveProcessingData[
-                                      file.id
-                                    ].saved_rows?.toLocaleString() || 0}{" "}
-                                    /{" "}
-                                    {liveProcessingData[
-                                      file.id
-                                    ].total_rows?.toLocaleString() || 0}{" "}
-                                    lignes
-                                  </span>
-                                  {liveProcessingData[file.id].errors > 0 && (
-                                    <span className="text-red-600">
-                                      {liveProcessingData[file.id].errors}{" "}
-                                      erreurs
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            ) : processingStatus[file.id] ? (
-                              <div className="flex items-center space-x-2">
-                                <Badge className="flex items-center gap-1">
-                                  {getProcessingStatusIcon(
-                                    processingStatus[file.id]
-                                  )}
-                                  {processingStatus[file.id] === "completed"
-                                    ? "Traité"
-                                    : processingStatus[file.id] === "processing"
-                                    ? "En cours"
-                                    : "Échec"}
-                                </Badge>
-                              </div>
-                            ) : null}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center space-x-2">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleFileClick(file)}
-                                  >
-                                    <Eye className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Voir les détails</p>
-                                </TooltipContent>
-                              </Tooltip>
-
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handlePreviewFile(file.id)}
-                                  >
-                                    <FileText className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Aperçu du contenu</p>
-                                </TooltipContent>
-                              </Tooltip>
-
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => handleDownloadFile(file.id)}
-                                  >
-                                    <Download className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Télécharger</p>
-                                </TooltipContent>
-                              </Tooltip>
-
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    onClick={() => handleDeleteFile(file.id)}
-                                    disabled={deleteFileMutation.isPending}
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Supprimer</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            </div>
-                          </TableCell>
+                  <div className="max-h-[600px] overflow-y-auto rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Fichier</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Classification</TableHead>
+                          <TableHead>Taille</TableHead>
+                          <TableHead>Statut</TableHead>
+                          <TableHead>Traitement</TableHead>
+                          <TableHead>Actions</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                      </TableHeader>
+                      <TableBody>
+                        {files.map((file) => (
+                          <TableRow key={file.id}>
+                            <TableCell>
+                              <div className="flex items-center space-x-3">
+                                <div className="text-2xl">
+                                  {getFileTypeIcon(file.file_type)}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <div className="font-medium truncate">
+                                        {truncateFileName(file.original_filename, 20)}
+                                      </div>
+                                    </TooltipTrigger>
+                                    {file.original_filename.length > 20 && (
+                                      <TooltipContent>
+                                        <p>{file.original_filename}</p>
+                                      </TooltipContent>
+                                    )}
+                                  </Tooltip>
+                                  <div className="text-sm text-gray-500">
+                                    {formatDate(file.uploaded_at)}
+                                  </div>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline">
+                                {file.file_type.toUpperCase()}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col space-y-1 min-w-0">
+                                {file.is_manual_classification && file.manual_kpi_type ? (
+                                  <>
+                                    <div className="flex items-center space-x-1 min-w-0">
+                                      <span className="text-xs flex-shrink-0">✋</span>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Badge variant="secondary" className="text-xs truncate max-w-full">
+                                            {truncateFileName(availableFileTypes.find(t => t.value === file.manual_kpi_type)?.label || file.manual_kpi_type, 20)}
+                                          </Badge>
+                                        </TooltipTrigger>
+                                        {(availableFileTypes.find(t => t.value === file.manual_kpi_type)?.label || file.manual_kpi_type).length > 20 && (
+                                          <TooltipContent>
+                                            <p>{availableFileTypes.find(t => t.value === file.manual_kpi_type)?.label || file.manual_kpi_type}</p>
+                                          </TooltipContent>
+                                        )}
+                                      </Tooltip>
+                                    </div>
+                                    <span className="text-[10px] text-gray-500">Manuel</span>
+                                  </>
+                                ) : file.detected_kpi_type && file.detected_kpi_type !== 'unknown' ? (
+                                  <>
+                                    <div className="flex items-center space-x-1 min-w-0">
+                                      <span className="text-xs flex-shrink-0">🤖</span>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Badge
+                                            variant="outline"
+                                            className={`text-xs truncate max-w-full ${
+                                              file.detection_confidence >= 80
+                                                ? 'border-green-500 text-green-700'
+                                                : file.detection_confidence >= 50
+                                                ? 'border-yellow-500 text-yellow-700'
+                                                : 'border-red-500 text-red-700'
+                                            }`}
+                                          >
+                                            {truncateFileName(availableFileTypes.find(t => t.value === file.detected_kpi_type)?.label || file.detected_kpi_type, 20)}
+                                          </Badge>
+                                        </TooltipTrigger>
+                                        {(availableFileTypes.find(t => t.value === file.detected_kpi_type)?.label || file.detected_kpi_type).length > 20 && (
+                                          <TooltipContent>
+                                            <p>{availableFileTypes.find(t => t.value === file.detected_kpi_type)?.label || file.detected_kpi_type}</p>
+                                          </TooltipContent>
+                                        )}
+                                      </Tooltip>
+                                    </div>
+                                    <span className="text-[10px] text-gray-500">
+                                      Auto ({file.detection_confidence || 0}%)
+                                    </span>
+                                  </>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs border-gray-300 text-gray-500">
+                                    Non classifié
+                                  </Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {formatFileSize(file.file_size)}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center space-x-2">
+                                <Badge
+                                  className={getStatusColor(
+                                    file.processing_status
+                                  )}
+                                >
+                                  {file.processing_status === "completed"
+                                    ? "Terminé"
+                                    : file.processing_status === "processing"
+                                    ? "En cours"
+                                    : file.processing_status === "failed"
+                                    ? "Échec"
+                                    : "En attente"}
+                                </Badge>
+                                {file.processing_status === "processing" && (
+                                  <div className="flex items-center space-x-1">
+                                    <div className="animate-spin h-3 w-3 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                                    <span className="text-xs text-blue-600">
+                                      Temps réel
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {liveProcessingData[file.id] ? (
+                                <div className="space-y-2 min-w-[200px]">
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-medium">
+                                      {liveProcessingData[file.id].status ===
+                                      "completed"
+                                        ? "✅ Terminé"
+                                        : liveProcessingData[file.id].status ===
+                                          "failed"
+                                        ? "❌ Échec"
+                                        : "🔄 En cours..."}
+                                    </span>
+                                    <span className="font-semibold text-blue-600">
+                                      {Math.round(
+                                        liveProcessingData[file.id].progress || 0
+                                      )}
+                                      %
+                                    </span>
+                                  </div>
+                                  <Progress
+                                    value={
+                                      liveProcessingData[file.id].progress || 0
+                                    }
+                                    className="h-2"
+                                  />
+                                  <div className="flex items-center justify-between text-[10px] text-gray-600">
+                                    <span>
+                                      {liveProcessingData[
+                                        file.id
+                                      ].saved_rows?.toLocaleString() || 0}{" "}
+                                      /{" "}
+                                      {liveProcessingData[
+                                        file.id
+                                      ].total_rows?.toLocaleString() || 0}{" "}
+                                      lignes
+                                    </span>
+                                    {liveProcessingData[file.id].errors > 0 && (
+                                      <span className="text-red-600">
+                                        {liveProcessingData[file.id].errors}{" "}
+                                        erreurs
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : processingStatus[file.id] ? (
+                                <div className="flex items-center space-x-2">
+                                  <Badge className="flex items-center gap-1">
+                                    {getProcessingStatusIcon(
+                                      processingStatus[file.id]
+                                    )}
+                                    {processingStatus[file.id] === "completed"
+                                      ? "Traité"
+                                      : processingStatus[file.id] === "processing"
+                                      ? "En cours"
+                                      : "Échec"}
+                                  </Badge>
+                                </div>
+                              ) : null}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center space-x-2">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleStartTreatment(file)}
+                                      disabled={isFileProcessing(file) || file.processing_status === "completed"}
+                                    >
+                                      <Play className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>
+                                      {file.processing_status === "completed"
+                                        ? "Déjà traité"
+                                        : isFileProcessing(file)
+                                        ? "Traitement en cours"
+                                        : "Démarrer le traitement"}
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleFileClick(file)}
+                                      disabled={isFileProcessing(file)}
+                                    >
+                                      <Eye className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Voir les détails</p>
+                                  </TooltipContent>
+                                </Tooltip>
+
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handlePreviewFile(file.id)}
+                                      disabled={isFileProcessing(file)}
+                                    >
+                                      <FileText className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Aperçu du contenu</p>
+                                  </TooltipContent>
+                                </Tooltip>
+
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => handleDownloadFile(file.id)}
+                                      disabled={isFileProcessing(file)}
+                                    >
+                                      <Download className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Télécharger</p>
+                                  </TooltipContent>
+                                </Tooltip>
+
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      onClick={() => handleDeleteFile(file.id)}
+                                      disabled={deleteFileMutation.isPending || isFileProcessing(file)}
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p>Supprimer</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
