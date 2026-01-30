@@ -2134,6 +2134,9 @@ async def export_revenue_data(
         if taux_ca_max is not None:
             query = query.filter(RevenueJournal.taux_realisation_ca <= taux_ca_max)
 
+        # Exclude anomalies from normal export
+        query = query.filter(RevenueJournal.is_anomaly.is_(False))
+
         # Fetch all data
         data = query.order_by(RevenueJournal.date_gl.desc(), RevenueJournal.org_name.asc()).all()
 
@@ -2865,6 +2868,10 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                     RevenueJournal.reference.ilike(search_term)
                 )
             )
+
+        # Exclude anomalies from normal single-file export
+        if export_type == "normal":
+            query = query.filter(RevenueJournal.is_anomaly.is_(False))
 
         # Progress: Query built
         asyncio.run(processing_ws_manager.send_task_update(task_id, {

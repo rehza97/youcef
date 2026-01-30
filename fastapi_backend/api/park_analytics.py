@@ -39,6 +39,61 @@ park_analytics_router = APIRouter()
 # Store active export tasks
 export_tasks = {}
 
+# French number format for Parc exports (space thousands, comma decimal)
+PARC_NUMERIC_COLS = ["Rental Fees"]
+
+
+def _format_french_number(x):
+    """Format number with French formatting: space thousands, comma decimal."""
+    if pd.isna(x) or not isinstance(x, (int, float)):
+        return x
+    formatted = f"{x:,.2f}"
+    if "." in formatted:
+        int_part, dec_part = formatted.rsplit(".", 1)
+        int_part_clean = int_part.replace(",", "")
+        int_part_formatted = ""
+        for i, digit in enumerate(reversed(int_part_clean)):
+            if i > 0 and i % 3 == 0:
+                int_part_formatted = " " + int_part_formatted
+            int_part_formatted = digit + int_part_formatted
+        return int_part_formatted + "," + dec_part
+    int_part_clean = formatted.replace(",", "")
+    int_part_formatted = ""
+    for i, digit in enumerate(reversed(int_part_clean)):
+        if i > 0 and i % 3 == 0:
+            int_part_formatted = " " + int_part_formatted
+        int_part_formatted = digit + int_part_formatted
+    return int_part_formatted + ",00"
+
+
+def _apply_french_number_format_df(df, numeric_cols):
+    """Return a copy of df with numeric columns formatted as French (space thousands, comma decimal)."""
+    df_f = df.copy()
+    for col in numeric_cols:
+        if col in df_f.columns:
+            df_f[col] = df_f[col].apply(_format_french_number)
+    return df_f
+
+
+def _write_parc_excel_french(df, buffer, sheet_name, numeric_cols=PARC_NUMERIC_COLS):
+    """Write df to buffer as Excel with French number format (# ##0,00)."""
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        worksheet = writer.sheets[sheet_name]
+        french_number_format = "# ##0,00"
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            if col_name in numeric_cols:
+                for row_idx in range(2, len(df) + 2):
+                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                    if cell.value is not None and cell.value != "":
+                        cell.number_format = french_number_format
+
+
+def _write_parc_csv_french(df, buffer, numeric_cols=PARC_NUMERIC_COLS):
+    """Write df to buffer as CSV with French number format and semicolon separator."""
+    df_f = _apply_french_number_format_df(df, numeric_cols)
+    df_f.to_csv(buffer, index=False, sep=";", encoding="utf-8-sig")
+
 
 def _run_export_background(task_id: str, export_params: dict):
     """Background worker for export with progress updates"""
@@ -368,10 +423,9 @@ def _run_export_background(task_id: str, export_params: dict):
                 }))
                 normal_buffer = io.BytesIO()
                 if format == "excel":
-                    with pd.ExcelWriter(normal_buffer, engine='openpyxl') as writer:
-                        normal_df.to_excel(writer, index=False, sheet_name='Parc Data')
+                    _write_parc_excel_french(normal_df, normal_buffer, "Parc Data")
                 else:
-                    normal_df.to_csv(normal_buffer, index=False, encoding='utf-8-sig')
+                    _write_parc_csv_french(normal_df, normal_buffer)
                 zip_file.writestr(normal_filename, normal_buffer.getvalue())
                 logger.info(f"✅ Normal file written")
 
@@ -386,10 +440,9 @@ def _run_export_background(task_id: str, export_params: dict):
                     anomaly_filename = f"Anomalie_Parc_NGBSS_{timestamp}.{file_ext}"
                     anomaly_buffer = io.BytesIO()
                     if format == "excel":
-                        with pd.ExcelWriter(anomaly_buffer, engine='openpyxl') as writer:
-                            anomaly_df.to_excel(writer, index=False, sheet_name='Parc Data')
+                        _write_parc_excel_french(anomaly_df, anomaly_buffer, "Parc Data")
                     else:
-                        anomaly_df.to_csv(anomaly_buffer, index=False, encoding='utf-8-sig')
+                        _write_parc_csv_french(anomaly_df, anomaly_buffer)
                     zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
                     logger.info(f"✅ Anomaly file written")
                 else:
@@ -425,12 +478,13 @@ def _run_export_background(task_id: str, export_params: dict):
                             "progress": 91,
                             "message": f"Writing {facturation_count:,} 2B records to Excel... Please wait."
                         }))
-                        with pd.ExcelWriter(facturation_buffer, engine='openpyxl') as writer:
-                            facturation_df.to_excel(writer, index=False, sheet_name='Facturation 2B')
+                        _write_parc_excel_french(
+                            facturation_df, facturation_buffer, "Facturation 2B"
+                        )
                         logger.info("✅ Excel conversion complete")
                     else:
-                        # CSV - for BytesIO, write all at once (CSV is fast even for large files)
-                        facturation_df.to_csv(facturation_buffer, index=False, encoding='utf-8-sig', lineterminator='\n')
+                        # CSV - French format, semicolon separator
+                        _write_parc_csv_french(facturation_df, facturation_buffer)
                     logger.info("💾 Writing to ZIP...")
                     zip_file.writestr(facturation_filename, facturation_buffer.getvalue())
                     logger.info(f"✅ Facturation Groupée file written")
@@ -625,9 +679,8 @@ def _run_export_background(task_id: str, export_params: dict):
                 "message": f"Writing {total_records:,} records to file..."
             }))
 
+            sheet_name = "Facturation 2B" if export_type == "2b" else "Parc Data"
             if format == "excel":
-                # Excel writing with openpyxl is slow for large files
-                # Provide clear feedback and optimize DataFrame before writing
                 if total_records > 100000:
                     logger.info(f"📝 Large Excel dataset ({total_records:,} records). Optimizing before writing...")
                     asyncio.run(processing_ws_manager.send_task_update(task_id, {
@@ -635,48 +688,35 @@ def _run_export_background(task_id: str, export_params: dict):
                         "progress": 87,
                         "message": f"Preparing {total_records:,} records for Excel export... (this may take several minutes for large files)"
                     }))
-                    
-                    # Optimize DataFrame: convert object columns to string to reduce memory
                     for col in df.select_dtypes(include=['object']).columns:
                         df[col] = df[col].astype(str)
-                    
-                    logger.info("📝 Starting Excel write (this is the slowest step for large files)...")
                     asyncio.run(processing_ws_manager.send_task_update(task_id, {
                         "status": "processing",
                         "progress": 90,
-                        "message": f"Writing {total_records:,} records to Excel file... Please wait, this may take 5-15 minutes for very large files."
+                        "message": f"Writing {total_records:,} records to Excel file... Please wait."
                     }))
-                    
-                    # Write all at once (chunked writing to same sheet is complex with openpyxl)
-                    with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Parc Data')
-                    
-                    logger.info(f"✅ Excel file written successfully ({total_records:,} records)")
                 else:
-                    # For smaller files, use standard writing
                     asyncio.run(processing_ws_manager.send_task_update(task_id, {
                         "status": "processing",
                         "progress": 88,
                         "message": f"Writing {total_records:,} records to Excel..."
                     }))
-                    with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='Parc Data')
+                excel_buffer = io.BytesIO()
+                _write_parc_excel_french(df, excel_buffer, sheet_name)
+                with open(temp_file.name, "wb") as f:
+                    f.write(excel_buffer.getvalue())
+                if total_records > 100000:
+                    logger.info(f"✅ Excel file written successfully ({total_records:,} records)")
                 filename = f"{base_filename}.xlsx"
             else:
-                # CSV writing - much faster than Excel, but optimize for very large files
                 if total_records > 500000:
-                    logger.info(f"📝 Very large CSV dataset ({total_records:,} records). Using optimized writing...")
                     asyncio.run(processing_ws_manager.send_task_update(task_id, {
                         "status": "processing",
                         "progress": 88,
-                        "message": f"Writing {total_records:,} records to CSV... (this is faster than Excel)"
+                        "message": f"Writing {total_records:,} records to CSV..."
                     }))
-                    # Use chunksize parameter for memory efficiency
-                    df.to_csv(temp_file.name, index=False, encoding='utf-8-sig', 
-                            lineterminator='\n', chunksize=100000)
-                else:
-                    # For smaller files, use standard writing (CSV is fast)
-                    df.to_csv(temp_file.name, index=False, encoding='utf-8-sig', lineterminator='\n')
+                df_f = _apply_french_number_format_df(df, PARC_NUMERIC_COLS)
+                df_f.to_csv(temp_file.name, index=False, sep=";", encoding="utf-8-sig")
                 filename = f"{base_filename}.csv"
 
             export_tasks[task_id].update({
@@ -2419,14 +2459,13 @@ async def export_data(
                 continue
         return records
 
-    # Helper function to create file content
+    # Helper function to create file content (French number format)
     def create_file_content(df, file_format):
         output = io.BytesIO()
         if file_format == "excel":
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Parc Data')
+            _write_parc_excel_french(df, output, "Parc Data")
         else:  # csv
-            df.to_csv(output, index=False, encoding='utf-8-sig')
+            _write_parc_csv_french(df, output)
         output.seek(0)
         return output.getvalue()
 
@@ -2576,13 +2615,12 @@ async def export_data(
             base_filename = f"Parc_Corporate_NGBSS_{timestamp}"
 
         if format == "excel":
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Parc Data')
+            _write_parc_excel_french(df, output, "Parc Data")
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"{base_filename}.xlsx"
         else:  # csv
-            df.to_csv(output, index=False, encoding='utf-8-sig')
-            media_type = "text/csv"
+            _write_parc_csv_french(df, output)
+            media_type = "text/csv; charset=utf-8"
             filename = f"{base_filename}.csv"
 
         output.seek(0)

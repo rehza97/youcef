@@ -2053,7 +2053,7 @@ async def export_encaissement_data(
     typ_fact: Optional[List[str]] = Query(None, description="Filter by type facture(s)"),
     # Other filters
     include_duplicates: bool = Query(True, description="Include duplicate records"),
-    include_anomalies: bool = Query(True, description="Include anomaly records"),
+    include_anomalies: bool = Query(False, description="Include anomaly records (default: exclude)"),
     format: str = Query("xlsx", regex="^(xlsx|csv)$")
 ):
     """
@@ -2449,6 +2449,9 @@ def _run_encaissement_export_background(task_id: str, export_params: dict):
         if export_params.get("is_anomaly") is not None:
             bool_val = export_params["is_anomaly"].lower() in ["true", "oui", "yes", "1"] if isinstance(export_params["is_anomaly"], str) else bool(export_params["is_anomaly"])
             query = query.filter(EncaissementARDot.is_anomaly == bool_val)
+        elif not export_params.get("include_anomalies", False):
+            # Default: exclude anomalies from export
+            query = query.filter(EncaissementARDot.is_anomaly == False)
 
         # Apply year filter
         if export_params.get("year") and export_params.get("year") != "all":
@@ -2714,6 +2717,7 @@ async def export_encaissement_data_async(
     # Boolean filters
     is_duplicate: Optional[str] = Query(None),
     is_anomaly: Optional[str] = Query(None),
+    include_anomalies: bool = Query(False, description="Include anomaly records (default: exclude)"),
     # Search
     search: Optional[str] = Query(None),
     # Year filter
@@ -2764,6 +2768,7 @@ async def export_encaissement_data_async(
         "montant_restant_max": montant_restant_max,
         "is_duplicate": is_duplicate,
         "is_anomaly": is_anomaly,
+        "include_anomalies": include_anomalies,
         "search": search,
         "year": year,
         "sort_by": sort_by,
