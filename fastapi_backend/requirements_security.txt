@@ -1,8 +1,7 @@
 # Additional security dependencies for the enhanced chat and file system
 
 # File content validation and malware detection
-python-magic==0.4.27
-python-magic-bin==0.4.14  # Windows support
+python-magic==0.4.27  # Linux: install libmagic1 via system package
 
 # Encryption and cryptography
 cryptography==41.0.7

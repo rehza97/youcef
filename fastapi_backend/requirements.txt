@@ -45,8 +45,7 @@ websockets>=12.0,<14.0             # WebSocket support
 # File Handling & Processing
 # ----------------------------------------------------------------------------
 aiofiles>=23.2.1,<24.0.0
-python-magic>=0.4.27,<0.5.0        # File type detection
-python-magic-bin>=0.4.14,<0.5.0    # Windows support for python-magic
+python-magic>=0.4.27,<0.5.0        # File type detection (Linux: install libmagic1)
 filetype>=1.2.0,<2.0.0             # Advanced file type detection
 Pillow>=10.0.1,<11.0.0             # Image processing and validation
 PyPDF2>=3.0.1,<4.0.0               # PDF file processing
