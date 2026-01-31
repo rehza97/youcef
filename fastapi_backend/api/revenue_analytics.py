@@ -6,7 +6,7 @@ Handles data retrieval, filtering, and export for revenue data
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, distinct, desc
 from typing import List, Optional, Dict, Any
 from database.connection import get_db
 from models.user import User
@@ -332,7 +332,8 @@ async def get_revenue_overview(
                     for row in by_month_data}
 
         # Monthly Objective series (now using actual monthly values from objectifs_monthly_dot)
-        # Get year from revenue data or use current year
+        # Revenue months can be from a different year than objectives (e.g. 2025 revenue + 2026 objectives),
+        # so we compute objectives per revenue year and fall back to the latest objectives year by month number.
         by_month_objective: Dict[str, float] = {}
 
         # Determine which year(s) to query objectives for
@@ -356,28 +357,78 @@ async def get_revenue_overview(
             current_year = datetime.utcnow().year
             months_by_year[current_year] = []
 
-        # Query monthly objectives for each year
+        # Determine fallback objectives year (latest available, respecting DOT access + org filter if provided)
+        from sqlalchemy import desc
+        fallback_year: Optional[int] = None
+        fallback_year_query = db.query(RevenueDOTCorporate.year).filter(
+            RevenueDOTCorporate.year.isnot(None)
+        )
+        if accessible_dot_ids:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+            )
+        if org_name:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        fallback_year_row = fallback_year_query.order_by(
+            desc(RevenueDOTCorporate.year)
+        ).first()
+        if fallback_year_row:
+            fallback_year = fallback_year_row[0]
+
+        # Query monthly objectives for each year (with fallback to latest objectives year by month number)
         total_objective = 0.0
         for year in months_by_year.keys():
             objective_query = db.query(RevenueDOTCorporate).filter(
                 RevenueDOTCorporate.year == year
             )
-
+            if accessible_dot_ids:
+                objective_query = objective_query.filter(
+                    RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+                )
             # Apply org_name filter to objectives
             if org_name:
-                objective_query = objective_query.filter(RevenueDOTCorporate.dot_name.in_(org_name))
+                objective_query = objective_query.filter(
+                    RevenueDOTCorporate.dot_name.in_(org_name)
+                )
 
             objectives = objective_query.all()
 
-            # Calculate total annual objective for this year
-            total_objective += sum(obj.annual_objective for obj in objectives)
+            # If no objectives exist for this revenue year, fall back to latest objectives year (if any)
+            objectives_used = objectives
+            if not objectives_used and fallback_year is not None and int(fallback_year) != int(year):
+                fallback_query = db.query(RevenueDOTCorporate).filter(
+                    RevenueDOTCorporate.year == int(fallback_year)
+                )
+                if accessible_dot_ids:
+                    fallback_query = fallback_query.filter(
+                        RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+                    )
+                if org_name:
+                    fallback_query = fallback_query.filter(
+                        RevenueDOTCorporate.dot_name.in_(org_name)
+                    )
+                objectives_used = fallback_query.all()
 
-            # Build monthly objectives using actual monthly values
+            # Calculate total annual objective for this year (based on objectives used)
+            year_annual = sum(obj.annual_objective for obj in objectives_used)
+            total_objective += year_annual
+
+            # Build monthly objectives: use actual monthly values if present, else distribute annual
+            monthly_sums = [
+                sum(obj.get_month_objective(month_num) for obj in objectives_used)
+                for month_num in range(1, 13)
+            ]
+            total_monthly = sum(monthly_sums)
+            use_distributed = year_annual > 0 and total_monthly <= 0
+            per_month = (year_annual / 12.0) if use_distributed else None
+
             for month_num in range(1, 13):
                 month_key = f"{year}-{month_num:02d}"
-                month_objective = sum(obj.get_month_objective(month_num) for obj in objectives)
-                if month_objective > 0:
-                    by_month_objective[month_key] = month_objective
+                month_objective = monthly_sums[month_num - 1] if not use_distributed else per_month
+                if month_objective and float(month_objective) > 0:
+                    by_month_objective[month_key] = float(month_objective)
 
         # Anomalies count
         anomalies_count = db.query(RevenueAnomaly).count()
@@ -840,59 +891,111 @@ async def get_revenue_column_values(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/objectifs/available-years", response_model=List[int])
+async def get_objectifs_available_years(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get distinct years from objectifs_monthly_dot (DOT Corporate objectives).
+    Used for Preview Data -> Objectif C.A year dropdown only.
+    Requires: can_view_analytics permission.
+    """
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
+    try:
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        query = db.query(distinct(RevenueDOTCorporate.year)).filter(
+            RevenueDOTCorporate.year.isnot(None)
+        )
+        if accessible_dot_ids:
+            query = query.filter(
+                or_(
+                    RevenueDOTCorporate.dot_id.in_(accessible_dot_ids),
+                    RevenueDOTCorporate.dot_id.is_(None)
+                )
+            )
+        rows = query.all()
+        years = sorted({int(r[0]) for r in rows if r and r[0] is not None}, reverse=True)
+        logger.info(f"Objectifs available years: {years}")
+        return years
+    except Exception as e:
+        logger.error(f"Error getting objectifs available years: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/preview-objectives")
 async def get_revenue_objectives_preview(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     limit: int = Query(10, ge=1, le=100, description="Number of records to preview"),
     offset: int = Query(0, ge=0, description="Number of records to skip"),
-    dot_name: Optional[str] = Query(None, description="Filter by DOT name")
+    dot_name: Optional[str] = Query(None, description="Filter by DOT name"),
+    year: Optional[int] = Query(None, description="Filter by year (defaults to latest objectives year)")
 ):
     """
-    Get sample revenue objectives for dashboard preview
-    
-    Returns up to `limit` revenue objective records.
+    Get sample revenue objectives from objectifs_monthly_dot (RevenueDOTCorporate).
+    Returns up to `limit` records; objectif_ca is the annual objective (sum of monthly values).
     """
-    PermissionService.require_permission(
-        current_user, db, "can_view_analytics")
-    
+    PermissionService.require_permission(current_user, db, "can_view_analytics")
     try:
-        query = db.query(RevenueObjective)
-        
+        accessible_dot_ids = DOTService.get_user_accessible_dots(
+            db, current_user.id, module=MODULE_CHIFFRE_AFFAIRES
+        )
+        base_query = db.query(RevenueDOTCorporate)
+        if accessible_dot_ids:
+            base_query = base_query.filter(
+                or_(
+                    RevenueDOTCorporate.dot_id.in_(accessible_dot_ids),
+                    RevenueDOTCorporate.dot_id.is_(None)
+                )
+            )
         if dot_name:
-            query = query.filter(RevenueObjective.dot_name.ilike(f"%{dot_name}%"))
-        
-        # Get total count
-        total_count = query.count()
-        
-        # Apply pagination
-        records = query.order_by(RevenueObjective.dot_name.asc()) \
-            .offset(offset) \
-            .limit(limit) \
-            .all()
-        
-        # Convert to dict format
+            base_query = base_query.filter(
+                RevenueDOTCorporate.dot_name.ilike(f"%{dot_name}%")
+            )
+        if year is not None:
+            base_query = base_query.filter(RevenueDOTCorporate.year == year)
+        else:
+            year_subq = db.query(RevenueDOTCorporate.year).filter(
+                RevenueDOTCorporate.year.isnot(None)
+            )
+            if accessible_dot_ids:
+                year_subq = year_subq.filter(
+                    or_(
+                        RevenueDOTCorporate.dot_id.in_(accessible_dot_ids),
+                        RevenueDOTCorporate.dot_id.is_(None)
+                    )
+                )
+            latest_row = year_subq.order_by(desc(RevenueDOTCorporate.year)).first()
+            if latest_row and latest_row[0] is not None:
+                base_query = base_query.filter(
+                    RevenueDOTCorporate.year == latest_row[0]
+                )
+        total_count = base_query.count()
+        records = base_query.order_by(RevenueDOTCorporate.dot_name.asc()).offset(
+            offset
+        ).limit(limit).all()
         records_data = []
         for record in records:
             records_data.append({
                 "id": record.id,
                 "dot_name": record.dot_name,
-                "objectif_ca": float(record.objectif_ca) if record.objectif_ca else 0.0,
+                "objectif_ca": float(record.annual_objective) if record.annual_objective else 0.0,
                 "dot_id": record.dot_id,
                 "file_upload_id": record.file_upload_id,
                 "created_at": record.created_at.isoformat() if record.created_at else None,
                 "updated_at": record.updated_at.isoformat() if record.updated_at else None,
             })
-        
         return {
             "records": records_data,
             "total_available": total_count,
             "preview_limit": limit,
             "preview_offset": offset
         }
-    
     except Exception as e:
-        logger.error(f"Error getting revenue objectives preview: {e}")
+        logger.error(f"Error getting revenue objectives preview: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1023,12 +1126,68 @@ async def get_revenue_by_org(
         results = query.group_by(
             RevenueJournal.org_name).order_by(func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
 
-        # Get all objectives from monthly objectives table (current year)
+        # Get objectives from monthly objectives table.
+        # Revenue can be from a different year than objectives; prefer matching revenue year if available,
+        # otherwise fall back to the latest objectives year (respecting DOT access + org filter).
+        from sqlalchemy import desc, extract, distinct
+
+        revenue_year_rows = base_query.with_entities(
+            extract('year', RevenueJournal.date_gl)
+        ).distinct().all()
+        revenue_years = [int(r[0]) for r in revenue_year_rows if r and r[0] is not None]
+
+        fallback_year: Optional[int] = None
+        fallback_year_query = db.query(RevenueDOTCorporate.year).filter(
+            RevenueDOTCorporate.year.isnot(None)
+        )
+        if accessible_dot_ids:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+            )
+        if org_name:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        fallback_year_row = fallback_year_query.order_by(
+            desc(RevenueDOTCorporate.year)
+        ).first()
+        if fallback_year_row:
+            fallback_year = int(fallback_year_row[0])
+
+        matched_year: Optional[int] = None
+        if revenue_years:
+            matched_year_row = db.query(distinct(RevenueDOTCorporate.year)).filter(
+                RevenueDOTCorporate.year.in_(revenue_years)
+            )
+            if accessible_dot_ids:
+                matched_year_row = matched_year_row.filter(
+                    RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+                )
+            if org_name:
+                matched_year_row = matched_year_row.filter(
+                    RevenueDOTCorporate.dot_name.in_(org_name)
+                )
+            matched_year_row = matched_year_row.order_by(
+                desc(RevenueDOTCorporate.year)
+            ).first()
+            if matched_year_row and matched_year_row[0] is not None:
+                matched_year = int(matched_year_row[0])
+
+        objectives_year = matched_year or fallback_year or datetime.utcnow().year
+
         objectives_dict = {}
-        current_year = datetime.utcnow().year
-        objectives = db.query(RevenueDOTCorporate).filter(
-            RevenueDOTCorporate.year == current_year
-        ).all()
+        objectives_query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == objectives_year
+        )
+        if accessible_dot_ids:
+            objectives_query = objectives_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+            )
+        if org_name:
+            objectives_query = objectives_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        objectives = objectives_query.all()
         for obj in objectives:
             # Use normalized dot_name for consistent matching
             from services.revenue_processing_helpers import RevenueProcessingHelpers
@@ -1249,28 +1408,93 @@ async def get_revenue_by_month(
             func.to_char(RevenueJournal.date_gl, 'YYYY-MM')
         ).order_by('month').all()
 
-        # Get all objectives from monthly objectives table
-        # Build month-specific objectives map
-        current_year = datetime.utcnow().year
-        all_objectives = db.query(RevenueDOTCorporate).filter(
-            RevenueDOTCorporate.year == current_year
-        ).all()
+        # Get objectives from monthly objectives table.
+        # IMPORTANT: Revenue months can be from a different year than "current year" (e.g. 2025 revenue + 2026 objectives),
+        # so we build objectives per revenue year and fall back to the latest objectives year by month number.
+        years_needed: set[int] = set()
+        for row in results:
+            if row.month and isinstance(row.month, str) and len(row.month) >= 7:
+                try:
+                    years_needed.add(int(row.month[:4]))
+                except ValueError:
+                    continue
 
-        # Build monthly objectives map
-        monthly_objectives_map = {}
-        for month_num in range(1, 13):
-            month_key = f"{current_year}-{month_num:02d}"
-            monthly_objectives_map[month_key] = sum(
-                obj.get_month_objective(month_num) for obj in all_objectives
+        from sqlalchemy import desc
+        fallback_year: Optional[int] = None
+        fallback_year_query = db.query(RevenueDOTCorporate.year).filter(
+            RevenueDOTCorporate.year.isnot(None)
+        )
+        if accessible_dot_ids:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
             )
+        if org_name:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        fallback_year_row = fallback_year_query.order_by(
+            desc(RevenueDOTCorporate.year)
+        ).first()
+        if fallback_year_row:
+            fallback_year = fallback_year_row[0]
+
+        years_to_fetch = set(years_needed)
+        if fallback_year is not None:
+            years_to_fetch.add(int(fallback_year))
+        if not years_to_fetch:
+            years_to_fetch.add(datetime.utcnow().year)
+
+        objectives_query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year.in_(sorted(years_to_fetch))
+        )
+        if accessible_dot_ids:
+            objectives_query = objectives_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+            )
+        if org_name:
+            objectives_query = objectives_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        all_objectives = objectives_query.all()
+
+        # Build objectives lookup:
+        # - by full month key (YYYY-MM) when objectives exist for that year
+        # - fallback by month number from the latest objectives year (if any)
+        monthly_objectives_map: Dict[str, float] = {}
+        fallback_month_objectives_by_num: Dict[int, float] = {}
+
+        objectives_by_year: Dict[int, list] = {}
+        for obj in all_objectives:
+            objectives_by_year.setdefault(int(obj.year), []).append(obj)
+
+        for year, objs in objectives_by_year.items():
+            for month_num in range(1, 13):
+                month_key = f"{year}-{month_num:02d}"
+                monthly_objectives_map[month_key] = float(
+                    sum(o.get_month_objective(month_num) for o in objs) or 0.0
+                )
+
+        if fallback_year is not None and int(fallback_year) in objectives_by_year:
+            fallback_objs = objectives_by_year[int(fallback_year)]
+            for month_num in range(1, 13):
+                fallback_month_objectives_by_num[month_num] = float(
+                    sum(o.get_month_objective(month_num) for o in fallback_objs) or 0.0
+                )
 
         response = []
         for row in results:
             if row.month:  # Only include valid months
                 total_revenue = float(row.total_revenue or 0)
 
-                # Get month-specific objective from actual monthly data
-                monthly_objective = monthly_objectives_map.get(row.month, 0.0)
+                # Get month-specific objective from actual monthly data.
+                # Prefer exact year match (YYYY-MM), otherwise fall back to latest objectives year by month number.
+                monthly_objective = float(monthly_objectives_map.get(row.month, 0.0) or 0.0)
+                if monthly_objective <= 0.0:
+                    try:
+                        month_num = int(row.month.split("-")[1])
+                        monthly_objective = float(fallback_month_objectives_by_num.get(month_num, 0.0) or 0.0)
+                    except Exception:
+                        monthly_objective = 0.0
 
                 # Calculate achievement rate per month: (Total CA for month / Monthly objective) × 100
                 achievement_rate = 0.0
@@ -1496,11 +1720,66 @@ async def get_revenue_by_type_fact(
             RevenueJournal.typ_fact
         ).order_by(func.sum(RevenueJournal.chiffre_aff_exe_dzd).desc()).all()
 
-        # Get total objective for achievement rate calculation from monthly objectives
-        current_year = datetime.utcnow().year
-        all_objectives = db.query(RevenueDOTCorporate).filter(
-            RevenueDOTCorporate.year == current_year
-        ).all()
+        # Get total objective for achievement rate calculation from monthly objectives.
+        # Prefer objectives matching the revenue year(s) in the filtered data; otherwise use the latest objectives year.
+        from sqlalchemy import desc, extract, distinct
+
+        revenue_year_rows = base_query.with_entities(
+            extract('year', RevenueJournal.date_gl)
+        ).distinct().all()
+        revenue_years = [int(r[0]) for r in revenue_year_rows if r and r[0] is not None]
+
+        fallback_year: Optional[int] = None
+        fallback_year_query = db.query(RevenueDOTCorporate.year).filter(
+            RevenueDOTCorporate.year.isnot(None)
+        )
+        if accessible_dot_ids:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+            )
+        if org_name:
+            fallback_year_query = fallback_year_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        fallback_year_row = fallback_year_query.order_by(
+            desc(RevenueDOTCorporate.year)
+        ).first()
+        if fallback_year_row:
+            fallback_year = int(fallback_year_row[0])
+
+        matched_year: Optional[int] = None
+        if revenue_years:
+            matched_year_row = db.query(distinct(RevenueDOTCorporate.year)).filter(
+                RevenueDOTCorporate.year.in_(revenue_years)
+            )
+            if accessible_dot_ids:
+                matched_year_row = matched_year_row.filter(
+                    RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+                )
+            if org_name:
+                matched_year_row = matched_year_row.filter(
+                    RevenueDOTCorporate.dot_name.in_(org_name)
+                )
+            matched_year_row = matched_year_row.order_by(
+                desc(RevenueDOTCorporate.year)
+            ).first()
+            if matched_year_row and matched_year_row[0] is not None:
+                matched_year = int(matched_year_row[0])
+
+        objectives_year = matched_year or fallback_year or datetime.utcnow().year
+
+        objectives_query = db.query(RevenueDOTCorporate).filter(
+            RevenueDOTCorporate.year == objectives_year
+        )
+        if accessible_dot_ids:
+            objectives_query = objectives_query.filter(
+                RevenueDOTCorporate.dot_id.in_(accessible_dot_ids)
+            )
+        if org_name:
+            objectives_query = objectives_query.filter(
+                RevenueDOTCorporate.dot_name.in_(org_name)
+            )
+        all_objectives = objectives_query.all()
         total_objective = sum(obj.annual_objective for obj in all_objectives)
 
         response = []
@@ -2489,17 +2768,54 @@ async def export_revenue_anomalies(
         else:
             df = pd.DataFrame()
 
-        # Generate file
+        # Generate file - French number format (space thousands, comma decimal)
+        numeric_cols = [
+            "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
+            "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
+            "TVA", "Taux Réalisation CA (%)"
+        ]
         output = io.BytesIO()
 
         if format == "xlsx":
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
+                worksheet = writer.sheets['Anomalies CA AR DOT']
+                french_number_format = '# ##0,00'
+                for col_idx, col_name in enumerate(df.columns, start=1):
+                    if col_name in numeric_cols:
+                        for row_idx in range(2, len(df) + 2):
+                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            if cell.value is not None and cell.value != "":
+                                cell.number_format = french_number_format
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
         else:  # csv
-            df.to_csv(output, index=False)
-            media_type = "text/csv"
+            def format_french_number(x):
+                if pd.isna(x) or not isinstance(x, (int, float)):
+                    return x
+                formatted = f"{x:,.2f}"
+                if '.' in formatted:
+                    int_part, dec_part = formatted.rsplit('.', 1)
+                    int_part_clean = int_part.replace(',', '')
+                    int_part_formatted = ''
+                    for i, digit in enumerate(reversed(int_part_clean)):
+                        if i > 0 and i % 3 == 0:
+                            int_part_formatted = ' ' + int_part_formatted
+                        int_part_formatted = digit + int_part_formatted
+                    return int_part_formatted + ',' + dec_part
+                int_part_clean = formatted.replace(',', '')
+                int_part_formatted = ''
+                for i, digit in enumerate(reversed(int_part_clean)):
+                    if i > 0 and i % 3 == 0:
+                        int_part_formatted = ' ' + int_part_formatted
+                    int_part_formatted = digit + int_part_formatted
+                return int_part_formatted + ',00'
+            df_formatted = df.copy()
+            for col in numeric_cols:
+                if col in df_formatted.columns:
+                    df_formatted[col] = df_formatted[col].apply(format_french_number)
+            df_formatted.to_csv(output, index=False, sep=";", encoding='utf-8-sig')
+            media_type = "text/csv; charset=utf-8"
             filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
 
         output.seek(0)
@@ -3489,12 +3805,55 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
             }))
 
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format}')
+            if export_type == "anomalies":
+                numeric_cols = [
+                    "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
+                    "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
+                    "TVA", "Taux Réalisation CA (%)"
+                ]
             if format == "xlsx":
                 with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Revenue Data' if export_type != "anomalies" else 'Anomalies')
+                    sheet_name = 'Revenue Data' if export_type != "anomalies" else 'Anomalies'
+                    df.to_excel(writer, index=False, sheet_name=sheet_name)
+                    if export_type == "anomalies":
+                        worksheet = writer.sheets[sheet_name]
+                        french_number_format = '# ##0,00'
+                        for col_idx, col_name in enumerate(df.columns, start=1):
+                            if col_name in numeric_cols:
+                                for row_idx in range(2, len(df) + 2):
+                                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                                    if cell.value is not None and cell.value != "":
+                                        cell.number_format = french_number_format
                 filename = f"{base_filename}.xlsx"
             else:
-                df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
+                if export_type == "anomalies":
+                    def _format_french(x):
+                        if pd.isna(x) or not isinstance(x, (int, float)):
+                            return x
+                        formatted = f"{x:,.2f}"
+                        if '.' in formatted:
+                            int_part, dec_part = formatted.rsplit('.', 1)
+                            int_part_clean = int_part.replace(',', '')
+                            int_part_formatted = ''
+                            for i, digit in enumerate(reversed(int_part_clean)):
+                                if i > 0 and i % 3 == 0:
+                                    int_part_formatted = ' ' + int_part_formatted
+                                int_part_formatted = digit + int_part_formatted
+                            return int_part_formatted + ',' + dec_part
+                        int_part_clean = formatted.replace(',', '')
+                        int_part_formatted = ''
+                        for i, digit in enumerate(reversed(int_part_clean)):
+                            if i > 0 and i % 3 == 0:
+                                int_part_formatted = ' ' + int_part_formatted
+                            int_part_formatted = digit + int_part_formatted
+                        return int_part_formatted + ',00'
+                    df_out = df.copy()
+                    for col in numeric_cols:
+                        if col in df_out.columns:
+                            df_out[col] = df_out[col].apply(_format_french)
+                    df_out.to_csv(temp_file.name, index=False, sep=";", encoding='utf-8-sig')
+                else:
+                    df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
                 filename = f"{base_filename}.csv"
 
             export_tasks[task_id].update({

@@ -609,6 +609,22 @@ class FileService:
         except Exception as e:
             logger.warning(f"Error deleting revenue objectives records: {e}")
 
+        # Delete related objectifs_monthly_dot (DOT corporate monthly) records
+        try:
+            result = db.execute(text(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'objectifs_monthly_dot')"
+            )).scalar()
+
+            if result:
+                dot_corp_count = db.execute(text(
+                    "DELETE FROM objectifs_monthly_dot WHERE file_upload_id = :file_id RETURNING id"
+                ), {"file_id": file_id}).rowcount
+                if dot_corp_count > 0:
+                    logger.info(
+                        f"Deleted {dot_corp_count} objectifs_monthly_dot records related to file {file_id}")
+        except Exception as e:
+            logger.warning(f"Error deleting objectifs_monthly_dot records: {e}")
+
         # Delete related account descriptions records if table exists
         try:
             result = db.execute(text(

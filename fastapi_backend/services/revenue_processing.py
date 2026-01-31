@@ -1608,10 +1608,23 @@ class RevenueDataProcessor:
             
             df_anomalies = pd.DataFrame(anomalies_data)
             
-            # Save anomalies file
+            # Save anomalies file with French number format
+            numeric_cols = [
+                "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
+                "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
+                "TVA", "Taux Réalisation CA (%)"
+            ]
             with pd.ExcelWriter(anomaly_file, engine='openpyxl') as writer:
                 df_anomalies.to_excel(writer, sheet_name='Anomalies CA AR DOT', index=False)
-            
+                worksheet = writer.sheets['Anomalies CA AR DOT']
+                french_number_format = '# ##0,00'
+                for col_idx, col_name in enumerate(df_anomalies.columns, start=1):
+                    if col_name in numeric_cols:
+                        for row_idx in range(2, len(df_anomalies) + 2):
+                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            if cell.value is not None and cell.value != "":
+                                cell.number_format = french_number_format
+
             logger.info(f"✅ Generated anomaly export file: {anomaly_file} ({len(df_anomalies)} rows)")
             
             # Save anomalies to database as well

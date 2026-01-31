@@ -1853,6 +1853,7 @@ export const getRevenueObjectivesPreview = (
   });
 
   if (filters.dot_name) params.append("dot_name", filters.dot_name);
+  if (filters.year != null) params.append("year", String(filters.year));
 
   return api.get(`/api/revenue/preview-objectives?${params.toString()}`);
 };
@@ -2027,9 +2028,14 @@ export const getRevenueJournal = (journalId) => {
   return api.get(`/api/revenue/journal/${journalId}`);
 };
 
-// Get available years from revenue journal table
+// Get available years from objectifs_monthly_dot (for year filter + Preview -> Objectif C.A)
+export const getRevenueObjectifsAvailableYears = () => {
+  return api.get("/api/revenue/objectifs/available-years");
+};
+
+// Alias for legacy callers: /api/revenue/available-years was removed; use objectifs/available-years
 export const getRevenueAvailableYears = () => {
-  return api.get("/api/revenue/available-years");
+  return api.get("/api/revenue/objectifs/available-years");
 };
 
 // ============================================================================

@@ -37,7 +37,7 @@ import {
   exportRevenueData,
   startRevenueExport,
   downloadRevenueExport,
-  getRevenueAvailableYears,
+  getRevenueObjectifsAvailableYears,
   getRevenueExportStatus,
   getRevenuePreviewData,
   getRevenueObjectivesPreview,
@@ -720,17 +720,11 @@ const RevenuePage = () => {
   const [activeTab, setActiveTab] = useState("overview");
   const [showFilters, setShowFilters] = useState(false);
 
-  // Available years from journal table
-  const [availableYears, setAvailableYears] = useState([]);
-  const [yearsLoading, setYearsLoading] = useState(true);
-
-  // Global year filter - initialize to current year, will be updated when years are fetched
-  const [globalYear, setGlobalYear] = useState(new Date().getFullYear());
-
   // Filter state
   const [filters, setFilters] = useState({
     org_name: [], // DOT names (multi-select)
     typ_fact: [], // Type Fact (multi-select)
+    year: "", // Year filter (sets Date GL range to YYYY-01..YYYY-12 when set)
     date_fact_start: "", // Date Fact start (month)
     date_fact_end: "", // Date Fact end (month)
     date_gl_start: "", // Date GL start (month)
@@ -750,6 +744,9 @@ const RevenuePage = () => {
     cpt_comptable_list: [],
     achievement_rate_ranges: [],
   });
+
+  // Years available for year filter (from Date GL months; merge with objectifs years on load)
+  const [filterYears, setFilterYears] = useState([]);
 
   // Data state
   const [overview, setOverview] = useState({
@@ -788,6 +785,9 @@ const RevenuePage = () => {
   const [previewPage, setPreviewPage] = useState(1);
   const [previewPageSize, setPreviewPageSize] = useState(10);
   const [previewTableType, setPreviewTableType] = useState("journal"); // "journal", "objectives", "account-descriptions"
+  // Preview -> Objectif C.A year dropdown only
+  const [objectifsYears, setObjectifsYears] = useState([]);
+  const [objectifsYear, setObjectifsYear] = useState(null);
 
   // Column filters and values
   const [columnFilters, setColumnFilters] = useState({});
@@ -807,23 +807,20 @@ const RevenuePage = () => {
     }
 
     try {
-      // Build filter params for API calls
-      // Apply global year filter to date ranges if not already set
-      // COMMENTED OUT: Yearly global filter disabled
-      // const yearStart = `${globalYear}-01`;
-      // const yearEnd = `${globalYear}-12`;
-
+      // Build filter params for API calls (year overrides date_gl range when set)
       const filterParams = {
         org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
         typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
         cpt_comptable:
           filters.cpt_comptable.length > 0 ? filters.cpt_comptable : undefined,
-        // Use global year filter for date ranges if not explicitly set
-        // COMMENTED OUT: Yearly global filter disabled
-        start_date: filters.date_gl_start, // || yearStart,
-        end_date: filters.date_gl_end, // || yearEnd,
-        start_date_fact: filters.date_fact_start, // || yearStart,
-        end_date_fact: filters.date_fact_end, // || yearEnd,
+        start_date: filters.year
+          ? `${filters.year}-01`
+          : filters.date_gl_start || undefined,
+        end_date: filters.year
+          ? `${filters.year}-12`
+          : filters.date_gl_end || undefined,
+        start_date_fact: filters.date_fact_start,
+        end_date_fact: filters.date_fact_end,
         taux_ca_min: filters.taux_ca_min || undefined,
         taux_ca_max: filters.taux_ca_max || undefined,
         search: filters.search || undefined,
@@ -863,6 +860,13 @@ const RevenuePage = () => {
         ]);
 
       setOverview(ovRes.data || {});
+      const ov = ovRes.data || {};
+      console.log("Overview chart – raw API data", {
+        total_revenue: ov.total_revenue,
+        total_objective: ov.total_objective,
+        by_month: ov.by_month || {},
+        by_month_objective: ov.by_month_objective || {},
+      });
       setByOrg(orgRes.data || []);
       setByAccount(accRes.data || []);
       setByTypeFact(typeFactRes.data || []);
@@ -886,7 +890,10 @@ const RevenuePage = () => {
    */
   const fetchFilters = async () => {
     try {
-      const res = await getRevenueFilters();
+      const [res, objYearsRes] = await Promise.all([
+        getRevenueFilters(),
+        getRevenueObjectifsAvailableYears().catch(() => ({ data: [] })),
+      ]);
 
       setFilterOptions({
         org_names: res.data.org_names || [],
@@ -902,53 +909,53 @@ const RevenuePage = () => {
           { label: "100%+", min: 100, max: 999999 },
         ],
       });
+
+      const yearsFromMonths = [
+        ...new Set(
+          (res.data.months || []).map((m) => String(m).slice(0, 4))
+        ),
+      ].sort((a, b) => Number(b) - Number(a));
+      const objYears = Array.isArray(objYearsRes?.data)
+        ? objYearsRes.data.map((y) => String(y))
+        : [];
+      setFilterYears(
+        [...new Set([...yearsFromMonths, ...objYears])].sort(
+          (a, b) => Number(b) - Number(a)
+        )
+      );
     } catch (error) {
       console.error("Error fetching filters:", error);
     }
   };
 
-  // Fetch available years from journal table
-  useEffect(() => {
-    const fetchAvailableYears = async () => {
-      try {
-        setYearsLoading(true);
-        const response = await getRevenueAvailableYears();
-        const years = response.data || [];
-        setAvailableYears(years);
-
-        // Set default year to most recent year if available
-        if (years.length > 0) {
-          const mostRecentYear = years[0]; // Years are sorted descending
-          setGlobalYear(mostRecentYear);
-        }
-      } catch (error) {
-        console.error("Error fetching available years:", error);
-        // Fallback to current year if API fails
-        setAvailableYears([new Date().getFullYear()]);
-      } finally {
-        setYearsLoading(false);
-      }
-    };
-
-    fetchAvailableYears();
-  }, []);
-
   useEffect(() => {
     fetchFilters();
-    // Only fetch data after years are loaded to ensure correct year filter
-    if (!yearsLoading && availableYears.length > 0) {
-      fetchData();
-    }
+    fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [yearsLoading, availableYears]);
+  }, []);
 
-  // COMMENTED OUT: Refetch data when global year changes
-  // useEffect(() => {
-  //   if (!yearsLoading) {
-  //     fetchData();
-  //   }
-  //   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, [globalYear, yearsLoading]);
+  // Fetch objectifs years when Preview + Objectif C.A (for year dropdown only)
+  useEffect(() => {
+    if (activeTab !== "preview" || previewTableType !== "objectives") return;
+    const fetchObjectifsYears = async () => {
+      try {
+        const res = await getRevenueObjectifsAvailableYears();
+        const years = res.data || [];
+        setObjectifsYears(years);
+        if (years.length > 0) {
+          setObjectifsYear((prev) => (prev == null ? years[0] : prev));
+        }
+      } catch (e) {
+        console.error("Error fetching objectifs years:", e);
+      }
+    };
+    fetchObjectifsYears();
+  }, [activeTab, previewTableType]);
+
+  // Reset objectifs year when switching away from objectives (so next time we can default to latest)
+  useEffect(() => {
+    if (previewTableType !== "objectives") setObjectifsYear(null);
+  }, [previewTableType]);
 
   // Refetch DOT Corporate data when filters change
   useEffect(() => {
@@ -961,22 +968,25 @@ const RevenuePage = () => {
             dotCorporateFilters.dot_names.length > 0
               ? dotCorporateFilters.dot_names
               : undefined,
-          // Apply ALL revenue filters
+          // Apply ALL revenue filters (year overrides date_gl range when set)
           org_name: filters.org_name.length > 0 ? filters.org_name : undefined,
           typ_fact: filters.typ_fact.length > 0 ? filters.typ_fact : undefined,
           cpt_comptable:
             filters.cpt_comptable.length > 0
               ? filters.cpt_comptable
               : undefined,
-          start_date: filters.date_gl_start || undefined,
-          end_date: filters.date_gl_end || undefined,
+          year: filters.year ? parseInt(filters.year, 10) : undefined,
+          start_date: filters.year
+            ? `${filters.year}-01`
+            : filters.date_gl_start || undefined,
+          end_date: filters.year
+            ? `${filters.year}-12`
+            : filters.date_gl_end || undefined,
           start_date_fact: filters.date_fact_start || undefined,
           end_date_fact: filters.date_fact_end || undefined,
           taux_ca_min: filters.taux_ca_min || undefined,
           taux_ca_max: filters.taux_ca_max || undefined,
           search: filters.search || undefined,
-          // COMMENTED OUT: Yearly global filter disabled
-          // year: globalYear, // Use global year filter
         });
         setDotCorporateMonthly(
           res.data || {
@@ -996,6 +1006,7 @@ const RevenuePage = () => {
     filters.org_name,
     filters.typ_fact,
     filters.cpt_comptable,
+    filters.year,
     filters.date_gl_start,
     filters.date_gl_end,
     filters.date_fact_start,
@@ -1018,11 +1029,31 @@ const RevenuePage = () => {
 
   /**
    * CHART 1: C.A vs Objectif par mois
-   * Uses DOT Corporate monthly objectives from objectifs_monthly_dot table
-   * Combines revenue data (overview.by_month) with monthly objectives (dotCorporateMonthly.by_month)
-   * Normalizes month keys to "YYYY-MM" format to ensure proper deduplication
+   * Uses overview.by_month (revenue) and overview.by_month_objective (objectives).
+   * Fallback: if overview has no monthly objectives, use byMonth (from /api/revenue/by-month) which has objective per month.
    */
   const monthlyChartData = useMemo(() => {
+    console.log("🔍 [CHART BUILD] Starting monthlyChartData with:", {
+      overview_by_month_keys: Object.keys(overview.by_month || {}),
+      overview_by_month_objective_keys: Object.keys(overview.by_month_objective || {}),
+      byMonth_length: (byMonth || []).length,
+      byMonth_sample: (byMonth || []).slice(0, 2),
+    });
+
+    // OBJECTIVE SOURCE: prefer /api/revenue/by-month (always has correct objectives), merge with overview.by_month_objective
+    const fromByMonth = (byMonth || []).reduce((acc, row) => {
+      if (row.month && row.objective != null) {
+        const val = Number(row.objective);
+        if (!isNaN(val) && val > 0) {
+          acc[row.month] = val;
+        }
+      }
+      return acc;
+    }, {});
+    const fromOverview = overview.by_month_objective || {};
+    const objectiveByMonth = { ...fromByMonth, ...fromOverview };
+    console.log("🔍 [CHART BUILD] objectiveByMonth:", objectiveByMonth);
+
     // Normalize month keys to "YYYY-MM" format
     const normalizeMonthKey = (key) => {
       if (!key) return null;
@@ -1051,14 +1082,12 @@ const RevenuePage = () => {
       return null;
     };
 
-    // Normalize and collect all month keys from both sources
+    // Normalize and collect month keys from revenue and objectives (both from overview)
     const normalizedRevenueMonths = Object.keys(overview.by_month || {})
       .map(normalizeMonthKey)
       .filter(Boolean);
 
-    const normalizedObjectiveMonths = Object.keys(
-      dotCorporateMonthly.by_month || {}
-    )
+    const normalizedObjectiveMonths = Object.keys(objectiveByMonth)
       .map(normalizeMonthKey)
       .filter(Boolean);
 
@@ -1077,46 +1106,72 @@ const RevenuePage = () => {
     });
 
     const objectiveKeyMap = {};
-    Object.keys(dotCorporateMonthly.by_month || {}).forEach((key) => {
+    Object.keys(objectiveByMonth).forEach((key) => {
       const normalized = normalizeMonthKey(key);
       if (normalized) {
         objectiveKeyMap[normalized] = key;
       }
     });
 
+    // Fallback: get objective by same month number (e.g. 2026-01 if 2025-01 missing)
+    const getObjectiveForMonth = (normalizedKey, objectiveKey) => {
+      if (objectiveKey && (objectiveByMonth[objectiveKey] || 0) > 0) {
+        return objectiveByMonth[objectiveKey];
+      }
+      const monthPart = normalizedKey ? normalizedKey.slice(5) : null; // "01", "02", ...
+      if (!monthPart) return 0;
+      const sameMonthKey = Object.keys(objectiveByMonth).find((k) => k.endsWith(`-${monthPart}`));
+      return sameMonthKey ? (objectiveByMonth[sameMonthKey] || 0) : 0;
+    };
+
     // Map to chart data format - one entry per month
+    // Blue bars = Chiffre d'affaires (revenue from overview.by_month only)
+    // Orange bars = Objectif C.A (from overview.by_month_objective / objectiveByMonth only)
+    const revenueByMonth = overview.by_month || {};
     const chartData = allMonths.map((normalizedKey) => {
-      // Parse normalized month key (format: "YYYY-MM")
       const [year, monthNum] = normalizedKey.split("-");
       const date = new Date(parseInt(year), parseInt(monthNum) - 1, 1);
       const monthName = date.toLocaleString("fr-FR", { month: "short" });
 
-      // Get values using original keys
       const revenueKey = revenueKeyMap[normalizedKey];
-      const objectiveKey = objectiveKeyMap[normalizedKey];
+      const revenueValue = revenueKey
+        ? Number(revenueByMonth[revenueKey]) || 0
+        : 0;
+      const objectiveValue = getObjectiveForMonth(
+        normalizedKey,
+        objectiveKeyMap[normalizedKey]
+      );
 
       return {
         mois: monthName,
-        monthKey: normalizedKey, // Use normalized key
-        "Somme de_Chiffre d'affaires": revenueKey
-          ? overview.by_month[revenueKey] || 0
-          : 0,
-        "Somme de_Objectif C.A": objectiveKey
-          ? dotCorporateMonthly.by_month[objectiveKey] || 0
-          : 0,
+        monthKey: normalizedKey,
+        "Somme de_Chiffre d'affaires": revenueValue,
+        "Somme de_Objectif C.A": Number(objectiveValue) || 0,
       };
     });
 
     // Final deduplication by month name (shouldn't be needed, but safety check)
     const seen = new Set();
-    return chartData.filter((item) => {
+    const finalChartData = chartData.filter((item) => {
       if (seen.has(item.mois)) {
         return false;
       }
       seen.add(item.mois);
       return true;
     });
-  }, [overview.by_month, dotCorporateMonthly.by_month]);
+    const hasOverviewObj = Object.values(fromOverview).some((v) => Number(v) > 0);
+    const hasByMonthObj = Object.keys(fromByMonth).length > 0;
+    console.log("Overview chart – computed data", {
+      objectiveSource: hasOverviewObj
+        ? "overview"
+        : hasByMonthObj
+        ? "byMonth"
+        : "none",
+      objectiveByMonthSample: Object.entries(objectiveByMonth).slice(0, 3),
+      chartData: finalChartData,
+    });
+    return finalChartData;
+  }, [overview.by_month, overview.by_month_objective, byMonth]);
 
   /**
    * CHART 2: Description Cpt Comptable with percentages
@@ -1238,8 +1293,12 @@ const RevenuePage = () => {
               ? filters.cpt_comptable.join(",")
               : filters.cpt_comptable
             : undefined,
-        start_date: filters.date_gl_start || undefined,
-        end_date: filters.date_gl_end || undefined,
+        start_date: filters.year
+          ? `${filters.year}-01`
+          : filters.date_gl_start || undefined,
+        end_date: filters.year
+          ? `${filters.year}-12`
+          : filters.date_gl_end || undefined,
         start_date_fact: filters.date_fact_start || undefined,
         end_date_fact: filters.date_fact_end || undefined,
         taux_ca_min: filters.taux_ca_min || undefined,
@@ -1354,8 +1413,12 @@ const RevenuePage = () => {
           filters.cpt_comptable.length > 0
             ? filters.cpt_comptable
             : columnFilters.cpt_comptable || undefined,
-        start_date: filters.date_gl_start || undefined,
-        end_date: filters.date_gl_end || undefined,
+        start_date: filters.year
+          ? `${filters.year}-01`
+          : filters.date_gl_start || undefined,
+        end_date: filters.year
+          ? `${filters.year}-12`
+          : filters.date_gl_end || undefined,
         start_date_fact: filters.date_fact_start || undefined,
         end_date_fact: filters.date_fact_end || undefined,
         taux_ca_min:
@@ -1445,6 +1508,7 @@ const RevenuePage = () => {
     setFilters({
       org_name: [],
       typ_fact: [],
+      year: "",
       date_fact_start: "",
       date_fact_end: "",
       date_gl_start: "",
@@ -1469,7 +1533,10 @@ const RevenuePage = () => {
       let response;
       if (previewTableType === "objectives") {
         response = await getRevenueObjectivesPreview(
-          { dot_name: filters.search },
+          {
+            dot_name: filters.search,
+            year: objectifsYear != null ? objectifsYear : undefined,
+          },
           previewPageSize,
           offset
         );
@@ -1502,8 +1569,12 @@ const RevenuePage = () => {
             filters.cpt_comptable.length > 0
               ? filters.cpt_comptable
               : columnFilters.cpt_comptable || undefined,
-          start_date: filters.date_gl_start || undefined,
-          end_date: filters.date_gl_end || undefined,
+          start_date: filters.year
+            ? `${filters.year}-01`
+            : filters.date_gl_start || undefined,
+          end_date: filters.year
+            ? `${filters.year}-12`
+            : filters.date_gl_end || undefined,
           start_date_fact: filters.date_fact_start || undefined,
           end_date_fact: filters.date_fact_end || undefined,
           taux_ca_min:
@@ -1564,6 +1635,7 @@ const RevenuePage = () => {
     columnFilters,
     orderBy,
     orderDirection,
+    objectifsYear,
   ]);
 
   // Fetch column values for a specific column
@@ -1645,46 +1717,6 @@ const RevenuePage = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <h1 className="text-3xl font-bold">Chiffre d'Affaire DOT Corporate</h1>
         <div className="flex flex-wrap items-center gap-2">
-          {/* COMMENTED OUT: Global Year Filter */}
-          {/* <div className="flex items-center gap-2">
-            <Label
-              htmlFor="global-year-filter"
-              className="text-sm whitespace-nowrap"
-            >
-              Année:
-            </Label>
-            <Select
-              value={globalYear.toString()}
-              onValueChange={(value) => {
-                const year = parseInt(value);
-                setGlobalYear(year);
-                // Update DOT Corporate filters year as well
-                setDotCorporateFilters((prev) => ({ ...prev, year }));
-                // Data will be refetched automatically via useEffect
-              }}
-            >
-              <SelectTrigger id="global-year-filter" className="w-28">
-                <SelectValue placeholder="Année" />
-              </SelectTrigger>
-              <SelectContent>
-                {yearsLoading ? (
-                  <SelectItem value="" disabled>
-                    Chargement...
-                  </SelectItem>
-                ) : availableYears.length > 0 ? (
-                  availableYears.map((year) => (
-                    <SelectItem key={year} value={year.toString()}>
-                      {year}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <SelectItem value={new Date().getFullYear().toString()}>
-                    {new Date().getFullYear()}
-                  </SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-          </div> */}
           <Button
             variant="outline"
             onClick={() => setShowFilters((s) => !s)}
@@ -1711,6 +1743,27 @@ const RevenuePage = () => {
             />
             Actualiser
           </Button>
+          <div className="flex items-center gap-2 rounded-md border border-input bg-background px-2 py-1">
+            <Label htmlFor="header-year" className="text-sm whitespace-nowrap">
+              Année
+            </Label>
+            <select
+              id="header-year"
+              className="h-8 min-w-[4.5rem] rounded border-0 bg-transparent text-sm focus:outline-none focus:ring-0"
+              value={filters.year}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, year: e.target.value }));
+                fetchData();
+              }}
+            >
+              <option value="">Toutes</option>
+              {filterYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}
+                </option>
+              ))}
+            </select>
+          </div>
           <Button
             onClick={() => handleExport("csv")}
             disabled={exporting}
@@ -1962,7 +2015,25 @@ const RevenuePage = () => {
               </div>
 
               {/* Secondary Filters */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                <div>
+                  <Label>Année</Label>
+                  <select
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={filters.year}
+                    onChange={(e) =>
+                      setFilters((f) => ({ ...f, year: e.target.value }))
+                    }
+                  >
+                    <option value="">Toutes les années</option>
+                    {filterYears.map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <Label>Date Fact - Début (Mois)</Label>
                   <Input
@@ -2038,6 +2109,7 @@ const RevenuePage = () => {
                         const labels = {
                           org_name: "DOT",
                           typ_fact: "Type Fact",
+                          year: "Année",
                           date_fact_start: "Date Fact Début",
                           date_fact_end: "Date Fact Fin",
                           date_gl_start: "Date GL Début",
@@ -2504,6 +2576,40 @@ const RevenuePage = () => {
                       </SelectContent>
                     </Select>
                   </div>
+                  {previewTableType === "objectives" && (
+                    <div className="flex items-center gap-2">
+                      <Label htmlFor="preview-objectifs-year" className="text-sm">
+                        Année:
+                      </Label>
+                      <Select
+                        value={
+                          objectifsYear != null
+                            ? String(objectifsYear)
+                            : objectifsYears[0] != null
+                              ? String(objectifsYears[0])
+                              : ""
+                        }
+                        onValueChange={(v) => {
+                          setObjectifsYear(v ? parseInt(v, 10) : null);
+                          setPreviewPage(1);
+                        }}
+                      >
+                        <SelectTrigger
+                          id="preview-objectifs-year"
+                          className="w-24"
+                        >
+                          <SelectValue placeholder="Année" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {objectifsYears.map((y) => (
+                            <SelectItem key={y} value={String(y)}>
+                              {y}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Label htmlFor="page-size" className="text-sm">
                       Par page:
