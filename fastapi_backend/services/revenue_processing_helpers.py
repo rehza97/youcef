@@ -10,6 +10,16 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# Numeric columns for revenue anomaly export (French headers + snake_case from DB/JSON)
+REVENUE_ANOMALY_NUMERIC_COLS = {
+    "Qte", "qte", "Prix Uni", "prix_uni", "Taux Change", "taux_change",
+    "Mnt Ht", "mnt_ht", "Mnt Tax", "mnt_tax", "Mnt Ttc", "mnt_ttc",
+    "Tax Amount", "tax_amount", "Chiffre Aff Exe Dzd", "chiffre_aff_exe_dzd",
+    "Chiffre Aff Exe Dzd TTC", "chiffre_aff_exe_dzd_ttc",
+    "TVA", "tva", "Taux Réalisation CA (%)", "taux_realisation_ca",
+    "Taux de réalisation C.A",
+}
+
 
 class RevenueProcessingHelpers:
     """Helper methods for revenue processing"""
@@ -79,6 +89,20 @@ class RevenueProcessingHelpers:
         return None
 
     @staticmethod
+    def detect_reprise_in_row(row: pd.Series, origine_col: str) -> Optional[str]:
+        """
+        Detect REPRISE anomaly: Origine contains 'REPRISE' (case-insensitive).
+        Example: '20_REPRISE ALGER_EST' -> anomaly.
+        Returns anomaly reason if found, None otherwise.
+        """
+        if not origine_col:
+            return None
+        origine_value = str(row.get(origine_col, ''))
+        if 'REPRISE' in origine_value.upper():
+            return f"Origine '{origine_value}' contains 'REPRISE'"
+        return None
+
+    @staticmethod
     def filter_cpt_comptable_with_a(df: pd.DataFrame, cpt_col: str) -> pd.DataFrame:
         """Remove rows where Cpt Comptable contains letter 'A'"""
         original = len(df)
@@ -86,6 +110,18 @@ class RevenueProcessingHelpers:
         filtered = original - len(df)
         if filtered > 0:
             logger.info(f"Filtered {filtered} rows with 'A' in Cpt Comptable")
+        return df
+
+    @staticmethod
+    def filter_reprise_rows(df: pd.DataFrame, origine_col: str) -> pd.DataFrame:
+        """Remove rows where Origine contains 'REPRISE'"""
+        if not origine_col or origine_col not in df.columns:
+            return df
+        original = len(df)
+        df = df[~df[origine_col].astype(str).str.contains('REPRISE', case=False, na=False)]
+        filtered = original - len(df)
+        if filtered > 0:
+            logger.info(f"Filtered {filtered} rows with 'REPRISE' in Origine")
         return df
 
     @staticmethod
@@ -439,20 +475,48 @@ class RevenueProcessingHelpers:
         return df
 
     @staticmethod
-    def format_number_french(value: float) -> str:
-        """Format number with thousands separator and 2 decimal places (French format)"""
+    def format_number_french(value) -> str:
+        """Format number with thousands separator and 2 decimal places (French format)."""
         if pd.isna(value):
             return ""
-
+        if value == "" or value is None:
+            return ""
         try:
-            value = float(value)
-            # Format with 2 decimals
-            formatted = f"{value:,.2f}"
-            # Replace , with space for thousands, and . with , for decimal
-            formatted = formatted.replace(',', ' ').replace('.', ',')
-            return formatted
-        except:
-            return str(value)
+            num_value = float(value)
+            # Format with 2 decimals using US format
+            us_format = f"{num_value:,.2f}"
+            # Split into integer and decimal parts
+            if '.' in us_format:
+                int_part, dec_part = us_format.split('.')
+                # Replace comma (thousands) with space
+                int_part = int_part.replace(',', ' ')
+                # Return with comma as decimal separator
+                return f"{int_part},{dec_part}"
+            else:
+                return us_format.replace(',', ' ') + ',00'
+        except (TypeError, ValueError, AttributeError):
+            # If can't convert, return empty string to avoid display issues
+            return ""
+
+    @staticmethod
+    def get_numeric_columns_for_anomaly_export(df: pd.DataFrame) -> List[str]:
+        """Return column names in df that are numeric for revenue anomaly export."""
+        return [c for c in df.columns if c in REVENUE_ANOMALY_NUMERIC_COLS]
+
+    @staticmethod
+    def apply_french_format_to_anomaly_df(df: pd.DataFrame) -> pd.DataFrame:
+        """Return a copy of df with numeric columns as French-formatted strings (e.g. 1 234,56)."""
+        numeric_cols = RevenueProcessingHelpers.get_numeric_columns_for_anomaly_export(df)
+        if not numeric_cols:
+            return df.copy()
+        out = df.copy()
+        for col in numeric_cols:
+            if col in out.columns:
+                # Convert column to numeric first, coercing errors to NaN
+                out[col] = pd.to_numeric(out[col], errors='coerce')
+                # Then apply French formatting
+                out[col] = out[col].apply(RevenueProcessingHelpers.format_number_french)
+        return out
 
     @staticmethod
     def clean_org_name_for_matching(org_name: str) -> str:

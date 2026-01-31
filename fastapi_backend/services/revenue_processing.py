@@ -837,6 +837,11 @@ class RevenueDataProcessor:
         logger.info(f"After Cpt Comptable filter: {len(df)} rows")
         log_ca_sum(df, "After Cpt Comptable filter")
 
+        # 7b. Origine : Supprimer toutes les lignes contenant REPRISE
+        df = self._filter_reprise_rows(df)
+        logger.info(f"After REPRISE filter: {len(df)} rows")
+        log_ca_sum(df, "After REPRISE filter")
+
         # 8. Date GL : Garder les lignes ayant l'année la plus récente
         # NOTE: Year filter is now optional - it will log what years are found but won't filter by default
         # Uncomment the line below to enable year filtering
@@ -1029,13 +1034,14 @@ class RevenueDataProcessor:
         return RevenueProcessingHelpers.sort_by_org_type_invoice(df)
 
     def _detect_anomalies(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Detect anomalies where Cpt Comptable contains 'A' and Description doesn't start with '@'"""
+        """Detect anomalies: Cpt Comptable contains 'A', or Origine contains 'REPRISE'."""
         from services.revenue_processing_helpers import RevenueProcessingHelpers
 
         cpt_col = self._find_column(
             df, ['Cpt Comptable', 'compte comptable'])
         desc_col = self._find_column(
             df, ['Description (ligne de produit)', 'description ligne'])
+        origine_col = self._find_column(df, ['Origine', 'origine'])
 
         if not cpt_col or not desc_col:
             return df
@@ -1044,6 +1050,9 @@ class RevenueDataProcessor:
         for idx, row in df.iterrows():
             anomaly_reason = RevenueProcessingHelpers.detect_anomalies_in_row(
                 row, cpt_col, desc_col)
+            if not anomaly_reason and origine_col:
+                anomaly_reason = RevenueProcessingHelpers.detect_reprise_in_row(
+                    row, origine_col)
             if anomaly_reason:
                 # Store full row data as dictionary for complete export
                 # Use the actual DataFrame column names to preserve all data
@@ -1111,6 +1120,26 @@ class RevenueDataProcessor:
                     logger.debug(f"   Could not calculate CA sum lost from Cpt Comptable filter: {e}")
             
             return RevenueProcessingHelpers.filter_cpt_comptable_with_a(df, cpt_col)
+        return df
+
+    def _filter_reprise_rows(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove rows where Origine contains 'REPRISE'"""
+        from services.revenue_processing_helpers import RevenueProcessingHelpers
+        origine_col = self._find_column(df, ['Origine', 'origine'])
+        if origine_col:
+            ca_col = self._find_column(df, ['Chiffre Aff Exe Dzd', 'revenue dzd'])
+            # Calculate CA sum before filtering
+            if ca_col:
+                try:
+                    mask = df[origine_col].astype(str).str.contains('REPRISE', case=False, na=False)
+                    filtered_rows = df[mask]
+                    ca_numeric = pd.to_numeric(filtered_rows[ca_col], errors='coerce')
+                    filtered_ca_sum = ca_numeric.sum()
+                    if not pd.isna(filtered_ca_sum) and filtered_ca_sum != 0:
+                        logger.info(f"   💰 CA Sum lost from REPRISE filter: {filtered_ca_sum:,.2f} DZD")
+                except Exception as e:
+                    logger.debug(f"   Could not calculate CA sum lost from REPRISE filter: {e}")
+            return RevenueProcessingHelpers.filter_reprise_rows(df, origine_col)
         return df
 
     def _keep_most_recent_year(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1607,23 +1636,11 @@ class RevenueDataProcessor:
                 anomalies_data.append(record)
             
             df_anomalies = pd.DataFrame(anomalies_data)
-            
-            # Save anomalies file with French number format
-            numeric_cols = [
-                "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
-                "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
-                "TVA", "Taux Réalisation CA (%)"
-            ]
+            # Apply French number format (space thousands, comma decimal) so file shows e.g. 1 234,56
+            from services.revenue_processing_helpers import RevenueProcessingHelpers
+            df_anomalies = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df_anomalies)
             with pd.ExcelWriter(anomaly_file, engine='openpyxl') as writer:
                 df_anomalies.to_excel(writer, sheet_name='Anomalies CA AR DOT', index=False)
-                worksheet = writer.sheets['Anomalies CA AR DOT']
-                french_number_format = '# ##0,00'
-                for col_idx, col_name in enumerate(df_anomalies.columns, start=1):
-                    if col_name in numeric_cols:
-                        for row_idx in range(2, len(df_anomalies) + 2):
-                            cell = worksheet.cell(row=row_idx, column=col_idx)
-                            if cell.value is not None and cell.value != "":
-                                cell.number_format = french_number_format
 
             logger.info(f"✅ Generated anomaly export file: {anomaly_file} ({len(df_anomalies)} rows)")
             

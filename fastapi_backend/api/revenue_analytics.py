@@ -27,6 +27,7 @@ import zipfile
 import os
 import asyncio
 from services.processing_websocket import processing_ws_manager
+from services.revenue_processing_helpers import RevenueProcessingHelpers
 
 logger = logging.getLogger(__name__)
 
@@ -2768,53 +2769,17 @@ async def export_revenue_anomalies(
         else:
             df = pd.DataFrame()
 
-        # Generate file - French number format (space thousands, comma decimal)
-        numeric_cols = [
-            "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
-            "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
-            "TVA", "Taux Réalisation CA (%)"
-        ]
+        # French number format (space thousands, comma decimal e.g. 1 234,56)
+        df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df)
         output = io.BytesIO()
 
         if format == "xlsx":
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
-                worksheet = writer.sheets['Anomalies CA AR DOT']
-                french_number_format = '# ##0,00'
-                for col_idx, col_name in enumerate(df.columns, start=1):
-                    if col_name in numeric_cols:
-                        for row_idx in range(2, len(df) + 2):
-                            cell = worksheet.cell(row=row_idx, column=col_idx)
-                            if cell.value is not None and cell.value != "":
-                                cell.number_format = french_number_format
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
         else:  # csv
-            def format_french_number(x):
-                if pd.isna(x) or not isinstance(x, (int, float)):
-                    return x
-                formatted = f"{x:,.2f}"
-                if '.' in formatted:
-                    int_part, dec_part = formatted.rsplit('.', 1)
-                    int_part_clean = int_part.replace(',', '')
-                    int_part_formatted = ''
-                    for i, digit in enumerate(reversed(int_part_clean)):
-                        if i > 0 and i % 3 == 0:
-                            int_part_formatted = ' ' + int_part_formatted
-                        int_part_formatted = digit + int_part_formatted
-                    return int_part_formatted + ',' + dec_part
-                int_part_clean = formatted.replace(',', '')
-                int_part_formatted = ''
-                for i, digit in enumerate(reversed(int_part_clean)):
-                    if i > 0 and i % 3 == 0:
-                        int_part_formatted = ' ' + int_part_formatted
-                    int_part_formatted = digit + int_part_formatted
-                return int_part_formatted + ',00'
-            df_formatted = df.copy()
-            for col in numeric_cols:
-                if col in df_formatted.columns:
-                    df_formatted[col] = df_formatted[col].apply(format_french_number)
-            df_formatted.to_csv(output, index=False, sep=";", encoding='utf-8-sig')
+            df.to_csv(output, index=False, sep=";", encoding='utf-8-sig')
             media_type = "text/csv; charset=utf-8"
             filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
 
@@ -3517,57 +3482,16 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
                         normal_df_formatted.to_csv(normal_buffer, index=False, sep=";", encoding='utf-8-sig')
                 zip_file.writestr(normal_filename, normal_buffer.getvalue())
 
-                # Write anomaly file
+                # Write anomaly file (French number format: space thousands, comma decimal)
                 if len(anomaly_data) > 0:
+                    anomaly_df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(anomaly_df)
                     anomaly_filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}.{file_ext}"
                     anomaly_buffer = io.BytesIO()
                     if format == "xlsx":
                         with pd.ExcelWriter(anomaly_buffer, engine='openpyxl') as writer:
                             anomaly_df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
-                            
-                            # Apply French number formatting (space for thousands, comma for decimal)
-                            workbook = writer.book
-                            worksheet = writer.sheets['Anomalies CA AR DOT']
-                            
-                            # French format: # ##0,00 (space thousands separator, comma decimal separator)
-                            french_number_format = '# ##0,00'
-                            
-                            for col_idx, col_name in enumerate(anomaly_df.columns, start=1):
-                                if col_name in numeric_cols:
-                                    for row_idx in range(2, len(anomaly_df) + 2):
-                                        cell = worksheet.cell(row=row_idx, column=col_idx)
-                                        if cell.value is not None and cell.value != "":
-                                            cell.number_format = french_number_format
                     else:
-                        # Format numbers with French formatting (space thousands, comma decimal) for CSV
-                        def format_french_number(x):
-                            """Format number with French formatting: space for thousands, comma for decimal"""
-                            if pd.isna(x) or not isinstance(x, (int, float)):
-                                return x
-                            formatted = f"{x:,.2f}"
-                            if '.' in formatted:
-                                int_part, dec_part = formatted.rsplit('.', 1)
-                                int_part_clean = int_part.replace(',', '')
-                                int_part_formatted = ''
-                                for i, digit in enumerate(reversed(int_part_clean)):
-                                    if i > 0 and i % 3 == 0:
-                                        int_part_formatted = ' ' + int_part_formatted
-                                    int_part_formatted = digit + int_part_formatted
-                                return int_part_formatted + ',' + dec_part
-                            else:
-                                int_part_clean = formatted.replace(',', '')
-                                int_part_formatted = ''
-                                for i, digit in enumerate(reversed(int_part_clean)):
-                                    if i > 0 and i % 3 == 0:
-                                        int_part_formatted = ' ' + int_part_formatted
-                                    int_part_formatted = digit + int_part_formatted
-                                return int_part_formatted + ',00'
-                        
-                        anomaly_df_formatted = anomaly_df.copy()
-                        for col in numeric_cols:
-                            if col in anomaly_df_formatted.columns:
-                                anomaly_df_formatted[col] = anomaly_df_formatted[col].apply(format_french_number)
-                        anomaly_df_formatted.to_csv(anomaly_buffer, index=False, sep=";", encoding='utf-8-sig')
+                        anomaly_df.to_csv(anomaly_buffer, index=False, sep=";", encoding='utf-8-sig')
                     zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
                 else:
                     zip_file.writestr("NO_ANOMALIES_FOUND.txt", "No anomalies found with the applied filters.")
@@ -3806,52 +3730,15 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
 
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format}')
             if export_type == "anomalies":
-                numeric_cols = [
-                    "Qte", "Prix Uni", "Taux Change", "Mnt Ht", "Mnt Tax", "Mnt Ttc",
-                    "Tax Amount", "Chiffre Aff Exe Dzd", "Chiffre Aff Exe Dzd TTC",
-                    "TVA", "Taux Réalisation CA (%)"
-                ]
+                df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df)
             if format == "xlsx":
                 with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
                     sheet_name = 'Revenue Data' if export_type != "anomalies" else 'Anomalies'
                     df.to_excel(writer, index=False, sheet_name=sheet_name)
-                    if export_type == "anomalies":
-                        worksheet = writer.sheets[sheet_name]
-                        french_number_format = '# ##0,00'
-                        for col_idx, col_name in enumerate(df.columns, start=1):
-                            if col_name in numeric_cols:
-                                for row_idx in range(2, len(df) + 2):
-                                    cell = worksheet.cell(row=row_idx, column=col_idx)
-                                    if cell.value is not None and cell.value != "":
-                                        cell.number_format = french_number_format
                 filename = f"{base_filename}.xlsx"
             else:
                 if export_type == "anomalies":
-                    def _format_french(x):
-                        if pd.isna(x) or not isinstance(x, (int, float)):
-                            return x
-                        formatted = f"{x:,.2f}"
-                        if '.' in formatted:
-                            int_part, dec_part = formatted.rsplit('.', 1)
-                            int_part_clean = int_part.replace(',', '')
-                            int_part_formatted = ''
-                            for i, digit in enumerate(reversed(int_part_clean)):
-                                if i > 0 and i % 3 == 0:
-                                    int_part_formatted = ' ' + int_part_formatted
-                                int_part_formatted = digit + int_part_formatted
-                            return int_part_formatted + ',' + dec_part
-                        int_part_clean = formatted.replace(',', '')
-                        int_part_formatted = ''
-                        for i, digit in enumerate(reversed(int_part_clean)):
-                            if i > 0 and i % 3 == 0:
-                                int_part_formatted = ' ' + int_part_formatted
-                            int_part_formatted = digit + int_part_formatted
-                        return int_part_formatted + ',00'
-                    df_out = df.copy()
-                    for col in numeric_cols:
-                        if col in df_out.columns:
-                            df_out[col] = df_out[col].apply(_format_french)
-                    df_out.to_csv(temp_file.name, index=False, sep=";", encoding='utf-8-sig')
+                    df.to_csv(temp_file.name, index=False, sep=";", encoding='utf-8-sig')
                 else:
                     df.to_csv(temp_file.name, index=False, encoding='utf-8-sig')
                 filename = f"{base_filename}.csv"
