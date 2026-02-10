@@ -2769,16 +2769,27 @@ async def export_revenue_anomalies(
         else:
             df = pd.DataFrame()
 
-        # French number format (space thousands, comma decimal e.g. 1 234,56)
-        df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df)
+        # Prepare DataFrame: Excel keeps numbers, CSV formats as strings
         output = io.BytesIO()
+        numeric_cols = RevenueProcessingHelpers.get_numeric_columns_for_anomaly_export(df)
 
         if format == "xlsx":
+            df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df, for_excel=True)
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
+                # Apply French number format to numeric columns (# ##0,00 = space thousands, comma decimal)
+                worksheet = writer.sheets['Anomalies CA AR DOT']
+                french_number_format = '# ##0,00'
+                for col_idx, col_name in enumerate(df.columns, start=1):
+                    if col_name in numeric_cols:
+                        for row_idx in range(2, len(df) + 2):
+                            cell = worksheet.cell(row=row_idx, column=col_idx)
+                            if cell.value is not None and pd.notna(cell.value):
+                                cell.number_format = french_number_format
             media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
         else:  # csv
+            df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df, for_excel=False)
             df.to_csv(output, index=False, sep=";", encoding='utf-8-sig')
             media_type = "text/csv; charset=utf-8"
             filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -3484,12 +3495,25 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
 
                 # Write anomaly file (French number format: space thousands, comma decimal)
                 if len(anomaly_data) > 0:
-                    anomaly_df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(anomaly_df)
+                    anomaly_numeric_cols = RevenueProcessingHelpers.get_numeric_columns_for_anomaly_export(anomaly_df)
+                    if format == "xlsx":
+                        anomaly_df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(anomaly_df, for_excel=True)
+                    else:
+                        anomaly_df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(anomaly_df, for_excel=False)
                     anomaly_filename = f"Anomalie_Chiffre_Affaires_AR_DOT_{timestamp}.{file_ext}"
                     anomaly_buffer = io.BytesIO()
                     if format == "xlsx":
                         with pd.ExcelWriter(anomaly_buffer, engine='openpyxl') as writer:
                             anomaly_df.to_excel(writer, index=False, sheet_name='Anomalies CA AR DOT')
+                            # Apply French number format to numeric columns
+                            worksheet = writer.sheets['Anomalies CA AR DOT']
+                            french_number_format = '# ##0,00'
+                            for col_idx, col_name in enumerate(anomaly_df.columns, start=1):
+                                if col_name in anomaly_numeric_cols:
+                                    for row_idx in range(2, len(anomaly_df) + 2):
+                                        cell = worksheet.cell(row=row_idx, column=col_idx)
+                                        if cell.value is not None and pd.notna(cell.value):
+                                            cell.number_format = french_number_format
                     else:
                         anomaly_df.to_csv(anomaly_buffer, index=False, sep=";", encoding='utf-8-sig')
                     zip_file.writestr(anomaly_filename, anomaly_buffer.getvalue())
@@ -3730,11 +3754,25 @@ def _run_revenue_export_background(task_id: str, export_params: dict):
 
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{format}')
             if export_type == "anomalies":
-                df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df)
+                anomaly_numeric_cols = RevenueProcessingHelpers.get_numeric_columns_for_anomaly_export(df)
+                if format == "xlsx":
+                    df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df, for_excel=True)
+                else:
+                    df = RevenueProcessingHelpers.apply_french_format_to_anomaly_df(df, for_excel=False)
             if format == "xlsx":
                 with pd.ExcelWriter(temp_file.name, engine='openpyxl') as writer:
                     sheet_name = 'Revenue Data' if export_type != "anomalies" else 'Anomalies'
                     df.to_excel(writer, index=False, sheet_name=sheet_name)
+                    # Apply French number format to numeric columns for anomalies
+                    if export_type == "anomalies":
+                        worksheet = writer.sheets[sheet_name]
+                        french_number_format = '# ##0,00'
+                        for col_idx, col_name in enumerate(df.columns, start=1):
+                            if col_name in anomaly_numeric_cols:
+                                for row_idx in range(2, len(df) + 2):
+                                    cell = worksheet.cell(row=row_idx, column=col_idx)
+                                    if cell.value is not None and pd.notna(cell.value):
+                                        cell.number_format = french_number_format
                 filename = f"{base_filename}.xlsx"
             else:
                 if export_type == "anomalies":

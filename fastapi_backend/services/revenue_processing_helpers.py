@@ -564,8 +564,18 @@ class RevenueProcessingHelpers:
         return numeric_cols
 
     @staticmethod
-    def apply_french_format_to_anomaly_df(df: pd.DataFrame) -> pd.DataFrame:
-        """Return a copy of df with numeric columns as French-formatted strings (e.g. 1 234,56)."""
+    def apply_french_format_to_anomaly_df(df: pd.DataFrame, for_excel: bool = False) -> pd.DataFrame:
+        """
+        Prepare anomaly DataFrame for export.
+        
+        Args:
+            df: DataFrame with anomaly data
+            for_excel: If True, keep numeric columns as numbers (for Excel cell formatting).
+                      If False, format numeric columns as French-formatted strings (for CSV).
+        
+        Returns:
+            DataFrame with sanitized NaN values and optionally formatted numeric columns.
+        """
         numeric_cols = RevenueProcessingHelpers.get_numeric_columns_for_anomaly_export(df)
         out = df.copy()
 
@@ -597,8 +607,15 @@ class RevenueProcessingHelpers:
 
         for col in numeric_cols:
             if col in out.columns:
-                # Apply French formatting directly; the formatter handles numeric and string values
-                out[col] = out[col].apply(RevenueProcessingHelpers.format_number_french)
+                if for_excel:
+                    # For Excel: parse to numbers but keep as numeric (formatting via Excel cell format)
+                    out[col] = out[col].apply(
+                        lambda x: RevenueProcessingHelpers.smart_parse_numeric(x) 
+                        if isinstance(x, str) or pd.notna(x) else None
+                    )
+                else:
+                    # For CSV: format as French-formatted strings
+                    out[col] = out[col].apply(RevenueProcessingHelpers.format_number_french)
         return out
 
     @staticmethod
