@@ -7,6 +7,7 @@ import pandas as pd
 from typing import Optional, Dict, Any, List
 import logging
 import re
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -237,8 +238,19 @@ class RevenueProcessingHelpers:
             # This is the most common case for French Excel files
             # Examples: "1.234.567,89" or "1 234 567,89" or "6 496 318 295,77"
             if ',' in text:
-                # Remove all dots and spaces (thousands separators), replace comma with dot
-                cleaned = text.replace('.', '').replace(' ', '').replace(',', '.')
+                comma_count = text.count(',')
+                if comma_count > 1:
+                    # Multi-comma values like "1,411,997":
+                    # Treat the LAST comma as decimal separator and earlier commas as thousands separators.
+                    parts = text.split(',')
+                    integer_part = ''.join(parts[:-1])
+                    decimal_part = parts[-1]
+                    cleaned_int = integer_part.replace('.', '').replace(' ', '').replace(',', '')
+                    cleaned_dec = decimal_part.replace(' ', '')
+                    cleaned = f"{cleaned_int}.{cleaned_dec}" if cleaned_dec else cleaned_int
+                else:
+                    # Remove all dots and spaces (thousands separators), replace comma with dot
+                    cleaned = text.replace('.', '').replace(' ', '').replace(',', '.')
                 result = float(cleaned)
                 return -result if is_negative else result
             
@@ -476,45 +488,116 @@ class RevenueProcessingHelpers:
 
     @staticmethod
     def format_number_french(value) -> str:
-        """Format number with thousands separator and 2 decimal places (French format)."""
-        if pd.isna(value):
+        """Format number as French: space thousands + comma decimal (preserve input precision when possible)."""
+        # Handle None/NaN early
+        if value is None or pd.isna(value):
             return ""
-        if value == "" or value is None:
+
+        def infer_decimals_from_text(s: str) -> Optional[int]:
+            s = s.strip()
+            if not s:
+                return None
+            if ',' in s:
+                # Use digits after LAST comma
+                dec = s.rsplit(',', 1)[1]
+                dec_digits = re.sub(r'\D', '', dec)
+                return len(dec_digits) if dec_digits else 0
+            # If only dot present, it might be decimal; but in French data dots are often thousands.
+            # Only treat dot as decimal if there's exactly one dot and the suffix is short & numeric.
+            if s.count('.') == 1:
+                dec = s.rsplit('.', 1)[1]
+                return len(dec) if dec.isdigit() else None
+            return None
+
+        # Parse value
+        decimals: int = 2
+        if isinstance(value, str):
+            s = value.strip()
+            s_lower = s.lower()
+            if not s or s_lower in {'nan', 'none', 'null', 'nat', 'inf', '-inf'} or s_lower.startswith('nan'):
+                return ""
+
+            inferred = infer_decimals_from_text(s)
+            if inferred is not None:
+                decimals = min(max(inferred, 0), 6)
+
+            parsed = RevenueProcessingHelpers.smart_parse_numeric(s)
+            if parsed is None:
+                # Keep original if we can't parse (don't drop/blank valid-looking strings)
+                return s
+            num_value = float(parsed)
+        else:
+            try:
+                num_value = float(value)
+            except (TypeError, ValueError):
+                return ""
+
+        if not math.isfinite(num_value):
             return ""
-        try:
-            num_value = float(value)
-            # Format with 2 decimals using US format
-            us_format = f"{num_value:,.2f}"
-            # Split into integer and decimal parts
-            if '.' in us_format:
-                int_part, dec_part = us_format.split('.')
-                # Replace comma (thousands) with space
-                int_part = int_part.replace(',', ' ')
-                # Return with comma as decimal separator
-                return f"{int_part},{dec_part}"
-            else:
-                return us_format.replace(',', ' ') + ',00'
-        except (TypeError, ValueError, AttributeError):
-            # If can't convert, return empty string to avoid display issues
-            return ""
+
+        # Format using requested precision then convert to French style
+        us_format = f"{num_value:,.{decimals}f}"
+        if '.' in us_format:
+            int_part, dec_part = us_format.split('.', 1)
+            int_part = int_part.replace(',', ' ')
+            return f"{int_part},{dec_part}"
+        # No decimals
+        return us_format.replace(',', ' ')
 
     @staticmethod
     def get_numeric_columns_for_anomaly_export(df: pd.DataFrame) -> List[str]:
         """Return column names in df that are numeric for revenue anomaly export."""
-        return [c for c in df.columns if c in REVENUE_ANOMALY_NUMERIC_COLS]
+        def normalize(name: str) -> str:
+            # Normalize header names so variants like "Mnt Ht", "mnt_ht", "Mnt Ht "
+            # all map to the same key.
+            s = str(name).strip().lower()
+            s = s.replace("-", " ").replace("_", " ")
+            s = re.sub(r"\s+", " ", s)
+            return s
+
+        normalized_targets = {normalize(n) for n in REVENUE_ANOMALY_NUMERIC_COLS}
+
+        numeric_cols: List[str] = []
+        for col in df.columns:
+            if normalize(col) in normalized_targets:
+                numeric_cols.append(col)
+        return numeric_cols
 
     @staticmethod
     def apply_french_format_to_anomaly_df(df: pd.DataFrame) -> pd.DataFrame:
         """Return a copy of df with numeric columns as French-formatted strings (e.g. 1 234,56)."""
         numeric_cols = RevenueProcessingHelpers.get_numeric_columns_for_anomaly_export(df)
-        if not numeric_cols:
-            return df.copy()
         out = df.copy()
+
+        # Sanitize NaN-like values across ALL columns to avoid exporting "nan" strings
+        # (e.g. in columns like "Tax" and "Memo Line Id").
+        def _sanitize_cell(x):
+            if x is None:
+                return ""
+            try:
+                if pd.isna(x):
+                    return ""
+            except Exception:
+                pass
+            if isinstance(x, str):
+                s = x.strip()
+                if not s:
+                    return ""
+                s_lower = s.lower()
+                if s_lower in {"nan", "none", "null", "nat", "inf", "-inf"} or s_lower.startswith("nan"):
+                    return ""
+                return s
+            return x
+
+        for col in out.columns:
+            out[col] = out[col].apply(_sanitize_cell)
+
+        if not numeric_cols:
+            return out
+
         for col in numeric_cols:
             if col in out.columns:
-                # Convert column to numeric first, coercing errors to NaN
-                out[col] = pd.to_numeric(out[col], errors='coerce')
-                # Then apply French formatting
+                # Apply French formatting directly; the formatter handles numeric and string values
                 out[col] = out[col].apply(RevenueProcessingHelpers.format_number_french)
         return out
 

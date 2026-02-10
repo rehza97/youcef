@@ -204,8 +204,19 @@ def smart_parse_numeric(value: Any) -> Optional[float]:
     try:
         # Case 1: Has comma - French format (dots=thousands, comma=decimal)
         if ',' in text:
-            # Remove all dots (thousands separators), replace comma with dot
-            cleaned = text.replace('.', '').replace(',', '.')
+            comma_count = text.count(',')
+            if comma_count > 1:
+                # Multi-comma values like "1,411,997":
+                # Treat the LAST comma as decimal separator and earlier commas as thousands separators.
+                parts = text.split(',')
+                integer_part = ''.join(parts[:-1])
+                decimal_part = parts[-1]
+                cleaned_int = integer_part.replace('.', '').replace(' ', '').replace(',', '')
+                cleaned_dec = decimal_part.replace(' ', '')
+                cleaned = f"{cleaned_int}.{cleaned_dec}" if cleaned_dec else cleaned_int
+            else:
+                # Remove all dots and spaces (thousands separators), replace comma with dot
+                cleaned = text.replace('.', '').replace(' ', '').replace(',', '.')
             result = float(cleaned)
             return -result if is_negative else result
         

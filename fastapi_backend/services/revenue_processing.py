@@ -1043,13 +1043,23 @@ class RevenueDataProcessor:
             df, ['Description (ligne de produit)', 'description ligne'])
         origine_col = self._find_column(df, ['Origine', 'origine'])
 
-        if not cpt_col or not desc_col:
+        # Run detection if we have at least one anomaly source:
+        # - Cpt Comptable (for 'A' rule)
+        # - Origine (for REPRISE rule)
+        if not cpt_col and not origine_col:
             return df
 
         anomaly_rows = []
         for idx, row in df.iterrows():
-            anomaly_reason = RevenueProcessingHelpers.detect_anomalies_in_row(
-                row, cpt_col, desc_col)
+            anomaly_reason = None
+
+            # 1) Cpt Comptable contains 'A' (if column is available)
+            if cpt_col:
+                # desc_col is currently unused by the helper but kept for signature compatibility.
+                anomaly_reason = RevenueProcessingHelpers.detect_anomalies_in_row(
+                    row, cpt_col, desc_col or cpt_col)
+
+            # 2) Origine contains REPRISE (if no anomaly yet and column is available)
             if not anomaly_reason and origine_col:
                 anomaly_reason = RevenueProcessingHelpers.detect_reprise_in_row(
                     row, origine_col)
